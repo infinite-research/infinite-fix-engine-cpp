@@ -19,8 +19,7 @@
 **
 ****************************************************************************/
 
-#ifndef FIX_INFINITESESSIONCLASSIFICATION_H
-#define FIX_INFINITESESSIONCLASSIFICATION_H
+#pragma once
 
 #include "Fields.h"
 #include "Message.h"
@@ -65,8 +64,17 @@ enum class InfiniteCallbackKind : std::uint8_t {
 struct InfinitePlannedCallback {
   InfiniteCallbackKind kind;
   std::string bytes;
+  Message message;
 
   bool operator==(const InfinitePlannedCallback &rhs) const;
+};
+
+struct InfinitePlannedMessage {
+  SEQNUM sequence;
+  std::string bytes;
+  Message message;
+
+  bool operator==(const InfinitePlannedMessage &rhs) const;
 };
 
 enum class InfiniteEffectKind : std::uint8_t {
@@ -107,8 +115,11 @@ struct InfiniteSessionStateFingerprint {
   UtcTimeStamp lastSentTime{UtcTimeStamp::now()};
   UtcTimeStamp lastReceivedTime{UtcTimeStamp::now()};
   UtcTimeStamp storeCreationTime{UtcTimeStamp::now()};
+  bool sessionTimeActive;
+  bool logonTimeActive;
+  bool infiniteFenced;
   std::string logoutReason;
-  std::vector<std::pair<SEQNUM, std::string>> queuedMessages;
+  std::vector<InfinitePlannedMessage> queuedMessages;
   std::string senderDefaultApplVerID;
   std::string targetDefaultApplVerID;
   bool sendRedundantResendRequests;
@@ -130,6 +141,7 @@ struct InfiniteSessionStateFingerprint {
 };
 
 struct InfiniteExpectedSessionState {
+  std::uintptr_t sessionIdentity;
   std::uint64_t revision;
   SEQNUM senderSequence;
   SEQNUM targetSequence;
@@ -261,5 +273,3 @@ private:
   Message m_message;
 };
 } // namespace FIX
-
-#endif // FIX_INFINITESESSIONCLASSIFICATION_H

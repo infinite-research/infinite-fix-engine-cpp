@@ -118,6 +118,7 @@ void Session::fill(Header &header) {
 }
 
 void Session::next(const UtcTimeStamp &now) {
+  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   try {
     if (!checkSessionTime(now)) {
@@ -179,6 +180,11 @@ void Session::next(const UtcTimeStamp &now) {
 }
 
 void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool releaseQueued) {
+  const auto markInfiniteDisposition = [this]() {
+    if (m_infiniteAction) {
+      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
+    }
+  };
   logon.getHeader().getField<SenderCompID>();
   logon.getHeader().getField<TargetCompID>();
 
@@ -187,12 +193,14 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
   }
 
   if (!isEnabled()) {
+    markInfiniteDisposition();
     m_state.onEvent("Session is not enabled for logon");
     disconnect();
     return;
   }
 
   if (!isLogonTime(now)) {
+    markInfiniteDisposition();
     m_state.onEvent("Received logon outside of valid logon time");
     disconnect();
     return;
@@ -210,6 +218,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
   }
 
   if (m_state.shouldSendLogon() && !m_state.receivedReset()) {
+    markInfiniteDisposition();
     m_state.onEvent("Received logon response before sending request");
     disconnect();
     return;
@@ -230,6 +239,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
     if (nextExpectedMsgSeqNum.getValue() < getExpectedSenderNum()) {
       sendRetransmitsAfterLogon = true;
     } else if (nextExpectedMsgSeqNum.getValue() > getExpectedSenderNum()) {
+      markInfiniteDisposition();
       std::stringstream stream;
       stream << "NextExpectedMsgSeqNum too high, expecting " << getExpectedSenderNum() << " but received "
              << nextExpectedMsgSeqNum;
@@ -552,6 +562,7 @@ Message Session::newMessage(const MsgType &msgType) const {
 }
 
 bool Session::send(Message &message) {
+  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   message.getHeader().removeField(FIELD::PossDupFlag);
   message.getHeader().removeField(FIELD::OrigSendingTime);
@@ -576,7 +587,8 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     if (Message::isAdminMsgType(msgType)) {
       if (m_infinitePlan) {
-        m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::ToAdmin, message.toString()});
+        m_infinitePlan->callbacks.push_back(
+            InfinitePlannedCallback{InfiniteCallbackKind::ToAdmin, message.toString(), message});
       } else {
         m_application.toAdmin(message, m_sessionID);
       }
@@ -611,7 +623,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       try {
         if (m_infinitePlan) {
           m_infinitePlan->callbacks.push_back(
-              InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString()});
+              InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString(), message});
         } else {
           m_application.toApp(message, m_sessionID);
         }
@@ -645,8 +657,8 @@ bool Session::send(const std::string &string) {
 }
 
 void Session::disconnect() {
-  ensureInfiniteCallbackNotReentrant();
   Locker l(m_mutex);
+  ensureInfiniteCallbackNotReentrant();
 
   if (m_pResponder) {
     m_state.onEvent("Disconnecting");
@@ -687,7 +699,7 @@ bool Session::resend(Message &message) {
 
   if (m_infinitePlan) {
     m_infinitePlan->callbacks.push_back(
-        InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString()});
+        InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString(), message});
     return true;
   }
 
@@ -1116,7 +1128,8 @@ void Session::fromCallback(const MsgType &msgType, const Message &msg, const Ses
     m_infinitePlan->callbacks.push_back(
         InfinitePlannedCallback{
             Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
-            ""});
+            "",
+            msg});
     return;
   }
   if (Message::isAdminMsgType(msgType)) {
@@ -1222,6 +1235,7 @@ bool Session::nextQueued(SEQNUM num, const UtcTimeStamp &now) {
 }
 
 void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued) {
+  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   try {
     m_state.onIncoming(msg);
@@ -1247,6 +1261,7 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
 }
 
 void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
+  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   const Header &header = message.getHeader();
   const auto markInfiniteDisposition = [this]() {
