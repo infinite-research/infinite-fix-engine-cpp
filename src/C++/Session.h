@@ -29,6 +29,7 @@
 #include "Application.h"
 #include "DataDictionaryProvider.h"
 #include "Fields.h"
+#include "InfiniteSessionClassification.h"
 #include "Log.h"
 #include "Mutex.h"
 #include "Responder.h"
@@ -224,6 +225,7 @@ public:
   const MessageStore *getStore() { return &m_state; }
 
 private:
+  friend class InfiniteSessionClassificationTestAccess;
   typedef std::map<SessionID, Session *> Sessions;
   typedef std::set<SessionID> SessionIDs;
 
@@ -275,12 +277,12 @@ private:
   void nextQueued(const UtcTimeStamp &now);
   bool nextQueued(SEQNUM num, const UtcTimeStamp &now);
 
-  void nextLogon(const Message &, const UtcTimeStamp &now);
-  void nextHeartbeat(const Message &, const UtcTimeStamp &now);
-  void nextTestRequest(const Message &, const UtcTimeStamp &now);
+  void nextLogon(const Message &, const UtcTimeStamp &now, bool releaseQueued = true);
+  void nextHeartbeat(const Message &, const UtcTimeStamp &now, bool releaseQueued = true);
+  void nextTestRequest(const Message &, const UtcTimeStamp &now, bool releaseQueued = true);
   void nextLogout(const Message &, const UtcTimeStamp &now);
-  void nextReject(const Message &, const UtcTimeStamp &now);
-  void nextSequenceReset(const Message &, const UtcTimeStamp &now);
+  void nextReject(const Message &, const UtcTimeStamp &now, bool releaseQueued = true);
+  void nextSequenceReset(const Message &, const UtcTimeStamp &now, bool releaseQueued = true);
   void nextResendRequest(const Message &, const UtcTimeStamp &now);
 
   void generateLogon();
@@ -302,6 +304,13 @@ private:
   bool verify(const Message &msg, bool checkTooHigh = true, bool checkTooLow = true);
 
   Message newMessage(const MsgType &msgType) const;
+
+  InfiniteExpectedSessionState currentInfiniteExpectedState() const;
+  InfiniteSessionClassification classifyInfiniteFrame(
+      const InfiniteAtHeadBinding &,
+      const std::string &,
+      const UtcTimeStamp &) const;
+  void applyInfiniteClassification(const InfiniteSessionClassification &, InfiniteEffectAuthorization &&);
 
   std::function<UtcTimeStamp()> m_timestamper;
   Application &m_application;
@@ -332,6 +341,8 @@ private:
   LogFactory *m_pLogFactory;
   Responder *m_pResponder;
   Mutex m_mutex;
+  std::uint64_t m_infiniteSessionRevision{0};
+  InfiniteActionData *m_infinitePlan{nullptr};
 
   static Sessions s_sessions;
   static SessionIDs s_sessionIDs;

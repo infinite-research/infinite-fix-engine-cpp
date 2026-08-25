@@ -37,6 +37,7 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpMessageTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteSessionClassificationTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessagesTestCase.cpp

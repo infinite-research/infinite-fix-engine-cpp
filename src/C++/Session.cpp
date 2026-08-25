@@ -176,7 +176,7 @@ void Session::next(const UtcTimeStamp &now) {
   }
 }
 
-void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
+void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool releaseQueued) {
   logon.getHeader().getField<SenderCompID>();
   logon.getHeader().getField<TargetCompID>();
 
@@ -263,11 +263,17 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
     }
   } else {
     m_state.incrNextTargetMsgSeqNum();
-    nextQueued(now);
+    if (releaseQueued) {
+      nextQueued(now);
+    }
   }
 
   if (isLoggedOn()) {
-    m_application.onLogon(m_sessionID);
+    if (m_infinitePlan) {
+      m_infinitePlan->callbacks.push_back(InfiniteCallbackKind::Logon);
+    } else {
+      m_application.onLogon(m_sessionID);
+    }
   }
 
   if (sendRetransmitsAfterLogon) {
@@ -292,21 +298,25 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
   }
 }
 
-void Session::nextHeartbeat(const Message &heartbeat, const UtcTimeStamp &now) {
+void Session::nextHeartbeat(const Message &heartbeat, const UtcTimeStamp &now, bool releaseQueued) {
   if (!verify(heartbeat)) {
     return;
   }
   m_state.incrNextTargetMsgSeqNum();
-  nextQueued(now);
+  if (releaseQueued) {
+    nextQueued(now);
+  }
 }
 
-void Session::nextTestRequest(const Message &testRequest, const UtcTimeStamp &now) {
+void Session::nextTestRequest(const Message &testRequest, const UtcTimeStamp &now, bool releaseQueued) {
   if (!verify(testRequest)) {
     return;
   }
   generateHeartbeat(testRequest);
   m_state.incrNextTargetMsgSeqNum();
-  nextQueued(now);
+  if (releaseQueued) {
+    nextQueued(now);
+  }
 }
 
 void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
@@ -328,15 +338,17 @@ void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
   disconnect();
 }
 
-void Session::nextReject(const Message &reject, const UtcTimeStamp &now) {
+void Session::nextReject(const Message &reject, const UtcTimeStamp &now, bool releaseQueued) {
   if (!verify(reject, false, true)) {
     return;
   }
   m_state.incrNextTargetMsgSeqNum();
-  nextQueued(now);
+  if (releaseQueued) {
+    nextQueued(now);
+  }
 }
 
-void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp &now) {
+void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp &now, bool releaseQueued) {
   bool isGapFill = false;
   GapFillFlag gapFillFlag;
   if (sequenceReset.getFieldIfSet(gapFillFlag)) {
@@ -357,7 +369,9 @@ void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp
       m_state.setNextTargetMsgSeqNum(MsgSeqNum(newSeqNo));
       if (isGapFill) {
         m_state.clearQueueUpTo(newSeqNo);
-        nextQueued(now);
+        if (releaseQueued) {
+          nextQueued(now);
+        }
       }
     } else if (newSeqNo < getExpectedTargetNum()) {
       generateReject(sequenceReset, SessionRejectReason_VALUE_IS_INCORRECT);
@@ -558,7 +572,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
     }
 
     if (Message::isAdminMsgType(msgType)) {
-      m_application.toAdmin(message, m_sessionID);
+      if (!m_infinitePlan) {
+        m_application.toAdmin(message, m_sessionID);
+      }
 
       if (msgType == MsgType_Logon && !m_state.receivedReset()) {
         ResetSeqNumFlag resetSeqNumFlag(false);
@@ -588,7 +604,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       }
 
       try {
-        m_application.toApp(message, m_sessionID);
+        if (!m_infinitePlan) {
+          m_application.toApp(message, m_sessionID);
+        }
         message.toString(messageString);
 
         if (!num) {
@@ -631,7 +649,11 @@ void Session::disconnect() {
   if (m_state.receivedLogon() || m_state.sentLogon()) {
     m_state.receivedLogon(false);
     m_state.sentLogon(false);
-    m_application.onLogout(m_sessionID);
+    if (m_infinitePlan) {
+      m_infinitePlan->callbacks.push_back(InfiniteCallbackKind::Logout);
+    } else {
+      m_application.onLogout(m_sessionID);
+    }
   }
 
   m_state.sentLogout(false);
@@ -1067,6 +1089,11 @@ bool Session::validLogonState(const MsgType &msgType) {
 }
 
 void Session::fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID) {
+  if (m_infinitePlan) {
+    m_infinitePlan->callbacks.push_back(
+        Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication);
+    return;
+  }
   if (Message::isAdminMsgType(msgType)) {
     m_application.fromAdmin(msg, m_sessionID);
   } else {

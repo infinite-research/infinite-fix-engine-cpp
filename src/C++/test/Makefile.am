@@ -23,6 +23,7 @@ ut_SOURCES = \
 	HttpMessageTestCase.cpp \
 	HttpParserTestCase.cpp \
 	InfiniteCompleteFrameTestCase.cpp \
+	InfiniteSessionClassificationTestCase.cpp \
 	MemoryStoreTestCase.cpp \
 	MessageSortersTestCase.cpp \
 	MessagesTestCase.cpp \

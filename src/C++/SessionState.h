@@ -238,6 +238,7 @@ public:
   }
 
 private:
+  friend class Session;
   bool m_enabled;
   bool m_receivedLogon;
   bool m_sentLogout;

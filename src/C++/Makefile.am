@@ -13,6 +13,8 @@ libquickfix_la_SOURCES = \
 	SessionFactory.cpp \
 	InfiniteCompleteFrame.cpp \
 	InfiniteCompleteFrame.h \
+	InfiniteSessionClassification.cpp \
+	InfiniteSessionClassification.h \
 	Parser.cpp \
 	Parser.h \
 	Log.cpp \

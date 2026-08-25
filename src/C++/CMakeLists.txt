@@ -22,6 +22,7 @@ set(quickfix_SOURCES
   HttpParser.cpp
   HttpServer.cpp
   InfiniteCompleteFrame.cpp
+  InfiniteSessionClassification.cpp
   Initiator.cpp
   Log.cpp
   Message.cpp
