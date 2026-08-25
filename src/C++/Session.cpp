@@ -27,13 +27,46 @@
 #include "Session.h"
 #include "Values.h"
 #include <algorithm>
+#include <atomic>
 #include <iostream>
+#include <limits>
 
 namespace FIX {
 Session::Sessions Session::s_sessions;
 Session::SessionIDs Session::s_sessionIDs;
 Session::Sessions Session::s_registered;
 Mutex Session::s_mutex;
+
+std::uint64_t Session::nextInfiniteGeneration() {
+  static std::atomic<std::uint64_t> next{1};
+  auto value = next.load(std::memory_order_relaxed);
+  while (value != std::numeric_limits<std::uint64_t>::max()) {
+    if (next.compare_exchange_weak(value, value + 1, std::memory_order_relaxed)) {
+      return value;
+    }
+  }
+  throw std::overflow_error("Infinite session generation exhausted");
+}
+
+void Session::advanceInfiniteConfigurationRevision() {
+  if (m_infiniteConfigurationRevision == std::numeric_limits<std::uint64_t>::max()) {
+    throw std::overflow_error("Infinite session configuration revision exhausted");
+  }
+  ++m_infiniteConfigurationRevision;
+}
+
+void Session::recordInfiniteCallback(InfiniteCallbackKind kind, const std::string &bytes, const Message &message) {
+  if (!m_infinitePlan) {
+    throw std::logic_error("Infinite callback recording is inactive");
+  }
+  m_infinitePlan->callbacks.push_back(
+      InfinitePlannedCallback{
+          m_infinitePlan->operationCount++,
+          kind,
+          bytes,
+          message,
+          currentInfiniteExpectedState(m_timestamper())});
+}
 
 #define LOGEX(method)                                                                                                  \
   try {                                                                                                                \
@@ -75,7 +108,8 @@ Session::Session(
       m_dataDictionaryProvider(dataDictionaryProvider),
       m_messageStoreFactory(messageStoreFactory),
       m_pLogFactory(pLogFactory),
-      m_pResponder(0) {
+      m_pResponder(0),
+      m_infiniteSessionIdentity(nextInfiniteGeneration()) {
   m_state.heartBtInt(heartBtInt);
   m_state.initiate(heartBtInt != 0);
   m_state.store(m_messageStoreFactory.create(m_timestamper(), m_sessionID));
@@ -268,7 +302,9 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
       m_state.onEvent(
           "Expecting retransmits FROM: " + SEQNUM_CONVERTOR::convert(getExpectedTargetNum())
           + " TO: " + SEQNUM_CONVERTOR::convert(msgSeqNum - 1));
-      m_state.queue(msgSeqNum, logon);
+      if (!m_infinitePlan) {
+        m_state.queue(msgSeqNum, logon);
+      }
       m_state.resendRange(getExpectedTargetNum(), msgSeqNum - 1);
     } else {
       doTargetTooHigh(logon);
@@ -282,7 +318,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
 
   if (isLoggedOn()) {
     if (m_infinitePlan) {
-      m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::Logon, ""});
+      recordInfiniteCallback(InfiniteCallbackKind::Logon, "");
     } else {
       m_application.onLogon(m_sessionID);
     }
@@ -587,8 +623,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     if (Message::isAdminMsgType(msgType)) {
       if (m_infinitePlan) {
-        m_infinitePlan->callbacks.push_back(
-            InfinitePlannedCallback{InfiniteCallbackKind::ToAdmin, message.toString(), message});
+        recordInfiniteCallback(InfiniteCallbackKind::ToAdmin, message.toString(), message);
       } else {
         m_application.toAdmin(message, m_sessionID);
       }
@@ -622,8 +657,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
       try {
         if (m_infinitePlan) {
-          m_infinitePlan->callbacks.push_back(
-              InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString(), message});
+          recordInfiniteCallback(InfiniteCallbackKind::ToApplication, message.toString(), message);
         } else {
           m_application.toApp(message, m_sessionID);
         }
@@ -643,6 +677,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     return true;
   } catch (IOException &e) {
+    if (m_infinitePlan) {
+      throw;
+    }
     m_state.onEvent(e.what());
     return false;
   }
@@ -665,13 +702,14 @@ void Session::disconnect() {
 
     m_pResponder->disconnect();
     m_pResponder = 0;
+    m_infiniteResponderGeneration = 0;
   }
 
   if (m_state.receivedLogon() || m_state.sentLogon()) {
     m_state.receivedLogon(false);
     m_state.sentLogon(false);
     if (m_infinitePlan) {
-      m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::Logout, ""});
+      recordInfiniteCallback(InfiniteCallbackKind::Logout, "");
     } else {
       m_application.onLogout(m_sessionID);
     }
@@ -698,8 +736,7 @@ bool Session::resend(Message &message) {
   insertSendingTime(header);
 
   if (m_infinitePlan) {
-    m_infinitePlan->callbacks.push_back(
-        InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString(), message});
+    recordInfiniteCallback(InfiniteCallbackKind::ToApplication, message.toString(), message);
     return true;
   }
 
@@ -1125,11 +1162,10 @@ bool Session::validLogonState(const MsgType &msgType) {
 
 void Session::fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID) {
   if (m_infinitePlan) {
-    m_infinitePlan->callbacks.push_back(
-        InfinitePlannedCallback{
-            Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
-            "",
-            msg});
+    recordInfiniteCallback(
+        Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
+        msg.toString(),
+        msg);
     return;
   }
   if (Message::isAdminMsgType(msgType)) {
@@ -1397,6 +1433,9 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       m_state.incrNextTargetMsgSeqNum();
     }
   } catch (IOException &e) {
+    if (m_infinitePlan) {
+      throw;
+    }
     markInfiniteDisposition();
     m_state.onEvent(e.what());
     disconnect();

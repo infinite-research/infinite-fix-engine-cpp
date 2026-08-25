@@ -144,18 +144,25 @@ void InfiniteCompleteFrameDispatcher::resetDeclaredFrameScan() {
   m_bodyLengthHasDigit = false;
 }
 
+InfiniteDispatchResult InfiniteCompleteFrameDispatcher::terminal(
+    InfiniteDispatchResult result,
+    InfiniteDispatchFault fault) {
+  result.terminalFault = fault;
+  m_terminalFault = fault;
+  return result;
+}
+
 InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
     const char *bytes,
     std::size_t length,
-    std::int64_t observedTaiNs) {
+    const std::function<std::int64_t()> &observeTaiNs) {
   InfiniteDispatchResult result;
-  if (observedTaiNs <= 0) {
-    result.terminalFault = InfiniteDispatchFault::InvalidObservation;
+  if (m_terminalFault) {
+    result.terminalFault = m_terminalFault;
     return result;
   }
   if (bytes == nullptr && length != 0) {
-    result.terminalFault = InfiniteDispatchFault::MalformedFrame;
-    return result;
+    return terminal(std::move(result), InfiniteDispatchFault::MalformedFrame);
   }
 
   std::size_t offset = 0;
@@ -169,38 +176,42 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
     try {
       while (true) {
         if (const auto fault = scanDeclaredFrame()) {
-          result.terminalFault = fault;
-          return result;
+          return terminal(std::move(result), *fault);
         }
         if (m_scanStage != ScanStage::Ready) {
           break;
         }
         std::string message;
         if (!m_parser.readFixMessage(message)) {
-          result.terminalFault = InfiniteDispatchFault::MalformedFrame;
-          return result;
+          return terminal(std::move(result), InfiniteDispatchFault::MalformedFrame);
         }
         resetDeclaredFrameScan();
         if (message.size() > MAX_FRAME_BYTES) {
-          result.terminalFault = InfiniteDispatchFault::FrameTooLarge;
-          return result;
+          return terminal(std::move(result), InfiniteDispatchFault::FrameTooLarge);
         }
         if (result.frames.size() >= m_limits.maxFrames || message.size() > m_limits.maxBytes - batchBytes) {
           result.frames.clear();
-          result.terminalFault = InfiniteDispatchFault::BatchLimit;
-          return result;
+          return terminal(std::move(result), InfiniteDispatchFault::BatchLimit);
         }
+        std::int64_t observedTaiNs;
+        try {
+          observedTaiNs = observeTaiNs();
+        } catch (...) {
+          return terminal(std::move(result), InfiniteDispatchFault::InvalidObservation);
+        }
+        if (observedTaiNs <= 0 || (m_lastObservedTaiNs && observedTaiNs < *m_lastObservedTaiNs)) {
+          return terminal(std::move(result), InfiniteDispatchFault::InvalidObservation);
+        }
+        m_lastObservedTaiNs = observedTaiNs;
         batchBytes += message.size();
         result.frames.push_back({std::move(message), observedTaiNs});
       }
     } catch (const MessageParseError &) {
-      result.terminalFault = InfiniteDispatchFault::MalformedFrame;
-      return result;
+      return terminal(std::move(result), InfiniteDispatchFault::MalformedFrame);
     }
 
     if (m_parser.m_buffer.size() == MAX_FRAME_BYTES) {
-      result.terminalFault = InfiniteDispatchFault::AccumulatorOverflow;
-      return result;
+      return terminal(std::move(result), InfiniteDispatchFault::AccumulatorOverflow);
     }
   }
   return result;

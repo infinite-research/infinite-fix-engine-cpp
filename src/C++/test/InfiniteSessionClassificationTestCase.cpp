@@ -47,6 +47,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <future>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -93,6 +94,17 @@ public:
     return authorization;
   }
 
+  static InfiniteEffectAuthorization tamperedCallbackMessageAuthorization(
+      const InfiniteSessionClassification &classification) {
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    auto &callbacks = infiniteActionPlan(authorization.m_actionData).callbacks;
+    if (callbacks.empty()) {
+      throw std::logic_error("Expected planned callback");
+    }
+    callbacks.front().message.setField(Text("tampered"));
+    return authorization;
+  }
+
   static InfiniteExpectedSessionState state(const Session &session) {
     return session.currentInfiniteExpectedState(session.m_timestamper());
   }
@@ -110,6 +122,10 @@ public:
     }
     mutableSession.m_state.queue(sequence, message);
     return message;
+  }
+
+  static std::size_t queuedMessageCount(const Session &session) {
+    return state(session).mutableState.queuedMessages.size();
   }
 
   static void apply(
@@ -150,6 +166,26 @@ FIX42::NewOrderSingle applicationMessage(SEQNUM sequence) {
       sequence);
 }
 
+std::string applicationMessageOfSize(SEQNUM sequence, std::size_t totalSize) {
+  auto message = applicationMessage(sequence);
+  std::string text(totalSize - 256, 'x');
+  for (int attempt = 0; attempt < 4; ++attempt) {
+    message.setField(Text(text));
+    message.getHeader().setField(BodyLength(message.bodyLength()));
+    message.getTrailer().setField(CheckSum(message.checkSum()));
+    const auto bytes = message.toString();
+    if (bytes.size() == totalSize) {
+      return bytes;
+    }
+    if (bytes.size() < totalSize) {
+      text.append(totalSize - bytes.size(), 'x');
+    } else {
+      text.resize(text.size() - (bytes.size() - totalSize));
+    }
+  }
+  throw std::runtime_error("Unable to construct requested FIX message size");
+}
+
 FIX42::QuoteRequest groupedApplicationMessage(SEQNUM sequence) {
   FIX42::QuoteRequest message(QuoteReqID("GROUPED"));
   FIX42::QuoteRequest::NoRelatedSym group;
@@ -168,10 +204,18 @@ struct RecordingEndpoint : NullApplication, Responder {
   }
 
   void disconnect() override { ++disconnects; }
-  void onLogon(const SessionID &) override { ++logonCalls; }
+  void onLogon(const SessionID &) override {
+    ++logonCalls;
+    if (onLogonHook) {
+      onLogonHook();
+    }
+  }
   void onLogout(const SessionID &) override { ++logoutCalls; }
   void toAdmin(Message &message, const SessionID &) override {
     ++toAdminCalls;
+    if (toAdminHook) {
+      toAdminHook();
+    }
     if (mutateToAdmin) {
       message.setField(Text("changed"));
     }
@@ -190,6 +234,9 @@ struct RecordingEndpoint : NullApplication, Responder {
   void fromAdmin(const Message &, const SessionID &) override { ++fromAdminCalls; }
   void fromApp(const Message &, const SessionID &) override {
     ++fromAppCalls;
+    if (fromAppHook) {
+      fromAppHook();
+    }
     if (blockFromApp) {
       std::unique_lock<std::mutex> lock(callbackMutex);
       callbackEntered = true;
@@ -224,6 +271,9 @@ struct RecordingEndpoint : NullApplication, Responder {
   std::mutex callbackMutex;
   std::condition_variable callbackCondition;
   Session *reenterSession{nullptr};
+  std::function<void()> onLogonHook;
+  std::function<void()> toAdminHook;
+  std::function<void()> fromAppHook;
 };
 
 struct RecordingStore : MemoryStore {
@@ -242,6 +292,12 @@ struct RecordingStore : MemoryStore {
   }
   void get(SEQNUM begin, SEQNUM end, std::vector<std::string> &messages) const override {
     ++getCalls;
+    if (blockGet) {
+      std::unique_lock<std::mutex> lock(getMutex);
+      getEntered = true;
+      getCondition.notify_all();
+      getCondition.wait(lock, [this]() { return releaseGet; });
+    }
     MemoryStore::get(begin, end, messages);
   }
   void setNextSenderMsgSeqNum(SEQNUM sequence) override {
@@ -297,6 +353,11 @@ struct RecordingStore : MemoryStore {
   bool throwTargetWrite{false};
   bool throwSnapshot{false};
   mutable int getCalls{0};
+  mutable bool blockGet{false};
+  mutable bool getEntered{false};
+  mutable bool releaseGet{false};
+  mutable std::mutex getMutex;
+  mutable std::condition_variable getCondition;
 };
 
 struct RecordingStoreFactory : MessageStoreFactory {
@@ -371,8 +432,38 @@ struct EffectSnapshot {
   }
 };
 
+EffectSnapshot normalizeInfiniteBookkeeping(EffectSnapshot snapshot) {
+  snapshot.state.sessionIdentity = 0;
+  snapshot.state.revision = 0;
+  snapshot.state.mutableState.responderGeneration = 0;
+  return snapshot;
+}
+
+void checkEquivalentEffects(EffectSnapshot actual, EffectSnapshot expected) {
+  actual = normalizeInfiniteBookkeeping(std::move(actual));
+  expected = normalizeInfiniteBookkeeping(std::move(expected));
+  CHECK(actual.state == expected.state);
+  CHECK(actual.outputs == expected.outputs);
+  CHECK(actual.disconnects == expected.disconnects);
+  CHECK(actual.logonCalls == expected.logonCalls);
+  CHECK(actual.logoutCalls == expected.logoutCalls);
+  CHECK(actual.toAdminCalls == expected.toAdminCalls);
+  CHECK(actual.toAppCalls == expected.toAppCalls);
+  CHECK(actual.fromAdminCalls == expected.fromAdminCalls);
+  CHECK(actual.fromAppCalls == expected.fromAppCalls);
+  CHECK(actual.storeWrites == expected.storeWrites);
+  CHECK(actual.logKinds == expected.logKinds);
+  CHECK(actual.logValues == expected.logValues);
+}
+
+void checkFencedWithoutAuthorizedEffects(EffectSnapshot after, const EffectSnapshot &before) {
+  REQUIRE(after.state.mutableState.infiniteFenced);
+  after.state.mutableState.infiniteFenced = before.state.mutableState.infiniteFenced;
+  CHECK(after == before);
+}
+
 struct Fixture {
-  Fixture()
+  explicit Fixture(bool establishLogon = true)
       : now(8, 8, 8, 25, 8, 2026),
         sessionId(BeginString_FIX42, "VENUE", "PARTICIPANT"),
         sessionTime(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0)),
@@ -389,8 +480,10 @@ struct Fixture {
     session.setDataDictionaryProvider(dictionaries);
     session.setResponder(&endpoint);
 
-    auto logon = finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), 1);
-    session.next(logon, now);
+    if (establishLogon) {
+      auto logon = finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), 1);
+      session.next(logon, now);
+    }
     clearEffects();
   }
 
@@ -404,6 +497,9 @@ struct Fixture {
     endpoint.fromAdminCalls = 0;
     endpoint.fromAppCalls = 0;
     endpoint.sawToAppGroup = false;
+    endpoint.onLogonHook = {};
+    endpoint.toAdminHook = {};
+    endpoint.fromAppHook = {};
     logFactory.log->kinds.clear();
     logFactory.log->values.clear();
     storeFactory.store->writes = 0;
@@ -448,6 +544,11 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(std::holds_alternative<InfiniteApplicationData>(classification.actionData()));
     CHECK(snapshot() == before);
 
+    endpoint.fromAppHook = [&]() {
+      REQUIRE_FALSE(logFactory.log->kinds.empty());
+      CHECK(logFactory.log->kinds.back() == "incoming");
+      CHECK(session.getExpectedTargetNum() == before.state.targetSequence);
+    };
     auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
     InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
     CHECK(session.getExpectedTargetNum() == before.state.targetSequence + 1);
@@ -462,46 +563,93 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
         = InfiniteSessionClassificationTestAccess::classify(session, nextBinding, nextMessage.toString(), now);
     CHECK(nextClassification.expected() == infiniteActionPlan(classification.actionData()).resultingState);
 
-    const auto afterFirstApply = snapshot();
     session.setNextTargetMsgSeqNum(before.state.targetSequence);
+    const auto beforeReuse = snapshot();
     InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
-    CHECK(endpoint.fromAppCalls == afterFirstApply.fromAppCalls);
+    checkFencedWithoutAuthorizedEffects(snapshot(), beforeReuse);
     CHECK(session.getExpectedTargetNum() == before.state.targetSequence);
   }
 
-  SECTION("stale or mismatched authorization has no effect") {
+  SECTION("credential-bearing Logon is rejected before parsing or retention") {
+    const std::string secret = "not-retained-secret";
+    FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+    logon.setField(Username("participant"));
+    logon.setField(Password(secret));
+    const auto bytes = finish(std::move(logon), session.getExpectedTargetNum()).toString();
+    REQUIRE(bytes.find("\001553=participant\001") != std::string::npos);
+    REQUIRE(bytes.find("\001554=" + secret + "\001") != std::string::npos);
+    const auto before = snapshot();
+
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x21),
+        bytes,
+        now);
+    const auto &plan = infiniteActionPlan(classification.actionData());
+
+    CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
+    CHECK(snapshot() == before);
+    CHECK(classification.message().toString().find(secret) == std::string::npos);
+    CHECK(plan.failure.find(secret) == std::string::npos);
+    CHECK(plan.sourceMessages.empty());
+    CHECK(plan.callbacks.empty());
+    CHECK(plan.effects.empty());
+  }
+
+  SECTION("invalid authorizations fence before any authorized effect") {
     const auto binding = InfiniteSessionClassificationTestAccess::atHead(0x22);
     const auto message = applicationMessage(session.getExpectedTargetNum());
     const auto classification
         = InfiniteSessionClassificationTestAccess::classify(session, binding, message.toString(), now);
-    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
 
-    session.setNextTargetMsgSeqNum(session.getExpectedTargetNum() + 1);
-    const auto stale = snapshot();
-    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
-    CHECK(snapshot() == stale);
+    SECTION("stale state") {
+      auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+      session.setNextTargetMsgSeqNum(session.getExpectedTargetNum() + 1);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
 
-    session.setNextTargetMsgSeqNum(classification.expected().targetSequence);
-    const auto otherBinding = InfiniteSessionClassificationTestAccess::atHead(0x23);
-    const auto other
-        = InfiniteSessionClassificationTestAccess::classify(session, otherBinding, message.toString(), now);
-    auto mismatchedAuthorization = InfiniteSessionClassificationTestAccess::authorization(other);
-    const auto mismatched = snapshot();
-    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(mismatchedAuthorization));
-    CHECK(snapshot() == mismatched);
+    SECTION("mismatched binding") {
+      const auto other = InfiniteSessionClassificationTestAccess::classify(
+          session,
+          InfiniteSessionClassificationTestAccess::atHead(0x23),
+          message.toString(),
+          now);
+      auto authorization = InfiniteSessionClassificationTestAccess::authorization(other);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
 
-    auto tamperedAuthorization = InfiniteSessionClassificationTestAccess::tamperedAuthorization(classification);
-    const auto tampered = snapshot();
-    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(tamperedAuthorization));
-    CHECK(snapshot() == tampered);
+    SECTION("tampered plan") {
+      auto authorization = InfiniteSessionClassificationTestAccess::tamperedAuthorization(classification);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
 
-    auto mismatchedAction = InfiniteSessionClassificationTestAccess::mismatchedActionAuthorization(classification);
-    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(mismatchedAction));
-    CHECK(snapshot() == tampered);
+    SECTION("mismatched action") {
+      auto authorization = InfiniteSessionClassificationTestAccess::mismatchedActionAuthorization(classification);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
 
-    auto consumed = InfiniteSessionClassificationTestAccess::consumedAuthorization(classification);
-    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(consumed));
-    CHECK(snapshot() == tampered);
+    SECTION("already consumed") {
+      auto authorization = InfiniteSessionClassificationTestAccess::consumedAuthorization(classification);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
+
+    SECTION("tampered callback message") {
+      auto authorization
+          = InfiniteSessionClassificationTestAccess::tamperedCallbackMessageAuthorization(classification);
+      const auto before = snapshot();
+      InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+      checkFencedWithoutAuthorizedEffects(snapshot(), before);
+    }
   }
 
   SECTION("the supported session families have a closed classification") {
@@ -535,6 +683,108 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
         InfiniteSessionClassificationTestAccess::classify(session, binding, reject.toString(), now).kind()
         == InfiniteSessionActionKind::ProtocolDisposition);
     CHECK(snapshot() == before);
+  }
+
+  SECTION("legacy and authorized Infinite paths have a paired differential corpus") {
+    struct Scenario {
+      const char *name;
+      bool establishLogon;
+      InfiniteSessionActionKind expectedAction;
+      std::function<Message(Fixture &)> input;
+    };
+    const std::vector<Scenario> scenarios{
+        {"Logon",
+         false,
+         InfiniteSessionActionKind::ProtocolControl,
+         [](Fixture &fixture) {
+           return finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), fixture.session.getExpectedTargetNum());
+         }},
+        {"Heartbeat",
+         true,
+         InfiniteSessionActionKind::ProtocolControl,
+         [](Fixture &fixture) { return finish(FIX42::Heartbeat(), fixture.session.getExpectedTargetNum()); }},
+        {"TestRequest",
+         true,
+         InfiniteSessionActionKind::ProtocolControl,
+         [](Fixture &fixture) {
+           return finish(FIX42::TestRequest(TestReqID("DIFFERENTIAL")), fixture.session.getExpectedTargetNum());
+         }},
+        {"SequenceReset",
+         true,
+         InfiniteSessionActionKind::SequenceReset,
+         [](Fixture &fixture) {
+           const auto sequence = fixture.session.getExpectedTargetNum();
+           return finish(FIX42::SequenceReset(NewSeqNo(sequence + 1)), sequence);
+         }},
+        {"Logout",
+         true,
+         InfiniteSessionActionKind::Logout,
+         [](Fixture &fixture) { return finish(FIX42::Logout(), fixture.session.getExpectedTargetNum()); }},
+        {"ResendRequest",
+         true,
+         InfiniteSessionActionKind::ResendOrQueuedRelease,
+         [](Fixture &fixture) {
+           auto outbound = applicationMessage(fixture.session.getExpectedSenderNum());
+           if (!fixture.session.send(outbound)) {
+             throw std::runtime_error("Unable to seed resend message");
+           }
+           const auto sequence = outbound.getHeader().getField<MsgSeqNum>().getValue();
+           return finish(
+               FIX42::ResendRequest(BeginSeqNo(sequence), EndSeqNo(sequence)),
+               fixture.session.getExpectedTargetNum());
+         }},
+        {"Reject",
+         true,
+         InfiniteSessionActionKind::ProtocolDisposition,
+         [](Fixture &fixture) { return finish(FIX42::Reject(RefSeqNum(1)), fixture.session.getExpectedTargetNum()); }},
+        {"dictionary-invalid application",
+         true,
+         InfiniteSessionActionKind::ProtocolDisposition,
+         [](Fixture &fixture) {
+           auto message = applicationMessage(fixture.session.getExpectedTargetNum());
+           message.removeField(FIELD::Symbol);
+           message.getHeader().setField(BodyLength(message.bodyLength()));
+           message.getTrailer().setField(CheckSum(message.checkSum()));
+           return message;
+         }},
+        {"application",
+         true,
+         InfiniteSessionActionKind::Application,
+         [](Fixture &fixture) { return applicationMessage(fixture.session.getExpectedTargetNum()); }},
+        {"session timeout",
+         true,
+         InfiniteSessionActionKind::ProtocolDisposition,
+         [](Fixture &fixture) {
+           fixture.now = UtcTimeStamp(10, 0, 0, 25, 8, 2026);
+           InfiniteSessionClassificationTestAccess::setSessionTime(
+               fixture.session,
+               TimeRange(UtcTimeOnly(7, 0, 0), UtcTimeOnly(9, 0, 0)));
+           return applicationMessage(fixture.session.getExpectedTargetNum());
+         }},
+    };
+
+    for (const auto &scenario : scenarios) {
+      INFO(scenario.name);
+      Fixture legacy(scenario.establishLogon);
+      Fixture infinite(scenario.establishLogon);
+      const auto legacyInput = scenario.input(legacy);
+      const auto infiniteInput = scenario.input(infinite);
+      legacy.clearEffects();
+      infinite.clearEffects();
+
+      legacy.session.getLog()->onIncoming(legacyInput.toString());
+      legacy.session.next(legacyInput, legacy.now);
+      const auto classification = InfiniteSessionClassificationTestAccess::classify(
+          infinite.session,
+          InfiniteSessionClassificationTestAccess::atHead(0x35),
+          infiniteInput.toString(),
+          infinite.now);
+      CHECK(classification.kind() == scenario.expectedAction);
+      auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+      InfiniteSessionClassificationTestAccess::apply(infinite.session, classification, std::move(authorization));
+
+      checkEquivalentEffects(infinite.snapshot(), legacy.snapshot());
+    }
   }
 
   SECTION("out-of-sequence admin frames retain their closed action family") {
@@ -803,10 +1053,28 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
     CHECK(snapshot() == before);
     auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    const auto beforeApply = snapshot();
     storeFactory.store->throwSnapshot = true;
     CHECK_NOTHROW(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
     storeFactory.store->throwSnapshot = false;
-    CHECK(snapshot() == before);
+    checkFencedWithoutAuthorizedEffects(snapshot(), beforeApply);
+  }
+
+  SECTION("freshness snapshot failures fence before the first authorized effect") {
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6c),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    const auto before = snapshot();
+    storeFactory.store->throwSnapshot = true;
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    storeFactory.store->throwSnapshot = false;
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
   }
 
   SECTION("resend classification captures toApp without invoking it") {
@@ -848,7 +1116,30 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(endpoint.outputs.front() == callback->bytes);
   }
 
+  SECTION("resend source-store drift fences before the first planned operation") {
+    auto outbound = applicationMessage(session.getExpectedSenderNum());
+    REQUIRE(session.send(outbound));
+    const auto outboundSequence = outbound.getHeader().getField<MsgSeqNum>().getValue();
+    clearEffects();
+    const auto request = finish(
+        FIX42::ResendRequest(BeginSeqNo(outboundSequence), EndSeqNo(outboundSequence)),
+        session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6d),
+        request.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    REQUIRE(storeFactory.store->set(outboundSequence, "changed"));
+    const auto before = snapshot();
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
   SECTION("the captured effect order preserves sequence progress before output") {
+    const auto before = snapshot();
     const auto request = finish(FIX42::TestRequest(TestReqID("ORDER")), session.getExpectedTargetNum());
     const auto classification = InfiniteSessionClassificationTestAccess::classify(
         session,
@@ -868,20 +1159,120 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
       actual.push_back(effect.kind);
     }
     CHECK(actual == expected);
+    const auto &callbacks = infiniteActionPlan(classification.actionData()).callbacks;
+    const auto toAdmin = std::find_if(callbacks.begin(), callbacks.end(), [](const auto &callback) {
+      return callback.kind == InfiniteCallbackKind::ToAdmin;
+    });
+    const auto fromAdmin = std::find_if(callbacks.begin(), callbacks.end(), [](const auto &callback) {
+      return callback.kind == InfiniteCallbackKind::FromAdmin;
+    });
+    REQUIRE(fromAdmin != callbacks.end());
+    REQUIRE(toAdmin != callbacks.end());
+    CHECK(effects.front().order == 0);
+    CHECK(fromAdmin->order == 1);
+    CHECK(toAdmin->order == 2);
+    CHECK(effects[1].order == 3);
+
+    endpoint.toAdminHook = [&]() {
+      REQUIRE_FALSE(logFactory.log->kinds.empty());
+      CHECK(logFactory.log->kinds.back() == "incoming");
+      CHECK(endpoint.outputs.empty());
+      CHECK(session.getExpectedSenderNum() == before.state.senderSequence);
+    };
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+    CHECK(session.getExpectedSenderNum() == before.state.senderSequence + 1);
+    REQUIRE_FALSE(endpoint.outputs.empty());
   }
 
-  SECTION("resend store ranges are refused before the source store is read") {
-    session.setNextSenderMsgSeqNum(400);
+  SECTION("the exact 256-frame and 16-MiB resend cap is accepted") {
+    constexpr std::size_t FRAME_BYTES = 65'536;
+    for (SEQNUM sequence = 1; sequence <= 256; ++sequence) {
+      REQUIRE(storeFactory.store->set(sequence, applicationMessageOfSize(sequence, FRAME_BYTES)));
+    }
+    session.setNextSenderMsgSeqNum(257);
     clearEffects();
-    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(399)), session.getExpectedTargetNum());
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(256)), session.getExpectedTargetNum());
     const auto classification = InfiniteSessionClassificationTestAccess::classify(
         session,
         InfiniteSessionClassificationTestAccess::atHead(0x6f),
         request.toString(),
         now);
 
-    CHECK(classification.kind() == InfiniteSessionActionKind::ProtocolDisposition);
+    CHECK(classification.kind() == InfiniteSessionActionKind::ResendOrQueuedRelease);
+    CHECK(infiniteActionPlan(classification.actionData()).sourceMessages.size() == 256);
+    CHECK(storeFactory.store->getCalls == 256);
+  }
+
+  SECTION("the 16-MiB resend cap rejects one byte over without retaining the prefix") {
+    constexpr std::size_t FRAME_BYTES = 65'536;
+    for (SEQNUM sequence = 1; sequence < 256; ++sequence) {
+      REQUIRE(storeFactory.store->set(sequence, applicationMessageOfSize(sequence, FRAME_BYTES)));
+    }
+    REQUIRE(storeFactory.store->set(256, applicationMessageOfSize(256, FRAME_BYTES + 1)));
+    session.setNextSenderMsgSeqNum(257);
+    clearEffects();
+    const auto before = snapshot();
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(256)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6f),
+        request.toString(),
+        now);
+    const auto &plan = infiniteActionPlan(classification.actionData());
+
+    CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
+    CHECK(plan.sourceMessages.empty());
+    CHECK(plan.callbacks.empty());
+    CHECK(plan.effects.empty());
+    CHECK(snapshot() == before);
+  }
+
+  SECTION("the 257-frame resend cap is refused before the source store is read") {
+    session.setNextSenderMsgSeqNum(258);
+    clearEffects();
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(257)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6f),
+        request.toString(),
+        now);
+
+    CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
     CHECK(storeFactory.store->getCalls == 0);
+  }
+
+  SECTION("concurrent readers cannot observe the classification sandbox") {
+    auto outbound = applicationMessage(session.getExpectedSenderNum());
+    REQUIRE(session.send(outbound));
+    const auto outboundSequence = outbound.getHeader().getField<MsgSeqNum>().getValue();
+    clearEffects();
+    const auto request = finish(
+        FIX42::ResendRequest(BeginSeqNo(outboundSequence), EndSeqNo(outboundSequence)),
+        session.getExpectedTargetNum());
+    storeFactory.store->blockGet = true;
+    auto classification = std::async(std::launch::async, [&]() {
+      return InfiniteSessionClassificationTestAccess::classify(
+          session,
+          InfiniteSessionClassificationTestAccess::atHead(0x70),
+          request.toString(),
+          now);
+    });
+    {
+      std::unique_lock<std::mutex> lock(storeFactory.store->getMutex);
+      storeFactory.store->getCondition.wait(lock, [&]() { return storeFactory.store->getEntered; });
+    }
+
+    auto reader = std::async(std::launch::async, [&]() { return session.isEnabled(); });
+    CHECK(reader.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout);
+    {
+      std::lock_guard<std::mutex> lock(storeFactory.store->getMutex);
+      storeFactory.store->releaseGet = true;
+    }
+    storeFactory.store->getCondition.notify_all();
+    CHECK(classification.get().kind() == InfiniteSessionActionKind::ResendOrQueuedRelease);
+    REQUIRE(reader.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+    CHECK(reader.get());
   }
 
   SECTION("repeating groups survive retransmit callback capture") {
@@ -949,7 +1340,10 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
 
     InfiniteSessionClassificationTestAccess::apply(other, classification, std::move(authorization));
 
-    CHECK(InfiniteSessionClassificationTestAccess::state(other) == before);
+    auto after = InfiniteSessionClassificationTestAccess::state(other);
+    REQUIRE(after.mutableState.infiniteFenced);
+    after.mutableState.infiniteFenced = before.mutableState.infiniteFenced;
+    CHECK(after == before);
     CHECK(endpoint.fromAppCalls == beforeFromApp);
   }
 
@@ -966,7 +1360,104 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
 
     InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
 
-    CHECK(snapshot() == before);
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("dictionary replacement invalidates a captured plan") {
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x74),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    session.setDataDictionaryProvider(dictionaries);
+    const auto before = snapshot();
+
+    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("current time invalidates a plan after its logon window closes") {
+    session.setLogonTime(TimeRange(UtcTimeOnly(8, 0, 0), UtcTimeOnly(9, 0, 0)));
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x75),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    now = UtcTimeStamp(10, 0, 0, 25, 8, 2026);
+    const auto before = snapshot();
+
+    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("too-high Logon never enters the private C++ queue") {
+    RecordingEndpoint freshEndpoint;
+    RecordingStoreFactory freshStoreFactory;
+    RecordingLogFactory freshLogFactory;
+    Session freshSession(
+        [this]() { return now; },
+        freshEndpoint,
+        freshStoreFactory,
+        sessionId,
+        dictionaries,
+        sessionTime,
+        0,
+        &freshLogFactory);
+    freshSession.setResponder(&freshEndpoint);
+    freshSession.setSendNextExpectedMsgSeqNum(true);
+    const auto before = InfiniteSessionClassificationTestAccess::state(freshSession);
+    const auto logon = finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), before.targetSequence + 1);
+
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        freshSession,
+        InfiniteSessionClassificationTestAccess::atHead(0x76),
+        logon.toString(),
+        now);
+
+    CHECK(classification.kind() == InfiniteSessionActionKind::ProtocolControl);
+    CHECK(infiniteActionPlan(classification.actionData()).resultingState.mutableState.queuedMessages.empty());
+    CHECK(InfiniteSessionClassificationTestAccess::queuedMessageCount(freshSession) == 0);
+  }
+
+  SECTION("sequence exhaustion never wraps planned state") {
+    SECTION("target sequence") {
+      session.setNextTargetMsgSeqNum(std::numeric_limits<SEQNUM>::max());
+      clearEffects();
+      const auto before = snapshot();
+      const auto message = applicationMessage(before.state.targetSequence);
+      const auto classification = InfiniteSessionClassificationTestAccess::classify(
+          session,
+          InfiniteSessionClassificationTestAccess::atHead(0x77),
+          message.toString(),
+          now);
+
+      CHECK(classification.kind() == InfiniteSessionActionKind::ProtocolDisposition);
+      CHECK(
+          infiniteActionPlan(classification.actionData()).resultingState.targetSequence
+          == std::numeric_limits<SEQNUM>::max());
+      CHECK(snapshot() == before);
+    }
+
+    SECTION("sender sequence") {
+      session.setNextSenderMsgSeqNum(std::numeric_limits<SEQNUM>::max());
+      clearEffects();
+      const auto before = snapshot();
+      const auto request = finish(FIX42::TestRequest(TestReqID("MAX")), before.state.targetSequence);
+      const auto classification = InfiniteSessionClassificationTestAccess::classify(
+          session,
+          InfiniteSessionClassificationTestAccess::atHead(0x78),
+          request.toString(),
+          now);
+
+      CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
+      CHECK(snapshot() == before);
+    }
   }
 
   SECTION("DoNotSend fences the private path before any authorized output") {
@@ -1015,7 +1506,7 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(InfiniteSessionClassificationTestAccess::state(session).mutableState.infiniteFenced);
   }
 
-  SECTION("application and legacy mutation serialize on the Session mutex") {
+  SECTION("callbacks release the Session lock while same-session mutation stays blocked") {
     const auto message = applicationMessage(session.getExpectedTargetNum());
     const auto classification = InfiniteSessionClassificationTestAccess::classify(
         session,
@@ -1032,19 +1523,68 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     }
 
     auto mutation = std::async(std::launch::async, [&]() { session.setNextTargetMsgSeqNum(99); });
-    CHECK(mutation.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout);
+    REQUIRE(mutation.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+    CHECK_THROWS_AS(mutation.get(), IOException);
     {
       std::lock_guard<std::mutex> lock(endpoint.callbackMutex);
       endpoint.releaseCallback = true;
     }
     endpoint.callbackCondition.notify_all();
     applying.join();
-    CHECK(mutation.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
-    mutation.get();
-    CHECK(session.getExpectedTargetNum() == 99);
+    CHECK(session.getExpectedTargetNum() == classification.expected().targetSequence + 1);
   }
 
-  SECTION("callback failure consumes authorization before authoritative effects") {
+  SECTION("a callback can enter a different Session without lock inversion") {
+    RecordingStoreFactory otherStoreFactory;
+    RecordingLogFactory otherLogFactory;
+    Session other(
+        [this]() { return now; },
+        endpoint,
+        otherStoreFactory,
+        SessionID(BeginString_FIX42, "VENUE", "OTHER"),
+        dictionaries,
+        sessionTime,
+        0,
+        &otherLogFactory);
+    const auto otherTarget = other.getExpectedTargetNum();
+    endpoint.reenterSession = &other;
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x79),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+
+    CHECK_NOTHROW(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    endpoint.reenterSession = nullptr;
+    CHECK(other.getExpectedTargetNum() == otherTarget + 1);
+  }
+
+  SECTION("a cached Log handle cannot mutate the Session from a callback") {
+    auto *const cachedLog = session.getLog();
+    endpoint.fromAppHook = [cachedLog]() { cachedLog->onEvent("callback mutation"); };
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x7a),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    const auto before = snapshot();
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    endpoint.fromAppHook = {};
+    const auto fenced = InfiniteSessionClassificationTestAccess::state(session);
+    CHECK(fenced.mutableState.infiniteFenced);
+    CHECK(fenced.targetSequence == before.state.targetSequence);
+    REQUIRE(logFactory.log->kinds.size() == before.logKinds.size() + 1);
+    CHECK(logFactory.log->kinds.back() == "incoming");
+  }
+
+  SECTION("callback failure preserves the exact effects ordered before it") {
     const auto binding = InfiniteSessionClassificationTestAccess::atHead(0x77);
     const auto message = applicationMessage(session.getExpectedTargetNum());
     const auto classification
@@ -1060,8 +1600,9 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(endpoint.outputs == before.outputs);
     CHECK(endpoint.disconnects == before.disconnects);
     CHECK(storeFactory.store->writes == before.storeWrites);
-    CHECK(logFactory.log->kinds == before.logKinds);
-    CHECK(logFactory.log->values == before.logValues);
+    REQUIRE(logFactory.log->kinds.size() == before.logKinds.size() + 1);
+    CHECK(logFactory.log->kinds.back() == "incoming");
+    CHECK(logFactory.log->values.back() == message.toString());
     const auto afterFailure = snapshot();
     endpoint.throwFromApp = false;
     InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
@@ -1085,11 +1626,12 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(fenced.targetSequence == before.state.targetSequence);
     CHECK(fenced.mutableState.infiniteFenced);
     CHECK(storeFactory.store->writes == before.storeWrites);
-    CHECK(logFactory.log->kinds == before.logKinds);
+    REQUIRE(logFactory.log->kinds.size() == before.logKinds.size() + 1);
+    CHECK(logFactory.log->kinds.back() == "incoming");
     CHECK(endpoint.outputs == before.outputs);
   }
 
-  SECTION("outgoing callback mutation fails before plan effects") {
+  SECTION("outgoing callback mutation retains only earlier ordered effects") {
     const auto binding = InfiniteSessionClassificationTestAccess::atHead(0x79);
     const auto request = finish(FIX42::TestRequest(TestReqID("MUTATE")), session.getExpectedTargetNum());
     const auto classification
@@ -1106,7 +1648,8 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(fenced.targetSequence == before.state.targetSequence);
     CHECK(fenced.mutableState.infiniteFenced);
     CHECK(storeFactory.store->writes == before.storeWrites);
-    CHECK(logFactory.log->kinds == before.logKinds);
+    REQUIRE(logFactory.log->kinds.size() == before.logKinds.size() + 1);
+    CHECK(logFactory.log->kinds.back() == "incoming");
     CHECK(endpoint.outputs == before.outputs);
   }
 

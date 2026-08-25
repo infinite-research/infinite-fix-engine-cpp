@@ -39,6 +39,11 @@ namespace {
 constexpr std::size_t MAX_INFINITE_PLANNED_MESSAGES = 256;
 constexpr std::size_t MAX_INFINITE_PLANNED_BYTES = 16 * 1024 * 1024;
 
+bool containsLogonCredentialField(const std::string &bytes) {
+  return bytes.find("\00135=A\001") != std::string::npos
+         && (bytes.find("\001553=") != std::string::npos || bytes.find("\001554=") != std::string::npos);
+}
+
 InfiniteActionData makeActionData(InfiniteSessionActionKind action, InfiniteActionPlan plan) {
   switch (action) {
   case InfiniteSessionActionKind::ProtocolControl:
@@ -60,12 +65,12 @@ InfiniteActionData makeActionData(InfiniteSessionActionKind action, InfiniteActi
 }
 
 void appendEffect(
-    std::vector<InfinitePlannedEffect> &effects,
+    InfiniteActionPlan &plan,
     InfiniteEffectKind kind,
     SEQNUM sequence,
     const std::string &bytes,
     const UtcTimeStamp &now) {
-  effects.push_back(InfinitePlannedEffect{kind, sequence, bytes, now});
+  plan.effects.push_back(InfinitePlannedEffect{plan.operationCount++, kind, sequence, bytes, now});
 }
 
 class RecordingMessageStore : public MessageStore {
@@ -74,19 +79,19 @@ public:
       const InfiniteExpectedSessionState &initial,
       const MessageStore &sourceStore,
       std::vector<std::pair<SEQNUM, std::string>> &sourceMessages,
-      std::vector<InfinitePlannedEffect> &effects,
+      InfiniteActionPlan &plan,
       const UtcTimeStamp &now)
       : m_senderSequence(initial.senderSequence),
         m_targetSequence(initial.targetSequence),
         m_creationTime(initial.mutableState.storeCreationTime),
         m_sourceStore(sourceStore),
         m_sourceMessages(sourceMessages),
-        m_effects(effects),
+        m_plan(plan),
         m_now(now) {}
 
   bool set(SEQNUM sequence, const std::string &message) override {
     m_messages[sequence] = message;
-    appendEffect(m_effects, InfiniteEffectKind::StoreMessage, sequence, message, m_now);
+    appendEffect(m_plan, InfiniteEffectKind::StoreMessage, sequence, message, m_now);
     return true;
   }
 
@@ -107,6 +112,9 @@ public:
 
       std::vector<std::string> loaded;
       m_sourceStore.get(sequence, sequence, loaded);
+      if (loaded.size() > 1) {
+        throw IOException("Infinite effect plan store returned duplicate sequence");
+      }
       for (const auto &bytes : loaded) {
         if (m_sourceMessages.size() >= MAX_INFINITE_PLANNED_MESSAGES
             || bytes.size() > MAX_INFINITE_PLANNED_BYTES - m_sourceBytes) {
@@ -133,16 +141,26 @@ public:
 
   void setNextSenderMsgSeqNum(SEQNUM sequence) override {
     m_senderSequence = sequence;
-    appendEffect(m_effects, InfiniteEffectKind::SetSenderSequence, sequence, "", m_now);
+    appendEffect(m_plan, InfiniteEffectKind::SetSenderSequence, sequence, "", m_now);
   }
 
   void setNextTargetMsgSeqNum(SEQNUM sequence) override {
     m_targetSequence = sequence;
-    appendEffect(m_effects, InfiniteEffectKind::SetTargetSequence, sequence, "", m_now);
+    appendEffect(m_plan, InfiniteEffectKind::SetTargetSequence, sequence, "", m_now);
   }
 
-  void incrNextSenderMsgSeqNum() override { setNextSenderMsgSeqNum(m_senderSequence + 1); }
-  void incrNextTargetMsgSeqNum() override { setNextTargetMsgSeqNum(m_targetSequence + 1); }
+  void incrNextSenderMsgSeqNum() override {
+    if (m_senderSequence == std::numeric_limits<SEQNUM>::max()) {
+      throw IOException("Infinite sender sequence exhausted");
+    }
+    setNextSenderMsgSeqNum(m_senderSequence + 1);
+  }
+  void incrNextTargetMsgSeqNum() override {
+    if (m_targetSequence == std::numeric_limits<SEQNUM>::max()) {
+      throw IOException("Infinite target sequence exhausted");
+    }
+    setNextTargetMsgSeqNum(m_targetSequence + 1);
+  }
   UtcTimeStamp getCreationTime() const override { return m_creationTime; }
 
   void reset(const UtcTimeStamp &now) override {
@@ -151,7 +169,7 @@ public:
     m_senderSequence = 1;
     m_targetSequence = 1;
     m_creationTime = now;
-    appendEffect(m_effects, InfiniteEffectKind::ResetStore, 0, "", now);
+    appendEffect(m_plan, InfiniteEffectKind::ResetStore, 0, "", now);
   }
 
   void refresh() override {}
@@ -165,61 +183,63 @@ private:
   std::vector<std::pair<SEQNUM, std::string>> &m_sourceMessages;
   mutable std::size_t m_sourceBytes{0};
   bool m_reset{false};
-  std::vector<InfinitePlannedEffect> &m_effects;
+  InfiniteActionPlan &m_plan;
   UtcTimeStamp m_now;
 };
 
 class RecordingLog : public Log {
 public:
-  RecordingLog(std::vector<InfinitePlannedEffect> &effects, const UtcTimeStamp &now)
-      : m_effects(effects),
+  RecordingLog(InfiniteActionPlan &plan, const UtcTimeStamp &now)
+      : m_plan(plan),
         m_now(now) {}
 
   void clear() override {}
   void backup() override {}
   void onIncoming(const std::string &bytes) override {
-    appendEffect(m_effects, InfiniteEffectKind::LogIncoming, 0, bytes, m_now);
+    appendEffect(m_plan, InfiniteEffectKind::LogIncoming, 0, bytes, m_now);
   }
   void onOutgoing(const std::string &bytes) override {
-    appendEffect(m_effects, InfiniteEffectKind::LogOutgoing, 0, bytes, m_now);
+    appendEffect(m_plan, InfiniteEffectKind::LogOutgoing, 0, bytes, m_now);
   }
   void onEvent(const std::string &event) override {
-    appendEffect(m_effects, InfiniteEffectKind::LogEvent, 0, event, m_now);
+    appendEffect(m_plan, InfiniteEffectKind::LogEvent, 0, event, m_now);
   }
 
 private:
-  std::vector<InfinitePlannedEffect> &m_effects;
+  InfiniteActionPlan &m_plan;
   UtcTimeStamp m_now;
 };
 
 class RecordingResponder : public Responder {
 public:
-  RecordingResponder(std::vector<InfinitePlannedEffect> &effects, const UtcTimeStamp &now)
-      : m_effects(effects),
+  RecordingResponder(InfiniteActionPlan &plan, const UtcTimeStamp &now)
+      : m_plan(plan),
         m_now(now) {}
 
   bool send(const std::string &bytes) override {
-    appendEffect(m_effects, InfiniteEffectKind::Send, 0, bytes, m_now);
+    appendEffect(m_plan, InfiniteEffectKind::Send, 0, bytes, m_now);
     return true;
   }
-  void disconnect() override { appendEffect(m_effects, InfiniteEffectKind::Disconnect, 0, "", m_now); }
+  void disconnect() override { appendEffect(m_plan, InfiniteEffectKind::Disconnect, 0, "", m_now); }
 
 private:
-  std::vector<InfinitePlannedEffect> &m_effects;
+  InfiniteActionPlan &m_plan;
   UtcTimeStamp m_now;
 };
 } // namespace
 
 bool InfinitePlannedCallback::operator==(const InfinitePlannedCallback &rhs) const {
-  return kind == rhs.kind && bytes == rhs.bytes;
+  return order == rhs.order && kind == rhs.kind && bytes == rhs.bytes && message.toString() == rhs.message.toString()
+         && observedState == rhs.observedState;
 }
 
 bool InfinitePlannedMessage::operator==(const InfinitePlannedMessage &rhs) const {
-  return sequence == rhs.sequence && bytes == rhs.bytes;
+  return sequence == rhs.sequence && bytes == rhs.bytes && message.toString() == rhs.message.toString();
 }
 
 bool InfinitePlannedEffect::operator==(const InfinitePlannedEffect &rhs) const {
-  return kind == rhs.kind && sequence == rhs.sequence && bytes == rhs.bytes && timestamp == rhs.timestamp;
+  return order == rhs.order && kind == rhs.kind && sequence == rhs.sequence && bytes == rhs.bytes
+         && timestamp == rhs.timestamp;
 }
 
 bool InfiniteSessionStateFingerprint::operator==(const InfiniteSessionStateFingerprint &rhs) const {
@@ -238,19 +258,19 @@ bool InfiniteSessionStateFingerprint::operator==(const InfiniteSessionStateFinge
          && refreshOnLogon == rhs.refreshOnLogon && timestampPrecision == rhs.timestampPrecision
          && persistMessages == rhs.persistMessages && validateLengthAndChecksum == rhs.validateLengthAndChecksum
          && sendNextExpectedMsgSeqNum == rhs.sendNextExpectedMsgSeqNum && nonStopSession == rhs.nonStopSession
-         && responderIdentity == rhs.responderIdentity;
+         && responderGeneration == rhs.responderGeneration;
 }
 
 bool InfiniteExpectedSessionState::operator==(const InfiniteExpectedSessionState &rhs) const {
-  return sessionIdentity == rhs.sessionIdentity && revision == rhs.revision && senderSequence == rhs.senderSequence
+  return sessionIdentity == rhs.sessionIdentity && revision == rhs.revision
+         && configurationRevision == rhs.configurationRevision && senderSequence == rhs.senderSequence
          && targetSequence == rhs.targetSequence && loggedOn == rhs.loggedOn && mutableState == rhs.mutableState;
 }
 
 bool InfiniteActionPlan::operator==(const InfiniteActionPlan &rhs) const {
-  return exactBytes == rhs.exactBytes && messageType == rhs.messageType && now == rhs.now
-         && sequenceDisposition == rhs.sequenceDisposition && failure == rhs.failure
-         && resultingState == rhs.resultingState && sourceMessages == rhs.sourceMessages && callbacks == rhs.callbacks
-         && effects == rhs.effects;
+  return messageType == rhs.messageType && now == rhs.now && sequenceDisposition == rhs.sequenceDisposition
+         && failure == rhs.failure && resultingState == rhs.resultingState && sourceMessages == rhs.sourceMessages
+         && callbacks == rhs.callbacks && effects == rhs.effects && operationCount == rhs.operationCount;
 }
 
 InfiniteSessionActionKind infiniteActionKind(const InfiniteActionData &actionData) {
@@ -348,11 +368,12 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(const UtcTime
       m_validateLengthAndChecksum,
       m_sendNextExpectedMsgSeqNum,
       m_isNonStopSession,
-      reinterpret_cast<std::uintptr_t>(m_pResponder)};
+      m_infiniteResponderGeneration};
 
   return InfiniteExpectedSessionState{
-      reinterpret_cast<std::uintptr_t>(this),
+      m_infiniteSessionIdentity,
       m_infiniteSessionRevision,
+      m_infiniteConfigurationRevision,
       senderSequence,
       targetSequence,
       m_state.m_receivedLogon && m_state.m_sentLogon,
@@ -364,14 +385,18 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     const std::string &bytes,
     const UtcTimeStamp &now) const {
   Locker sessionLock(m_mutex);
+  ensureInfiniteCallbackNotReentrant();
   InfiniteExpectedSessionState expected{};
-  InfiniteActionPlan plan{bytes, "", now, InfiniteSequenceDisposition::Unavailable, "", expected, {}, {}, {}};
+  InfiniteActionPlan plan{"", now, InfiniteSequenceDisposition::Unavailable, "", expected, {}, {}, {}, 0};
   Message message;
   InfiniteSessionActionKind action = InfiniteSessionActionKind::Failure;
 
   try {
     if (bytes.size() > 65536) {
       throw std::length_error("Infinite FIX frame exceeds bound");
+    }
+    if (containsLogonCredentialField(bytes)) {
+      throw std::invalid_argument("Infinite FIX classification does not accept credential fields");
     }
     expected = currentInfiniteExpectedState(now);
     plan.resultingState = expected;
@@ -437,6 +462,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   } catch (const std::exception &error) {
     plan.callbacks.clear();
     plan.effects.clear();
+    plan.operationCount = 0;
     plan.failure = error.what();
     action = InfiniteSessionActionKind::Failure;
     return InfiniteSessionClassification(
@@ -449,14 +475,16 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   Session &session = const_cast<Session &>(*this);
   Locker stateLock(session.m_state.m_mutex);
   MessageStore *const originalStore = session.m_state.m_pStore;
-  RecordingMessageStore recordingStore(expected, *originalStore, plan.sourceMessages, plan.effects, now);
-  RecordingLog recordingLog(plan.effects, now);
-  RecordingResponder recordingResponder(plan.effects, now);
+  RecordingMessageStore recordingStore(expected, *originalStore, plan.sourceMessages, plan, now);
+  RecordingLog recordingLog(plan, now);
+  RecordingResponder recordingResponder(plan, now);
   Log *const originalLog = session.m_state.m_pLog;
   Responder *const originalResponder = session.m_pResponder;
   auto originalQueue = session.m_state.m_queue;
   const auto originalTimestamper = session.m_timestamper;
   const auto originalTargetDefaultApplVerID = session.m_targetDefaultApplVerID;
+  const auto originalConfigurationRevision = session.m_infiniteConfigurationRevision;
+  const auto originalResponderGeneration = session.m_infiniteResponderGeneration;
 
   const auto restore = [&]() {
     const auto &state = expected.mutableState;
@@ -481,6 +509,8 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     session.m_pResponder = originalResponder;
     session.m_timestamper = originalTimestamper;
     session.m_targetDefaultApplVerID = originalTargetDefaultApplVerID;
+    session.m_infiniteConfigurationRevision = originalConfigurationRevision;
+    session.m_infiniteResponderGeneration = originalResponderGeneration;
     session.m_infinitePlan = nullptr;
     session.m_infiniteAction = nullptr;
   };
@@ -499,22 +529,24 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
 
     plan.resultingState = session.currentInfiniteExpectedState(now);
     plan.resultingState.revision = expected.revision + 1;
-    plan.resultingState.mutableState.responderIdentity
-        = session.m_pResponder ? reinterpret_cast<std::uintptr_t>(originalResponder) : 0;
     restore();
     restoreGuard.dismiss();
   } catch (const std::exception &error) {
     restore();
     restoreGuard.dismiss();
+    plan.sourceMessages.clear();
     plan.callbacks.clear();
     plan.effects.clear();
+    plan.operationCount = 0;
     plan.failure = error.what();
     action = InfiniteSessionActionKind::Failure;
   } catch (...) {
     restore();
     restoreGuard.dismiss();
+    plan.sourceMessages.clear();
     plan.callbacks.clear();
     plan.effects.clear();
+    plan.operationCount = 0;
     plan.failure = "Non-standard exception during Infinite classification";
     action = InfiniteSessionActionKind::Failure;
   }
@@ -526,6 +558,57 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
       std::move(message));
 }
 
+void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &expected) {
+  const auto &state = expected.mutableState;
+  if (expected.sessionIdentity != m_infiniteSessionIdentity
+      || m_state.m_pStore->getNextSenderMsgSeqNum() != expected.senderSequence
+      || m_state.m_pStore->getNextTargetMsgSeqNum() != expected.targetSequence
+      || m_state.m_pStore->getCreationTime() != state.storeCreationTime
+      || m_infiniteResponderGeneration != state.responderGeneration
+      || static_cast<bool>(m_pResponder) != (state.responderGeneration != 0)) {
+    throw IOException("Infinite ordered state transition mismatch");
+  }
+
+  m_state.m_enabled = state.enabled;
+  m_state.m_receivedLogon = state.receivedLogon;
+  m_state.m_sentLogout = state.sentLogout;
+  m_state.m_sentLogon = state.sentLogon;
+  m_state.m_sentReset = state.sentReset;
+  m_state.m_receivedReset = state.receivedReset;
+  m_state.m_initiate = state.initiate;
+  m_state.m_logonTimeout = state.logonTimeout;
+  m_state.m_logoutTimeout = state.logoutTimeout;
+  m_state.m_testRequest = state.testRequest;
+  m_state.m_resendRange = std::make_pair(state.resendBegin, state.resendEnd);
+  m_state.m_heartBtInt = HeartBtInt(state.heartBtInt);
+  m_state.m_lastSentTime = state.lastSentTime;
+  m_state.m_lastReceivedTime = state.lastReceivedTime;
+  m_state.m_logoutReason = state.logoutReason;
+  m_state.m_queue.clear();
+  for (const auto &entry : state.queuedMessages) {
+    m_state.m_queue.emplace(entry.sequence, entry.message);
+  }
+
+  m_senderDefaultApplVerID = state.senderDefaultApplVerID;
+  m_targetDefaultApplVerID = state.targetDefaultApplVerID;
+  m_sendRedundantResendRequests = state.sendRedundantResendRequests;
+  m_checkCompId = state.checkCompId;
+  m_checkLatency = state.checkLatency;
+  m_maxLatency = state.maxLatency;
+  m_resetOnLogon = state.resetOnLogon;
+  m_resetOnLogout = state.resetOnLogout;
+  m_resetOnDisconnect = state.resetOnDisconnect;
+  m_refreshOnLogon = state.refreshOnLogon;
+  m_timestampPrecision = state.timestampPrecision;
+  m_persistMessages = state.persistMessages;
+  m_validateLengthAndChecksum = state.validateLengthAndChecksum;
+  m_sendNextExpectedMsgSeqNum = state.sendNextExpectedMsgSeqNum;
+  m_isNonStopSession = state.nonStopSession;
+  m_infiniteSessionFenced = state.infiniteFenced;
+  m_infiniteSessionRevision = expected.revision;
+  m_infiniteConfigurationRevision = expected.configurationRevision;
+}
+
 void Session::applyInfiniteClassification(
     const InfiniteSessionClassification &classification,
     InfiniteEffectAuthorization &&authorization) {
@@ -535,21 +618,37 @@ void Session::applyInfiniteClassification(
   if (authorization.m_consumed || authorization.m_binding != classification.m_binding
       || !(authorization.m_expected == classification.m_expected) || authorization.m_action != classification.m_action
       || !(authorization.m_actionData == classification.m_actionData)) {
+    m_infiniteSessionFenced = true;
     return;
   }
   authorization.m_consumed = true;
   if (classification.m_action == InfiniteSessionActionKind::Failure) {
-    return;
-  }
-  if (!(currentInfiniteExpectedState(plan.now) == classification.m_expected)
-      || m_infiniteSessionRevision == std::numeric_limits<std::uint64_t>::max()) {
+    m_infiniteSessionFenced = true;
     return;
   }
 
   try {
-    m_infiniteCallbackActive = true;
-    auto callbackGuard = sg::make_scope_guard([this]() { m_infiniteCallbackActive = false; });
-    for (const auto &callback : plan.callbacks) {
+    if (!(currentInfiniteExpectedState(m_timestamper()) == classification.m_expected)
+        || m_infiniteSessionRevision == std::numeric_limits<std::uint64_t>::max()) {
+      m_infiniteSessionFenced = true;
+      return;
+    }
+
+    for (const auto &source : plan.sourceMessages) {
+      std::vector<std::string> loaded;
+      m_state.m_pStore->get(source.first, source.first, loaded);
+      if (loaded.size() != 1 || loaded.front() != source.second) {
+        throw IOException("Infinite source message changed before application");
+      }
+    }
+
+    const auto invokeCallback = [&](const InfinitePlannedCallback &callback) {
+      installInfiniteExpectedState(callback.observedState);
+      m_state.m_infiniteCallbackActive.store(true, std::memory_order_release);
+      auto callbackGuard = sg::make_scope_guard(
+          [this]() { m_state.m_infiniteCallbackActive.store(false, std::memory_order_release); });
+      ReverseLocker stateUnlock(m_state.m_mutex);
+      ReverseLocker sessionUnlock(m_mutex);
       if (callback.kind == InfiniteCallbackKind::FromAdmin) {
         m_application.fromAdmin(callback.message, m_sessionID);
       } else if (callback.kind == InfiniteCallbackKind::FromApplication) {
@@ -575,15 +674,9 @@ void Session::applyInfiniteClassification(
       } else if (callback.kind == InfiniteCallbackKind::Logout) {
         m_application.onLogout(m_sessionID);
       }
-    }
-    callbackGuard.dismiss();
-    m_infiniteCallbackActive = false;
+    };
 
-    if (!(currentInfiniteExpectedState(plan.now) == classification.m_expected)) {
-      throw IOException("Infinite callback changed the expected session state");
-    }
-
-    for (const auto &effect : plan.effects) {
+    const auto applyEffect = [&](const InfinitePlannedEffect &effect) {
       switch (effect.kind) {
       case InfiniteEffectKind::StoreMessage:
         if (!m_state.set(effect.sequence, effect.bytes)) {
@@ -617,43 +710,33 @@ void Session::applyInfiniteClassification(
         if (m_pResponder) {
           m_pResponder->disconnect();
           m_pResponder = nullptr;
+          m_infiniteResponderGeneration = 0;
         }
         break;
       }
-    }
+    };
 
-    const auto &result = plan.resultingState;
-    const auto &state = result.mutableState;
-    if (m_state.getNextSenderMsgSeqNum() != result.senderSequence
-        || m_state.getNextTargetMsgSeqNum() != result.targetSequence) {
-      throw IOException("Infinite sequence effects did not reach the authorized state");
-    }
-    {
-      Locker lock(m_state.m_mutex);
-      m_state.m_enabled = state.enabled;
-      m_state.m_receivedLogon = state.receivedLogon;
-      m_state.m_sentLogout = state.sentLogout;
-      m_state.m_sentLogon = state.sentLogon;
-      m_state.m_sentReset = state.sentReset;
-      m_state.m_receivedReset = state.receivedReset;
-      m_state.m_initiate = state.initiate;
-      m_state.m_logonTimeout = state.logonTimeout;
-      m_state.m_logoutTimeout = state.logoutTimeout;
-      m_state.m_testRequest = state.testRequest;
-      m_state.m_resendRange = std::make_pair(state.resendBegin, state.resendEnd);
-      m_state.m_heartBtInt = HeartBtInt(state.heartBtInt);
-      m_state.m_lastSentTime = state.lastSentTime;
-      m_state.m_lastReceivedTime = state.lastReceivedTime;
-      m_state.m_logoutReason = state.logoutReason;
-      m_state.m_queue.clear();
-      for (const auto &entry : state.queuedMessages) {
-        m_state.m_queue.emplace(entry.sequence, entry.message);
+    std::size_t callbackIndex = 0;
+    std::size_t effectIndex = 0;
+    for (std::size_t order = 0; order < plan.operationCount; ++order) {
+      const bool callbackAtOrder
+          = callbackIndex < plan.callbacks.size() && plan.callbacks[callbackIndex].order == order;
+      const bool effectAtOrder = effectIndex < plan.effects.size() && plan.effects[effectIndex].order == order;
+      if (callbackAtOrder == effectAtOrder) {
+        throw IOException("Infinite effect plan operation order is invalid");
+      }
+      if (callbackAtOrder) {
+        invokeCallback(plan.callbacks[callbackIndex++]);
+      } else {
+        applyEffect(plan.effects[effectIndex++]);
       }
     }
-    m_targetDefaultApplVerID = state.targetDefaultApplVerID;
-    m_infiniteSessionRevision = result.revision;
+    if (callbackIndex != plan.callbacks.size() || effectIndex != plan.effects.size()) {
+      throw IOException("Infinite effect plan operation count is invalid");
+    }
+    installInfiniteExpectedState(plan.resultingState);
   } catch (...) {
-    m_infiniteCallbackActive = false;
+    m_state.m_infiniteCallbackActive.store(false, std::memory_order_release);
     m_infiniteSessionFenced = true;
     throw;
   }

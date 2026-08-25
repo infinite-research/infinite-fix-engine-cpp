@@ -167,6 +167,10 @@ std::vector<std::string> frameBytes(const InfiniteDispatchResult &result) {
   }
   return bytes;
 }
+
+auto observedAt(std::int64_t value) {
+  return [value]() { return value; };
+}
 } // namespace
 
 TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
@@ -179,7 +183,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({4, 262'144});
     const auto rows = loadCanonicalFramingRows(FIXTURE_PATH);
     for (const auto &row : rows) {
-      const auto result = dispatcher.process(row.chunk.data(), row.chunk.size(), row.observedTaiNs);
+      const auto result = dispatcher.process(row.chunk.data(), row.chunk.size(), observedAt(row.observedTaiNs));
       CHECK(frameBytes(result) == row.expectedFrames);
       CHECK_FALSE(result.terminalFault.has_value());
       for (const auto &frame : result.frames) {
@@ -200,7 +204,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({4, 262'144});
     std::vector<InfiniteCompleteFrame> actual;
     for (std::size_t index = 0; index < stream.size(); ++index) {
-      auto result = dispatcher.process(stream.data() + index, 1, static_cast<std::int64_t>(index + 1));
+      auto result = dispatcher.process(stream.data() + index, 1, observedAt(static_cast<std::int64_t>(index + 1)));
       CHECK_FALSE(result.terminalFault.has_value());
       actual.insert(actual.end(), result.frames.begin(), result.frames.end());
     }
@@ -214,14 +218,14 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("exact frame limit is inclusive and one byte over is terminal") {
     InfiniteCompleteFrameDispatcher exactDispatcher({1, MAX_FRAME_BYTES});
     const auto exact = makeMessageOfSize(MAX_FRAME_BYTES);
-    const auto exactResult = exactDispatcher.process(exact.data(), exact.size(), 1);
+    const auto exactResult = exactDispatcher.process(exact.data(), exact.size(), observedAt(1));
     REQUIRE(exactResult.frames.size() == 1);
     CHECK(exactResult.frames[0].bytes == exact);
     CHECK_FALSE(exactResult.terminalFault.has_value());
 
     InfiniteCompleteFrameDispatcher oversizedDispatcher({1, MAX_FRAME_BYTES});
     const auto oversized = makeMessageOfSize(MAX_FRAME_BYTES + 1);
-    const auto oversizedResult = oversizedDispatcher.process(oversized.data(), oversized.size(), 1);
+    const auto oversizedResult = oversizedDispatcher.process(oversized.data(), oversized.size(), observedAt(1));
     CHECK(oversizedResult.frames.empty());
     CHECK(oversizedResult.terminalFault == InfiniteDispatchFault::FrameTooLarge);
   }
@@ -229,31 +233,31 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("accumulator overflow is rejected before the next append") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string starved = "8=" + std::string(MAX_FRAME_BYTES - 2, 'x');
-    const auto first = dispatcher.process(starved.data(), starved.size(), 1);
+    const auto first = dispatcher.process(starved.data(), starved.size(), observedAt(1));
     CHECK(first.frames.empty());
     CHECK(first.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     InfiniteCompleteFrameDispatcher oneRead({1, MAX_FRAME_BYTES});
     const std::string oversizedStarved = "8=" + std::string(MAX_FRAME_BYTES - 1, 'x');
-    const auto sameRead = oneRead.process(oversizedStarved.data(), oversizedStarved.size(), 1);
+    const auto sameRead = oneRead.process(oversizedStarved.data(), oversizedStarved.size(), observedAt(1));
     CHECK(sameRead.frames.empty());
     CHECK(sameRead.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     const std::string valid = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=026\001";
     InfiniteCompleteFrameDispatcher prefixed({2, MAX_FRAME_BYTES + valid.size()});
     const auto stream = valid + starved;
-    const auto prefixedResult = prefixed.process(stream.data(), stream.size(), 2);
+    const auto prefixedResult = prefixed.process(stream.data(), stream.size(), observedAt(2));
     REQUIRE(prefixedResult.frames.size() == 1);
     CHECK(prefixedResult.frames[0].bytes == valid);
     CHECK(prefixedResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     InfiniteCompleteFrameDispatcher bytewise({1, MAX_FRAME_BYTES});
-    const auto header = bytewise.process("8=", 2, 1);
+    const auto header = bytewise.process("8=", 2, observedAt(1));
     CHECK_FALSE(header.terminalFault.has_value());
     InfiniteDispatchResult bytewiseResult;
     bool faultedEarly = false;
     for (std::size_t index = 0; index < MAX_FRAME_BYTES - 2; ++index) {
-      bytewiseResult = bytewise.process("x", 1, static_cast<std::int64_t>(index + 2));
+      bytewiseResult = bytewise.process("x", 1, observedAt(static_cast<std::int64_t>(index + 2)));
       faultedEarly = faultedEarly || (index + 1 < MAX_FRAME_BYTES - 2 && bytewiseResult.terminalFault.has_value());
     }
     CHECK_FALSE(faultedEarly);
@@ -264,7 +268,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
     const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
     const auto overstated = std::string("8=FIX.4.2\0019=30\00135=A\001108=30\00110=026\001") + following;
-    const auto result = dispatcher.process(overstated.data(), overstated.size(), 1);
+    const auto result = dispatcher.process(overstated.data(), overstated.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
@@ -274,7 +278,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const std::string valid = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=026\001";
     const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
     const auto stream = valid + "8=FIX.4.2\0019=30\00135=A\001108=30\00110=026\001" + following;
-    const auto result = dispatcher.process(stream.data(), stream.size(), 1);
+    const auto result = dispatcher.process(stream.data(), stream.size(), observedAt(1));
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == valid);
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
@@ -284,7 +288,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
     const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
     const auto stream = std::string("8=FIX.4.2\00135=A\00110=026\001") + following;
-    const auto result = dispatcher.process(stream.data(), stream.size(), 1);
+    const auto result = dispatcher.process(stream.data(), stream.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
@@ -294,16 +298,16 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const auto stream = std::string("8=FIX.4.2") + following;
 
     InfiniteCompleteFrameDispatcher coalesced({1, MAX_FRAME_BYTES});
-    const auto coalescedResult = coalesced.process(stream.data(), stream.size(), 1);
+    const auto coalescedResult = coalesced.process(stream.data(), stream.size(), observedAt(1));
     CHECK(coalescedResult.frames.empty());
     CHECK(coalescedResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
 
     InfiniteCompleteFrameDispatcher fragmented({1, MAX_FRAME_BYTES});
     const std::string prefix = "8=FIX.4.2";
-    const auto first = fragmented.process(prefix.data(), prefix.size(), 1);
+    const auto first = fragmented.process(prefix.data(), prefix.size(), observedAt(1));
     CHECK(first.frames.empty());
     CHECK_FALSE(first.terminalFault.has_value());
-    const auto second = fragmented.process(following.data(), following.size(), 2);
+    const auto second = fragmented.process(following.data(), following.size(), observedAt(2));
     CHECK(second.frames.empty());
     CHECK(second.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
@@ -311,7 +315,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("length-delimited DATA bytes remain opaque to framing") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string message = "8=FIX.4.2\0019=18\00135=A\00195=4\00196=\00110=\00110=000\001";
-    const auto result = dispatcher.process(message.data(), message.size(), 1);
+    const auto result = dispatcher.process(message.data(), message.size(), observedAt(1));
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == message);
     CHECK_FALSE(result.terminalFault.has_value());
@@ -322,21 +326,21 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
 
     InfiniteCompleteFrameDispatcher leading({1, MAX_FRAME_BYTES});
     const auto leadingBytes = std::string("X") + valid;
-    const auto leadingResult = leading.process(leadingBytes.data(), leadingBytes.size(), 1);
+    const auto leadingResult = leading.process(leadingBytes.data(), leadingBytes.size(), observedAt(1));
     CHECK(leadingResult.frames.empty());
     CHECK(leadingResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
 
     InfiniteCompleteFrameDispatcher fragmented({1, MAX_FRAME_BYTES});
-    const auto partial = fragmented.process("8", 1, 1);
+    const auto partial = fragmented.process("8", 1, observedAt(1));
     CHECK(partial.frames.empty());
     CHECK_FALSE(partial.terminalFault.has_value());
-    const auto fragmentedResult = fragmented.process("X", 1, 2);
+    const auto fragmentedResult = fragmented.process("X", 1, observedAt(2));
     CHECK(fragmentedResult.frames.empty());
     CHECK(fragmentedResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
 
     InfiniteCompleteFrameDispatcher suffix({2, MAX_FRAME_BYTES});
     const auto validPrefix = valid + "X";
-    const auto suffixResult = suffix.process(validPrefix.data(), validPrefix.size(), 3);
+    const auto suffixResult = suffix.process(validPrefix.data(), validPrefix.size(), observedAt(3));
     REQUIRE(suffixResult.frames.size() == 1);
     CHECK(suffixResult.frames[0].bytes == valid);
     CHECK(suffixResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
@@ -345,7 +349,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("checksum tag requires its preceding delimiter") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30X10=026\001";
-    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
@@ -353,7 +357,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("checksum framing must be exact") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=6\001";
-    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
@@ -361,26 +365,26 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
   SECTION("BodyLength overflow is malformed") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string malformed = "8=FIX.4.2\0019=999999999999999999999\00135=A\00110=000\001";
-    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
 
     const std::string emptyLength = "8=FIX.4.2\0019=\00135=A\00110=000\001";
     InfiniteCompleteFrameDispatcher emptyLengthDispatcher({1, MAX_FRAME_BYTES});
     CHECK(
-        emptyLengthDispatcher.process(emptyLength.data(), emptyLength.size(), 2).terminalFault
+        emptyLengthDispatcher.process(emptyLength.data(), emptyLength.size(), observedAt(2)).terminalFault
         == InfiniteDispatchFault::MalformedFrame);
 
     const std::string belowDigit = "8=FIX.4.2\0019=/\00135=A\00110=000\001";
     InfiniteCompleteFrameDispatcher belowDigitDispatcher({1, MAX_FRAME_BYTES});
     CHECK(
-        belowDigitDispatcher.process(belowDigit.data(), belowDigit.size(), 2).terminalFault
+        belowDigitDispatcher.process(belowDigit.data(), belowDigit.size(), observedAt(2)).terminalFault
         == InfiniteDispatchFault::MalformedFrame);
 
     const std::string aboveDigit = "8=FIX.4.2\0019=bbbbb\00135=A\00110=000\001";
     InfiniteCompleteFrameDispatcher aboveDigitDispatcher({1, MAX_FRAME_BYTES});
     CHECK(
-        aboveDigitDispatcher.process(aboveDigit.data(), aboveDigit.size(), 2).terminalFault
+        aboveDigitDispatcher.process(aboveDigit.data(), aboveDigit.size(), observedAt(2)).terminalFault
         == InfiniteDispatchFault::MalformedFrame);
   }
 
@@ -388,7 +392,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const auto maximum = std::to_string(std::numeric_limits<std::size_t>::max());
     const std::string malformed = "8=FIX.4.2\0019=" + maximum + "\001";
-    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), observedAt(1));
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::FrameTooLarge);
 
@@ -397,7 +401,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const std::string checksumOverflow = "8=FIX.4.2\0019=" + std::to_string(checksumOverflowLength) + "\001";
     InfiniteCompleteFrameDispatcher checksumOverflowDispatcher({1, MAX_FRAME_BYTES});
     const auto checksumOverflowResult
-        = checksumOverflowDispatcher.process(checksumOverflow.data(), checksumOverflow.size(), 1);
+        = checksumOverflowDispatcher.process(checksumOverflow.data(), checksumOverflow.size(), observedAt(1));
     CHECK(checksumOverflowResult.frames.empty());
     CHECK(checksumOverflowResult.terminalFault == InfiniteDispatchFault::FrameTooLarge);
   }
@@ -406,7 +410,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES * 2});
     const auto valid = makeMessageOfSize(128);
     const std::string read = valid + "8=FIX.4.2\0019=bad\001";
-    const auto result = dispatcher.process(read.data(), read.size(), 1);
+    const auto result = dispatcher.process(read.data(), read.size(), observedAt(1));
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == valid);
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
@@ -416,7 +420,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES * 2});
     const auto valid = makeMessageOfSize(128);
     const std::string read = valid + "8=FIX.4.2\0019=65537\001";
-    const auto result = dispatcher.process(read.data(), read.size(), 1);
+    const auto result = dispatcher.process(read.data(), read.size(), observedAt(1));
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == valid);
     CHECK(result.terminalFault == InfiniteDispatchFault::FrameTooLarge);
@@ -428,18 +432,47 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const auto successor = makeMessageOfSize(128);
     constexpr std::size_t FIRST_READ_BYTES = 65'000;
 
-    const auto first = dispatcher.process(maximum.data(), FIRST_READ_BYTES, 1);
+    std::int64_t observation = 1;
+    const auto observe = [&observation]() { return ++observation; };
+    const auto first = dispatcher.process(maximum.data(), FIRST_READ_BYTES, observe);
     CHECK(first.frames.empty());
     CHECK_FALSE(first.terminalFault.has_value());
 
     const std::string secondRead = maximum.substr(FIRST_READ_BYTES) + successor;
-    const auto second = dispatcher.process(secondRead.data(), secondRead.size(), 2);
+    const auto second = dispatcher.process(secondRead.data(), secondRead.size(), observe);
     REQUIRE(second.frames.size() == 2);
     CHECK(second.frames[0].bytes == maximum);
     CHECK(second.frames[0].observedTaiNs == 2);
     CHECK(second.frames[1].bytes == successor);
-    CHECK(second.frames[1].observedTaiNs == 2);
+    CHECK(second.frames[1].observedTaiNs == 3);
     CHECK_FALSE(second.terminalFault.has_value());
+  }
+
+  SECTION("clock regression faults at extraction and remains terminal") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
+    const auto message = makeMessageOfSize(128);
+    const auto read = message + message;
+    std::int64_t observations[] = {2, 1};
+    std::size_t nextObservation = 0;
+    const auto result = dispatcher.process(read.data(), read.size(), [&]() { return observations[nextObservation++]; });
+
+    REQUIRE(result.frames.size() == 1);
+    CHECK(result.frames[0].observedTaiNs == 2);
+    CHECK(result.terminalFault == InfiniteDispatchFault::InvalidObservation);
+    const auto later = dispatcher.process(message.data(), message.size(), observedAt(3));
+    CHECK(later.frames.empty());
+    CHECK(later.terminalFault == InfiniteDispatchFault::InvalidObservation);
+  }
+
+  SECTION("clock exceptions fault at extraction") {
+    InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
+    const auto message = makeMessageOfSize(128);
+    const auto result = dispatcher.process(message.data(), message.size(), []() -> std::int64_t {
+      throw std::runtime_error("clock unavailable");
+    });
+
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::InvalidObservation);
   }
 
   SECTION("batch frame and byte limits reject the complete read") {
@@ -448,27 +481,37 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const auto read = first + second;
 
     InfiniteCompleteFrameDispatcher frameLimited({1, read.size()});
-    const auto frames = frameLimited.process(read.data(), read.size(), 1);
+    const auto frames = frameLimited.process(read.data(), read.size(), observedAt(1));
     CHECK(frames.frames.empty());
     CHECK(frames.terminalFault == InfiniteDispatchFault::BatchLimit);
 
     InfiniteCompleteFrameDispatcher byteLimited({2, read.size() - 1});
-    const auto bytes = byteLimited.process(read.data(), read.size(), 1);
+    const auto bytes = byteLimited.process(read.data(), read.size(), observedAt(1));
     CHECK(bytes.frames.empty());
     CHECK(bytes.terminalFault == InfiniteDispatchFault::BatchLimit);
   }
 
-  SECTION("invalid observation and pointer fail without consuming input") {
+  SECTION("invalid observation and pointer faults are terminal") {
     const auto message = makeMessageOfSize(128);
-    InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
+    InfiniteCompleteFrameDispatcher invalidObservation({1, MAX_FRAME_BYTES});
     CHECK(
-        dispatcher.process(message.data(), message.size(), 0).terminalFault
+        invalidObservation.process(message.data(), message.size(), observedAt(0)).terminalFault
         == InfiniteDispatchFault::InvalidObservation);
-    CHECK(dispatcher.process(nullptr, 1, 1).terminalFault == InfiniteDispatchFault::MalformedFrame);
-    const auto empty = dispatcher.process(nullptr, 0, 1);
+    CHECK(
+        invalidObservation.process(message.data(), message.size(), observedAt(1)).terminalFault
+        == InfiniteDispatchFault::InvalidObservation);
+
+    InfiniteCompleteFrameDispatcher invalidPointer({1, MAX_FRAME_BYTES});
+    CHECK(invalidPointer.process(nullptr, 1, observedAt(1)).terminalFault == InfiniteDispatchFault::MalformedFrame);
+    CHECK(
+        invalidPointer.process(message.data(), message.size(), observedAt(1)).terminalFault
+        == InfiniteDispatchFault::MalformedFrame);
+
+    InfiniteCompleteFrameDispatcher emptyInput({1, MAX_FRAME_BYTES});
+    const auto empty = emptyInput.process(nullptr, 0, observedAt(1));
     CHECK(empty.frames.empty());
     CHECK_FALSE(empty.terminalFault.has_value());
-    const auto valid = dispatcher.process(message.data(), message.size(), 1);
+    const auto valid = emptyInput.process(message.data(), message.size(), observedAt(1));
     REQUIRE(valid.frames.size() == 1);
     CHECK(valid.frames[0].bytes == message);
   }

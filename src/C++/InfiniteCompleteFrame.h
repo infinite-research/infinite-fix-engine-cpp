@@ -22,6 +22,7 @@
 #include "Parser.h"
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -60,7 +61,10 @@ public:
   InfiniteCompleteFrameDispatcher(const InfiniteCompleteFrameDispatcher &) = delete;
   InfiniteCompleteFrameDispatcher &operator=(const InfiniteCompleteFrameDispatcher &) = delete;
 
-  InfiniteDispatchResult process(const char *bytes, std::size_t length, std::int64_t observedTaiNs);
+  InfiniteDispatchResult process(
+      const char *bytes,
+      std::size_t length,
+      const std::function<std::int64_t()> &observeTaiNs);
 
 private:
   enum class ScanStage : std::uint8_t {
@@ -72,6 +76,7 @@ private:
   };
 
   std::optional<InfiniteDispatchFault> scanDeclaredFrame();
+  InfiniteDispatchResult terminal(InfiniteDispatchResult result, InfiniteDispatchFault fault);
   void resetDeclaredFrameScan();
 
   Parser m_parser;
@@ -81,5 +86,7 @@ private:
   std::size_t m_bodyLength{0};
   std::size_t m_checksumBegin{0};
   bool m_bodyLengthHasDigit{false};
+  std::optional<std::int64_t> m_lastObservedTaiNs;
+  std::optional<InfiniteDispatchFault> m_terminalFault;
 };
 } // namespace FIX

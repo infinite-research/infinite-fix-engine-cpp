@@ -31,6 +31,8 @@
 #include "MessageStore.h"
 #include "Mutex.h"
 
+#include <atomic>
+
 namespace FIX {
 /// Maintains all of state for the Session class.
 class SessionState : public MessageStore, public Log {
@@ -157,6 +159,7 @@ public:
   }
 
   bool set(SEQNUM s, const std::string &m) EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     return m_pStore->set(s, m);
   }
@@ -173,18 +176,22 @@ public:
     return m_pStore->getNextTargetMsgSeqNum();
   }
   void setNextSenderMsgSeqNum(SEQNUM n) EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->setNextSenderMsgSeqNum(n);
   }
   void setNextTargetMsgSeqNum(SEQNUM n) EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->setNextTargetMsgSeqNum(n);
   }
   void incrNextSenderMsgSeqNum() EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->incrNextSenderMsgSeqNum();
   }
   void incrNextTargetMsgSeqNum() EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->incrNextTargetMsgSeqNum();
   }
@@ -193,15 +200,18 @@ public:
     return m_pStore->getCreationTime();
   }
   void reset(const UtcTimeStamp &now) EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->reset(now);
   }
   void refresh() EXCEPT(IOException) {
+    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
     m_pStore->refresh();
   }
 
   void clear() {
+    ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
@@ -209,6 +219,7 @@ public:
     m_pLog->clear();
   }
   void backup() {
+    ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
@@ -216,6 +227,7 @@ public:
     m_pLog->backup();
   }
   void onIncoming(const std::string &string) {
+    ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
@@ -223,6 +235,7 @@ public:
     m_pLog->onIncoming(string);
   }
   void onOutgoing(const std::string &string) {
+    ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
@@ -230,6 +243,7 @@ public:
     m_pLog->onOutgoing(string);
   }
   void onEvent(const std::string &string) {
+    ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
@@ -239,6 +253,12 @@ public:
 
 private:
   friend class Session;
+  void ensureInfiniteCallbackNotActive() const {
+    if (m_infiniteCallbackActive.load(std::memory_order_acquire)) {
+      throw IOException("Infinite callback cannot mutate its Session");
+    }
+  }
+
   bool m_enabled;
   bool m_receivedLogon;
   bool m_sentLogout;
@@ -258,6 +278,7 @@ private:
   MessageStore *m_pStore;
   Log *m_pLog;
   NullLog m_nullLog;
+  std::atomic<bool> m_infiniteCallbackActive{false};
   mutable Mutex m_mutex;
 };
 } // namespace FIX

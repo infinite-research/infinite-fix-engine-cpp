@@ -25,6 +25,7 @@
 #include "Message.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -61,14 +62,6 @@ enum class InfiniteCallbackKind : std::uint8_t {
   Logout = 6,
 };
 
-struct InfinitePlannedCallback {
-  InfiniteCallbackKind kind;
-  std::string bytes;
-  Message message;
-
-  bool operator==(const InfinitePlannedCallback &rhs) const;
-};
-
 struct InfinitePlannedMessage {
   SEQNUM sequence;
   std::string bytes;
@@ -87,15 +80,6 @@ enum class InfiniteEffectKind : std::uint8_t {
   LogEvent = 7,
   Send = 8,
   Disconnect = 9,
-};
-
-struct InfinitePlannedEffect {
-  InfiniteEffectKind kind;
-  SEQNUM sequence;
-  std::string bytes;
-  UtcTimeStamp timestamp;
-
-  bool operator==(const InfinitePlannedEffect &rhs) const;
 };
 
 struct InfiniteSessionStateFingerprint {
@@ -135,14 +119,15 @@ struct InfiniteSessionStateFingerprint {
   bool validateLengthAndChecksum;
   bool sendNextExpectedMsgSeqNum;
   bool nonStopSession;
-  std::uintptr_t responderIdentity;
+  std::uint64_t responderGeneration;
 
   bool operator==(const InfiniteSessionStateFingerprint &rhs) const;
 };
 
 struct InfiniteExpectedSessionState {
-  std::uintptr_t sessionIdentity;
+  std::uint64_t sessionIdentity;
   std::uint64_t revision;
+  std::uint64_t configurationRevision;
   SEQNUM senderSequence;
   SEQNUM targetSequence;
   bool loggedOn;
@@ -151,8 +136,27 @@ struct InfiniteExpectedSessionState {
   bool operator==(const InfiniteExpectedSessionState &rhs) const;
 };
 
+struct InfinitePlannedCallback {
+  std::size_t order;
+  InfiniteCallbackKind kind;
+  std::string bytes;
+  Message message;
+  InfiniteExpectedSessionState observedState;
+
+  bool operator==(const InfinitePlannedCallback &rhs) const;
+};
+
+struct InfinitePlannedEffect {
+  std::size_t order;
+  InfiniteEffectKind kind;
+  SEQNUM sequence;
+  std::string bytes;
+  UtcTimeStamp timestamp;
+
+  bool operator==(const InfinitePlannedEffect &rhs) const;
+};
+
 struct InfiniteActionPlan {
-  std::string exactBytes;
   std::string messageType;
   UtcTimeStamp now;
   InfiniteSequenceDisposition sequenceDisposition;
@@ -161,6 +165,7 @@ struct InfiniteActionPlan {
   std::vector<std::pair<SEQNUM, std::string>> sourceMessages;
   std::vector<InfinitePlannedCallback> callbacks;
   std::vector<InfinitePlannedEffect> effects;
+  std::size_t operationCount;
 
   bool operator==(const InfiniteActionPlan &rhs) const;
 };
