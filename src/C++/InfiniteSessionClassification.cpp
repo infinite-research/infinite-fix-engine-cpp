@@ -833,7 +833,9 @@ void Session::applyInfiniteClassification(
           } catch (DoNotSend &) {
             throw IOException("Infinite toApp callback refused the authorized bytes");
           }
-          if (outgoing.toString() != callback.bytes) {
+          auto actual = outgoing.toString();
+          auto actualGuard = sg::make_scope_guard([&actual]() { cleanse(actual); });
+          if (actual != callback.bytes) {
             throw IOException("Infinite toApp callback changed the authorized bytes");
           }
         } else if (callback.kind == InfiniteCallbackKind::Logon) {

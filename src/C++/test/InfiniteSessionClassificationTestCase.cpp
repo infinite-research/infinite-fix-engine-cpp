@@ -276,6 +276,10 @@ struct RecordingEndpoint : NullApplication, Responder {
     if (mutateToApp) {
       message.setField(Text("changed"));
     }
+    if (injectToAppCredentials) {
+      message.setField(Username("sensitive-user"));
+      message.setField(Password("sensitive-password"));
+    }
   }
   void fromAdmin(const Message &message, const SessionID &) override {
     recordOperation(ledger, "callback:fromAdmin:" + message.toString());
@@ -315,6 +319,7 @@ struct RecordingEndpoint : NullApplication, Responder {
   bool mutateToAdmin{false};
   bool injectToAdminCredentials{false};
   bool mutateToApp{false};
+  bool injectToAppCredentials{false};
   bool doNotSendToApp{false};
   bool sawToAppGroup{false};
   bool blockFromApp{false};
@@ -1939,6 +1944,29 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
 
     endpoint.mutateToApp = false;
+    CHECK(endpoint.outputs.empty());
+    CHECK(InfiniteSessionClassificationTestAccess::state(session).mutableState.infiniteFenced);
+  }
+
+  SECTION("toApp credentials fence the private path before any authorized output") {
+    auto outbound = applicationMessage(session.getExpectedSenderNum());
+    REQUIRE(session.send(outbound));
+    const auto outboundSequence = outbound.getHeader().getField<MsgSeqNum>().getValue();
+    clearEffects();
+    const auto request = finish(
+        FIX42::ResendRequest(BeginSeqNo(outboundSequence), EndSeqNo(outboundSequence)),
+        session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x76),
+        request.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    endpoint.injectToAppCredentials = true;
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    endpoint.injectToAppCredentials = false;
     CHECK(endpoint.outputs.empty());
     CHECK(InfiniteSessionClassificationTestAccess::state(session).mutableState.infiniteFenced);
   }
