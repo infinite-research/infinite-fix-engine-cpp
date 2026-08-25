@@ -101,6 +101,7 @@ DataDictionary &DataDictionary::operator=(const DataDictionary &rhs) {
   m_fieldNames = rhs.m_fieldNames;
   m_names = rhs.m_names;
   m_valueNames = rhs.m_valueNames;
+  m_nameValues = rhs.m_nameValues;
   m_dataFields = rhs.m_dataFields;
   m_headerOrderedFields = rhs.m_headerOrderedFields;
   m_headerOrder = rhs.m_headerOrder;

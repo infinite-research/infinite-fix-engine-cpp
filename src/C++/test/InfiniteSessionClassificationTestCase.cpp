@@ -705,6 +705,7 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     const ApplVerID applVerID(ApplVerID_FIX50);
     auto transportDictionary = std::make_shared<DataDictionary>();
     transportDictionary->setVersion(BeginString_FIX42);
+    transportDictionary->addValueName(FIELD::Side, "1", "BUY");
     auto applicationDictionary = std::make_shared<DataDictionary>();
     applicationDictionary->setVersion(BeginString_FIX50);
     DataDictionaryProvider replacement;
@@ -718,6 +719,12 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(&installed.getApplicationDataDictionary(applVerID) != applicationDictionary.get());
     CHECK(installed.getSessionDataDictionary(beginString).getVersion() == BeginString_FIX42);
     CHECK(installed.getApplicationDataDictionary(applVerID).getVersion() == BeginString_FIX50);
+    std::string valueName;
+    std::string nameValue;
+    CHECK(installed.getSessionDataDictionary(beginString).getValueName(FIELD::Side, "1", valueName));
+    CHECK(valueName == "BUY");
+    CHECK(installed.getSessionDataDictionary(beginString).getNameValue(FIELD::Side, "BUY", nameValue));
+    CHECK(nameValue == "1");
   }
 
   SECTION("classification is effect free and authorized application is one use") {
