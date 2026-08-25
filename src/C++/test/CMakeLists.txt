@@ -18,6 +18,7 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HostDetailsProviderTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpMessageTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessagesTestCase.cpp
@@ -47,6 +48,8 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/UtilitySSLTestCase.cpp)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
+  target_compile_definitions(ut PRIVATE
+    INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}")
   
   target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
     ${PROJECT_SOURCE_DIR}/src/C++)

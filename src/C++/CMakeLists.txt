@@ -1,3 +1,13 @@
+set(infinite_complete_frame_fixture
+    ${PROJECT_SOURCE_DIR}/test/fixtures/complete-frame-gate.v1.tsv)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             ${infinite_complete_frame_fixture})
+file(SHA256 ${infinite_complete_frame_fixture} infinite_complete_frame_fixture_sha256)
+if(NOT infinite_complete_frame_fixture_sha256 STREQUAL
+   "60d02ae5f56f7d4c9e8239eb435b1cebd2295c57ea86bd68d49820a9d620996b")
+  message(FATAL_ERROR "complete-frame fixture digest mismatch")
+endif()
+
 add_subdirectory(test)
 
 set(quickfix_VERSION_MAJOR 17)
@@ -21,6 +31,7 @@ set(quickfix_SOURCES
   HttpMessage.cpp
   HttpParser.cpp
   HttpServer.cpp
+  InfiniteCompleteFrame.cpp
   Initiator.cpp
   Log.cpp
   Message.cpp
@@ -115,4 +126,5 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}${d
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
         FILES_MATCHING PATTERN "*.h"
         PATTERN double-conversion EXCLUDE
+        PATTERN "Infinite*.h" EXCLUDE
         PATTERN test EXCLUDE)

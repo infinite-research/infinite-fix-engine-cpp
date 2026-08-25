@@ -31,6 +31,8 @@
 #include <string>
 
 namespace FIX {
+class InfiniteCompleteFrameDispatcher;
+
 /// Parses %FIX messages off an input stream.
 class Parser {
 public:
@@ -44,6 +46,8 @@ public:
   void addToStream(const std::string &str) { m_buffer.append(str); }
 
 private:
+  friend class InfiniteCompleteFrameDispatcher;
+
   std::string m_buffer;
 };
 } // namespace FIX
