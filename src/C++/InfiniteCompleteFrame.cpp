@@ -43,81 +43,105 @@ InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBa
   }
 }
 
-std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFrameFault() const {
-  if (m_parser.m_buffer.empty() || (m_parser.m_buffer.size() == 1 && m_parser.m_buffer[0] == '8')) {
-    return std::nullopt;
-  }
-  if (m_parser.m_buffer.size() < 2 || m_parser.m_buffer[0] != '8' || m_parser.m_buffer[1] != '=') {
-    return InfiniteDispatchFault::MalformedFrame;
-  }
-  constexpr std::size_t begin = 0;
-  const auto beginStringEnd = m_parser.m_buffer.find('\001', 2);
-  if (beginStringEnd == std::string::npos) {
-    return std::nullopt;
-  }
-  for (std::size_t index = 2; index + 1 < beginStringEnd; ++index) {
-    if (m_parser.m_buffer[index] == '8' && m_parser.m_buffer[index + 1] == '=') {
+std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::scanDeclaredFrame() {
+  if (m_scanStage == ScanStage::BeginString) {
+    if (m_parser.m_buffer.empty() || (m_parser.m_buffer.size() == 1 && m_parser.m_buffer[0] == '8')) {
+      return std::nullopt;
+    }
+    if (m_parser.m_buffer.size() < 2 || m_parser.m_buffer[0] != '8' || m_parser.m_buffer[1] != '=') {
       return InfiniteDispatchFault::MalformedFrame;
     }
-  }
-  constexpr char BODY_LENGTH_PREFIX[] = "\0019=";
-  const auto lengthPrefixAvailable = std::min(std::size_t{3}, m_parser.m_buffer.size() - beginStringEnd);
-  for (std::size_t index = 0; index < lengthPrefixAvailable; ++index) {
-    if (m_parser.m_buffer[beginStringEnd + index] != BODY_LENGTH_PREFIX[index]) {
-      return InfiniteDispatchFault::MalformedFrame;
+    while (m_scanOffset < m_parser.m_buffer.size()) {
+      if (m_parser.m_buffer[m_scanOffset] == '\001') {
+        m_scanStage = ScanStage::BodyLengthPrefix;
+        break;
+      }
+      if (m_parser.m_buffer[m_scanOffset] == '=' && m_parser.m_buffer[m_scanOffset - 1] == '8') {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+      ++m_scanOffset;
     }
-  }
-  if (lengthPrefixAvailable < 3) {
-    return std::nullopt;
-  }
-  const auto lengthBegin = beginStringEnd;
-  const auto digitsBegin = lengthBegin + 3;
-  const auto digitsEnd = m_parser.m_buffer.find('\001', digitsBegin);
-  if (digitsEnd == std::string::npos) {
-    return std::nullopt;
-  }
-  std::size_t bodyLength = 0;
-  for (auto index = digitsBegin; index < digitsEnd; ++index) {
-    const auto digit = static_cast<unsigned char>(m_parser.m_buffer[index]);
-    if (digit < '0' || digit > '9') {
-      return InfiniteDispatchFault::MalformedFrame;
-    }
-    const auto value = static_cast<std::size_t>(digit - '0');
-    if (bodyLength > (std::numeric_limits<std::size_t>::max() - value) / 10) {
-      return InfiniteDispatchFault::MalformedFrame;
-    }
-    bodyLength = bodyLength * 10 + value;
   }
 
-  const auto bodyBegin = digitsEnd + 1;
-  if (bodyLength > std::numeric_limits<std::size_t>::max() - bodyBegin
-      || bodyBegin + bodyLength > std::numeric_limits<std::size_t>::max() - CHECKSUM_FIELD_BYTES
-      || bodyBegin + bodyLength + CHECKSUM_FIELD_BYTES - begin > MAX_FRAME_BYTES) {
-    return InfiniteDispatchFault::FrameTooLarge;
+  if (m_scanStage == ScanStage::BodyLengthPrefix) {
+    constexpr char BODY_LENGTH_PREFIX[] = "\0019=";
+    const auto available = std::min(std::size_t{3}, m_parser.m_buffer.size() - m_scanOffset);
+    for (std::size_t index = 0; index < available; ++index) {
+      if (m_parser.m_buffer[m_scanOffset + index] != BODY_LENGTH_PREFIX[index]) {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+    }
+    if (available < 3) {
+      return std::nullopt;
+    }
+    m_scanOffset += 3;
+    m_scanStage = ScanStage::BodyLength;
   }
 
-  const auto checksumBegin = bodyBegin + bodyLength;
-  if (m_parser.m_buffer.size() >= checksumBegin && m_parser.m_buffer[checksumBegin - 1] != '\001') {
-    return InfiniteDispatchFault::MalformedFrame;
-  }
-  const auto checksumAvailable = std::min(
-      CHECKSUM_FIELD_BYTES,
-      m_parser.m_buffer.size() > checksumBegin ? m_parser.m_buffer.size() - checksumBegin : std::size_t{0});
-  constexpr char CHECKSUM_PREFIX[] = "10=";
-  for (std::size_t index = 0; index < std::min(std::size_t{3}, checksumAvailable); ++index) {
-    if (m_parser.m_buffer[checksumBegin + index] != CHECKSUM_PREFIX[index]) {
+  if (m_scanStage == ScanStage::BodyLength) {
+    while (m_scanOffset < m_parser.m_buffer.size() && m_parser.m_buffer[m_scanOffset] != '\001') {
+      const auto digit = static_cast<unsigned char>(m_parser.m_buffer[m_scanOffset]);
+      if (digit < '0' || digit > '9') {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+      const auto value = static_cast<std::size_t>(digit - '0');
+      if (m_bodyLength > (std::numeric_limits<std::size_t>::max() - value) / 10) {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+      m_bodyLength = m_bodyLength * 10 + value;
+      m_bodyLengthHasDigit = true;
+      ++m_scanOffset;
+    }
+    if (m_scanOffset == m_parser.m_buffer.size()) {
+      return std::nullopt;
+    }
+    if (!m_bodyLengthHasDigit) {
       return InfiniteDispatchFault::MalformedFrame;
     }
+    const auto bodyBegin = m_scanOffset + 1;
+    if (m_bodyLength > std::numeric_limits<std::size_t>::max() - bodyBegin
+        || bodyBegin + m_bodyLength > std::numeric_limits<std::size_t>::max() - CHECKSUM_FIELD_BYTES
+        || bodyBegin + m_bodyLength + CHECKSUM_FIELD_BYTES > MAX_FRAME_BYTES) {
+      return InfiniteDispatchFault::FrameTooLarge;
+    }
+    m_checksumBegin = bodyBegin + m_bodyLength;
+    m_scanStage = ScanStage::Body;
   }
-  for (std::size_t index = 3; index < std::min(std::size_t{6}, checksumAvailable); ++index) {
-    if (m_parser.m_buffer[checksumBegin + index] < '0' || m_parser.m_buffer[checksumBegin + index] > '9') {
+
+  if (m_scanStage == ScanStage::Body) {
+    if (m_parser.m_buffer.size() >= m_checksumBegin && m_parser.m_buffer[m_checksumBegin - 1] != '\001') {
       return InfiniteDispatchFault::MalformedFrame;
     }
-  }
-  if (checksumAvailable == CHECKSUM_FIELD_BYTES && m_parser.m_buffer[checksumBegin + 6] != '\001') {
-    return InfiniteDispatchFault::MalformedFrame;
+    const auto available = std::min(
+        CHECKSUM_FIELD_BYTES,
+        m_parser.m_buffer.size() > m_checksumBegin ? m_parser.m_buffer.size() - m_checksumBegin : std::size_t{0});
+    constexpr char CHECKSUM_PREFIX[] = "10=";
+    for (std::size_t index = 0; index < std::min(std::size_t{3}, available); ++index) {
+      if (m_parser.m_buffer[m_checksumBegin + index] != CHECKSUM_PREFIX[index]) {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+    }
+    for (std::size_t index = 3; index < std::min(std::size_t{6}, available); ++index) {
+      if (m_parser.m_buffer[m_checksumBegin + index] < '0' || m_parser.m_buffer[m_checksumBegin + index] > '9') {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+    }
+    if (available == CHECKSUM_FIELD_BYTES) {
+      if (m_parser.m_buffer[m_checksumBegin + 6] != '\001') {
+        return InfiniteDispatchFault::MalformedFrame;
+      }
+      m_scanStage = ScanStage::Ready;
+    }
   }
   return std::nullopt;
+}
+
+void InfiniteCompleteFrameDispatcher::resetDeclaredFrameScan() {
+  m_scanStage = ScanStage::BeginString;
+  m_scanOffset = 2;
+  m_bodyLength = 0;
+  m_checksumBegin = 0;
+  m_bodyLengthHasDigit = false;
 }
 
 InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
@@ -142,21 +166,21 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
     m_parser.addToStream(bytes + offset, appendLength);
     offset += appendLength;
 
-    if (const auto fault = declaredFrameFault()) {
-      result.terminalFault = fault;
-      return result;
-    }
-
     try {
       while (true) {
-        if (const auto fault = declaredFrameFault()) {
+        if (const auto fault = scanDeclaredFrame()) {
           result.terminalFault = fault;
           return result;
         }
-        std::string message;
-        if (!m_parser.readFixMessage(message)) {
+        if (m_scanStage != ScanStage::Ready) {
           break;
         }
+        std::string message;
+        if (!m_parser.readFixMessage(message)) {
+          result.terminalFault = InfiniteDispatchFault::MalformedFrame;
+          return result;
+        }
+        resetDeclaredFrameScan();
         if (message.size() > MAX_FRAME_BYTES) {
           result.terminalFault = InfiniteDispatchFault::FrameTooLarge;
           return result;
@@ -174,10 +198,6 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
       return result;
     }
 
-    if (const auto fault = declaredFrameFault()) {
-      result.terminalFault = fault;
-      return result;
-    }
     if (m_parser.m_buffer.size() == MAX_FRAME_BYTES) {
       result.terminalFault = InfiniteDispatchFault::AccumulatorOverflow;
       return result;

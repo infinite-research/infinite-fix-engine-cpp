@@ -246,6 +246,18 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     REQUIRE(prefixedResult.frames.size() == 1);
     CHECK(prefixedResult.frames[0].bytes == valid);
     CHECK(prefixedResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
+
+    InfiniteCompleteFrameDispatcher bytewise({1, MAX_FRAME_BYTES});
+    const auto header = bytewise.process("8=", 2, 1);
+    CHECK_FALSE(header.terminalFault.has_value());
+    InfiniteDispatchResult bytewiseResult;
+    bool faultedEarly = false;
+    for (std::size_t index = 0; index < MAX_FRAME_BYTES - 2; ++index) {
+      bytewiseResult = bytewise.process("x", 1, static_cast<std::int64_t>(index + 2));
+      faultedEarly = faultedEarly || (index + 1 < MAX_FRAME_BYTES - 2 && bytewiseResult.terminalFault.has_value());
+    }
+    CHECK_FALSE(faultedEarly);
+    CHECK(bytewiseResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
   }
 
   SECTION("declared BodyLength cannot consume a following frame") {

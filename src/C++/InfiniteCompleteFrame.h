@@ -63,9 +63,23 @@ public:
   InfiniteDispatchResult process(const char *bytes, std::size_t length, std::int64_t observedTaiNs);
 
 private:
-  std::optional<InfiniteDispatchFault> declaredFrameFault() const;
+  enum class ScanStage : std::uint8_t {
+    BeginString,
+    BodyLengthPrefix,
+    BodyLength,
+    Body,
+    Ready
+  };
+
+  std::optional<InfiniteDispatchFault> scanDeclaredFrame();
+  void resetDeclaredFrameScan();
 
   Parser m_parser;
   InfiniteFrameBatch m_limits;
+  ScanStage m_scanStage{ScanStage::BeginString};
+  std::size_t m_scanOffset{2};
+  std::size_t m_bodyLength{0};
+  std::size_t m_checksumBegin{0};
+  bool m_bodyLengthHasDigit{false};
 };
 } // namespace FIX
