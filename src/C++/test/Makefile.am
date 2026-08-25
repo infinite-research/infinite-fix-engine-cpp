@@ -53,7 +53,7 @@ ut_SOURCES = \
 	UtilityTestCase.cpp
 	
 AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
-	-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH=\"$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv\" \
+	'-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"' \
 	-I..
 
 check-local:

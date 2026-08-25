@@ -28,7 +28,6 @@
 #include <fstream>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -297,13 +296,38 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     CHECK(second.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
-  SECTION("an overstated BodyLength cannot align with a following checksum") {
-    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
-    const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
-    const auto stream = std::string("8=FIX.4.2\0019=51\00135=A\001108=30\00110=026\001") + following;
-    const auto result = dispatcher.process(stream.data(), stream.size(), 1);
-    CHECK(result.frames.empty());
-    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  SECTION("length-delimited DATA bytes remain opaque to framing") {
+    InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
+    const std::string message = "8=FIX.4.2\0019=18\00135=A\00195=4\00196=\00110=\00110=000\001";
+    const auto result = dispatcher.process(message.data(), message.size(), 1);
+    REQUIRE(result.frames.size() == 1);
+    CHECK(result.frames[0].bytes == message);
+    CHECK_FALSE(result.terminalFault.has_value());
+  }
+
+  SECTION("leading malformed bytes are terminal") {
+    const std::string valid = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=026\001";
+
+    InfiniteCompleteFrameDispatcher leading({1, MAX_FRAME_BYTES});
+    const auto leadingBytes = std::string("X") + valid;
+    const auto leadingResult = leading.process(leadingBytes.data(), leadingBytes.size(), 1);
+    CHECK(leadingResult.frames.empty());
+    CHECK(leadingResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
+
+    InfiniteCompleteFrameDispatcher fragmented({1, MAX_FRAME_BYTES});
+    const auto partial = fragmented.process("8", 1, 1);
+    CHECK(partial.frames.empty());
+    CHECK_FALSE(partial.terminalFault.has_value());
+    const auto fragmentedResult = fragmented.process("X", 1, 2);
+    CHECK(fragmentedResult.frames.empty());
+    CHECK(fragmentedResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
+
+    InfiniteCompleteFrameDispatcher suffix({2, MAX_FRAME_BYTES});
+    const auto validPrefix = valid + "X";
+    const auto suffixResult = suffix.process(validPrefix.data(), validPrefix.size(), 3);
+    REQUIRE(suffixResult.frames.size() == 1);
+    CHECK(suffixResult.frames[0].bytes == valid);
+    CHECK(suffixResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
   SECTION("checksum tag requires its preceding delimiter") {
