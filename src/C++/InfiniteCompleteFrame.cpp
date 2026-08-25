@@ -23,8 +23,9 @@
 #include "config.h"
 #endif
 
-#include "Exceptions.h"
 #include "InfiniteCompleteFrame.h"
+
+#include "Exceptions.h"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -71,6 +72,25 @@ std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFr
       || bodyBegin + bodyLength > std::numeric_limits<std::size_t>::max() - CHECKSUM_FIELD_BYTES
       || bodyBegin + bodyLength + CHECKSUM_FIELD_BYTES - begin > MAX_FRAME_BYTES) {
     return InfiniteDispatchFault::FrameTooLarge;
+  }
+
+  const auto checksumBegin = bodyBegin + bodyLength;
+  const auto checksumAvailable = std::min(
+      CHECKSUM_FIELD_BYTES,
+      m_parser.m_buffer.size() > checksumBegin ? m_parser.m_buffer.size() - checksumBegin : std::size_t{0});
+  constexpr char CHECKSUM_PREFIX[] = "10=";
+  for (std::size_t index = 0; index < std::min(std::size_t{3}, checksumAvailable); ++index) {
+    if (m_parser.m_buffer[checksumBegin + index] != CHECKSUM_PREFIX[index]) {
+      return InfiniteDispatchFault::MalformedFrame;
+    }
+  }
+  for (std::size_t index = 3; index < std::min(std::size_t{6}, checksumAvailable); ++index) {
+    if (m_parser.m_buffer[checksumBegin + index] < '0' || m_parser.m_buffer[checksumBegin + index] > '9') {
+      return InfiniteDispatchFault::MalformedFrame;
+    }
+  }
+  if (checksumAvailable == CHECKSUM_FIELD_BYTES && m_parser.m_buffer[checksumBegin + 6] != '\001') {
+    return InfiniteDispatchFault::MalformedFrame;
   }
   return std::nullopt;
 }
@@ -126,7 +146,7 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
       result.terminalFault = fault;
       return result;
     }
-    if (offset < length && m_parser.m_buffer.size() == MAX_FRAME_BYTES) {
+    if (m_parser.m_buffer.size() == MAX_FRAME_BYTES) {
       result.terminalFault = InfiniteDispatchFault::AccumulatorOverflow;
       return result;
     }

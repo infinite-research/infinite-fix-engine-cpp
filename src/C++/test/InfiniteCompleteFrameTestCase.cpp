@@ -232,16 +232,38 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const std::string starved = "8=" + std::string(MAX_FRAME_BYTES - 2, 'x');
     const auto first = dispatcher.process(starved.data(), starved.size(), 1);
     CHECK(first.frames.empty());
-    CHECK_FALSE(first.terminalFault.has_value());
-    const auto overflow = dispatcher.process("x", 1, 2);
-    CHECK(overflow.frames.empty());
-    CHECK(overflow.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
+    CHECK(first.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     InfiniteCompleteFrameDispatcher oneRead({1, MAX_FRAME_BYTES});
     const std::string oversizedStarved = "8=" + std::string(MAX_FRAME_BYTES - 1, 'x');
     const auto sameRead = oneRead.process(oversizedStarved.data(), oversizedStarved.size(), 1);
     CHECK(sameRead.frames.empty());
     CHECK(sameRead.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
+
+    const std::string valid = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=026\001";
+    InfiniteCompleteFrameDispatcher prefixed({2, MAX_FRAME_BYTES + valid.size()});
+    const auto stream = valid + starved;
+    const auto prefixedResult = prefixed.process(stream.data(), stream.size(), 2);
+    REQUIRE(prefixedResult.frames.size() == 1);
+    CHECK(prefixedResult.frames[0].bytes == valid);
+    CHECK(prefixedResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
+  }
+
+  SECTION("declared BodyLength cannot consume a following frame") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
+    const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
+    const auto overstated = std::string("8=FIX.4.2\0019=30\00135=A\001108=30\00110=026\001") + following;
+    const auto result = dispatcher.process(overstated.data(), overstated.size(), 1);
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
+  SECTION("checksum framing must be exact") {
+    InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
+    const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=6\001";
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
   SECTION("BodyLength overflow is malformed") {

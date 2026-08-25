@@ -1,6 +1,24 @@
 add_definitions(-DCATCH_AMALGAMATED_CUSTOM_MAIN)
 
 if (QUICKFIX_TESTS)
+  set(infinite_complete_frame_fixture
+      ${PROJECT_SOURCE_DIR}/test/fixtures/complete-frame-gate.v1.tsv)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${infinite_complete_frame_fixture})
+  set(INFINITE_COMPLETE_FRAME_FIXTURE_PATH ${infinite_complete_frame_fixture})
+  include(${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
+
+  configure_file(${infinite_complete_frame_fixture}
+                 ${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv
+                 COPYONLY)
+  file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv "\n")
+  add_test(
+    NAME infinite_complete_frame_fixture_rejects_tampering
+    COMMAND ${CMAKE_COMMAND}
+            -DINFINITE_COMPLETE_FRAME_FIXTURE_PATH=${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv
+            -DINFINITE_COMPLETE_FRAME_EXPECT_REJECTION=ON
+            -P ${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
+
   set (ut_SOURCES 
   ${PROJECT_SOURCE_DIR}/src/C++/test/catch_amalgamated.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryTestCase.cpp

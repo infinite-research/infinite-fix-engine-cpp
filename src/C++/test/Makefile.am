@@ -1,5 +1,7 @@
 noinst_PROGRAMS = ut
 
+EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake
+
 ut_LDADD = ../libquickfix.la
 
 ut_SOURCES = \
@@ -20,6 +22,7 @@ ut_SOURCES = \
 	GroupTestCase.cpp \
 	HttpMessageTestCase.cpp \
 	HttpParserTestCase.cpp \
+	InfiniteCompleteFrameTestCase.cpp \
 	MemoryStoreTestCase.cpp \
 	MessageSortersTestCase.cpp \
 	MessagesTestCase.cpp \
@@ -49,4 +52,6 @@ ut_SOURCES = \
 	UtcTimeStampTestCase.cpp \
 	UtilityTestCase.cpp
 	
-AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN -I..
+AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
+	-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH=\"$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv\" \
+	-I..

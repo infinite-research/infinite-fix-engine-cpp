@@ -57,6 +57,8 @@ struct InfiniteDispatchResult {
 class InfiniteCompleteFrameDispatcher {
 public:
   explicit InfiniteCompleteFrameDispatcher(InfiniteFrameBatch limits);
+  InfiniteCompleteFrameDispatcher(const InfiniteCompleteFrameDispatcher &) = delete;
+  InfiniteCompleteFrameDispatcher &operator=(const InfiniteCompleteFrameDispatcher &) = delete;
 
   InfiniteDispatchResult process(const char *bytes, std::size_t length, std::int64_t observedTaiNs);
 

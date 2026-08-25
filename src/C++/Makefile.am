@@ -11,6 +11,8 @@ libquickfix_la_SOURCES = \
 	SessionState.h \
 	SessionFactory.h \
 	SessionFactory.cpp \
+	InfiniteCompleteFrame.cpp \
+	InfiniteCompleteFrame.h \
 	Parser.cpp \
 	Parser.h \
 	Log.cpp \
@@ -158,7 +160,7 @@ all-local:
 	ln -s ../src/C++/.libs/libquickfix.la $(top_builddir)/lib/libquickfix.la
 	ln -s ../src/C++/.libs/libquickfix.so $(top_builddir)/lib/libquickfix.so
 	ln -s ../src/C++/.libs/libquickfix.dylib $(top_builddir)/lib/libquickfix.dylib
-	bash ./copy.sh $(top_builddir)/include/quickfix *.h
+	bash ./copy.sh $(top_builddir)/include/quickfix $(filter-out Infinite%.h,$(wildcard *.h))
 	bash ./copy.sh $(top_builddir)/include/quickfix fix*/*.h
 
 clean-local:
@@ -178,7 +180,7 @@ install-exec-local: *.h
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp1
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp2
 	mkdir $(DESTDIR)$(pkgincludedir)/fixt11
-	cp *.h $(DESTDIR)$(pkgincludedir)
+	cp $(filter-out Infinite%.h,$(wildcard *.h)) $(DESTDIR)$(pkgincludedir)
 	cp fix40/*.h $(DESTDIR)$(pkgincludedir)/fix40
 	cp fix41/*.h $(DESTDIR)$(pkgincludedir)/fix41
 	cp fix42/*.h $(DESTDIR)$(pkgincludedir)/fix42
