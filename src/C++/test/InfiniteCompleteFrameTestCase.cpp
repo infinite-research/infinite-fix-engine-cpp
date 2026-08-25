@@ -91,21 +91,21 @@ std::vector<FramingRow> loadCanonicalFramingRows(const std::string &path) {
     throw std::runtime_error("missing canonical fixture");
   }
 
-  constexpr const char *gateMagic = "IRFQ-COMPLETE-FRAME-GATE-V1";
-  constexpr const char *gateHeader
+  constexpr const char *GATE_MAGIC = "IRFQ-COMPLETE-FRAME-GATE-V1";
+  constexpr const char *GATE_HEADER
       = "case_id\tpartition\tconnection\tentry_kind\tprotocol\tobserved_tai_ns\tcandidate_tai_ns\t"
         "payload_hex\texpected";
-  constexpr const char *framingMagic = "IRFQ-FIX-FRAMING-V1";
-  constexpr const char *framingHeader
+  constexpr const char *FRAMING_MAGIC = "IRFQ-FIX-FRAMING-V1";
+  constexpr const char *FRAMING_HEADER
       = "case_id\tread_index\tobserved_tai_ns\tchunk_hex\texpected_frames_hex\texpected_fault";
 
   std::string line;
-  if (!std::getline(input, line) || line != gateMagic || !std::getline(input, line) || line != gateHeader) {
+  if (!std::getline(input, line) || line != GATE_MAGIC || !std::getline(input, line) || line != GATE_HEADER) {
     throw std::runtime_error("malformed gate fixture header");
   }
 
   std::vector<std::string> gateFrames;
-  while (std::getline(input, line) && line != framingMagic) {
+  while (std::getline(input, line) && line != FRAMING_MAGIC) {
     const auto fields = split(line, '\t');
     if (fields.size() != 9) {
       throw std::runtime_error("malformed gate fixture row");
@@ -117,7 +117,7 @@ std::vector<FramingRow> loadCanonicalFramingRows(const std::string &path) {
       }
     }
   }
-  if (line != framingMagic || !std::getline(input, line) || line != framingHeader) {
+  if (line != FRAMING_MAGIC || !std::getline(input, line) || line != FRAMING_HEADER) {
     throw std::runtime_error("malformed framing fixture header");
   }
 
@@ -144,19 +144,19 @@ std::vector<FramingRow> loadCanonicalFramingRows(const std::string &path) {
 }
 
 std::string makeMessageOfSize(std::size_t totalSize) {
-  constexpr const char *prefix = "8=FIX.4.2\0019=";
-  constexpr const char *checksum = "10=000\001";
+  constexpr const char *PREFIX = "8=FIX.4.2\0019=";
+  constexpr const char *CHECKSUM = "10=000\001";
   for (std::size_t bodyLength = 9; bodyLength < totalSize; ++bodyLength) {
     const auto bodyLengthText = std::to_string(bodyLength);
-    if (std::char_traits<char>::length(prefix) + bodyLengthText.size() + 1 + bodyLength
-            + std::char_traits<char>::length(checksum)
+    if (std::char_traits<char>::length(PREFIX) + bodyLengthText.size() + 1 + bodyLength
+            + std::char_traits<char>::length(CHECKSUM)
         != totalSize) {
       continue;
     }
     std::string body = "35=A\00158=";
     body.append(bodyLength - 9, 'x');
     body.push_back('\001');
-    return std::string(prefix) + bodyLengthText + '\001' + body + checksum;
+    return std::string(PREFIX) + bodyLengthText + '\001' + body + CHECKSUM;
   }
   throw std::runtime_error("requested FIX size cannot be represented");
 }
@@ -257,7 +257,7 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
         emptyLengthDispatcher.process(emptyLength.data(), emptyLength.size(), 2).terminalFault
         == InfiniteDispatchFault::MalformedFrame);
 
-    const std::string belowDigit = "8=FIX.4.2\0019=////\00135=A\00110=000\001";
+    const std::string belowDigit = "8=FIX.4.2\0019=/\00135=A\00110=000\001";
     InfiniteCompleteFrameDispatcher belowDigitDispatcher({1, MAX_FRAME_BYTES});
     CHECK(
         belowDigitDispatcher.process(belowDigit.data(), belowDigit.size(), 2).terminalFault
@@ -296,6 +296,36 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == valid);
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
+  SECTION("valid maximal prefix is returned with a provably oversized suffix") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES * 2});
+    const auto valid = makeMessageOfSize(128);
+    const std::string read = valid + "8=FIX.4.2\0019=65537\001";
+    const auto result = dispatcher.process(read.data(), read.size(), 1);
+    REQUIRE(result.frames.size() == 1);
+    CHECK(result.frames[0].bytes == valid);
+    CHECK(result.terminalFault == InfiniteDispatchFault::FrameTooLarge);
+  }
+
+  SECTION("a fragmented maximum frame can complete alongside a valid successor") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES * 2});
+    const auto maximum = makeMessageOfSize(MAX_FRAME_BYTES);
+    const auto successor = makeMessageOfSize(128);
+    constexpr std::size_t FIRST_READ_BYTES = 65'000;
+
+    const auto first = dispatcher.process(maximum.data(), FIRST_READ_BYTES, 1);
+    CHECK(first.frames.empty());
+    CHECK_FALSE(first.terminalFault.has_value());
+
+    const std::string secondRead = maximum.substr(FIRST_READ_BYTES) + successor;
+    const auto second = dispatcher.process(secondRead.data(), secondRead.size(), 2);
+    REQUIRE(second.frames.size() == 2);
+    CHECK(second.frames[0].bytes == maximum);
+    CHECK(second.frames[0].observedTaiNs == 2);
+    CHECK(second.frames[1].bytes == successor);
+    CHECK(second.frames[1].observedTaiNs == 2);
+    CHECK_FALSE(second.terminalFault.has_value());
   }
 
   SECTION("batch frame and byte limits reject the complete read") {

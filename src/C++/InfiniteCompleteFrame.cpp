@@ -122,8 +122,12 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
       return result;
     }
 
-    if (offset < length) {
-      result.terminalFault = declaredFrameFault().value_or(InfiniteDispatchFault::AccumulatorOverflow);
+    if (const auto fault = declaredFrameFault()) {
+      result.terminalFault = fault;
+      return result;
+    }
+    if (offset < length && m_parser.m_buffer.size() == MAX_FRAME_BYTES) {
+      result.terminalFault = InfiniteDispatchFault::AccumulatorOverflow;
       return result;
     }
   }
