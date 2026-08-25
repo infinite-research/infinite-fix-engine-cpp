@@ -59,13 +59,15 @@ void Session::recordInfiniteCallback(InfiniteCallbackKind kind, const std::strin
   if (!m_infinitePlan) {
     throw std::logic_error("Infinite callback recording is inactive");
   }
+  const auto *reusableQueueState = m_infinitePlan->callbacks.empty() ? &m_infinitePlan->resultingState
+                                                                     : &m_infinitePlan->callbacks.back().observedState;
   m_infinitePlan->callbacks.push_back(
       InfinitePlannedCallback{
           m_infinitePlan->operationCount++,
           kind,
           bytes,
           message,
-          currentInfiniteExpectedState(m_timestamper())});
+          currentInfiniteExpectedState(m_timestamper(), reusableQueueState)});
 }
 
 #define LOGEX(method)                                                                                                  \
@@ -152,7 +154,6 @@ void Session::fill(Header &header) {
 }
 
 void Session::next(const UtcTimeStamp &now) {
-  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   try {
     if (!checkSessionTime(now)) {
@@ -598,7 +599,6 @@ Message Session::newMessage(const MsgType &msgType) const {
 }
 
 bool Session::send(Message &message) {
-  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   message.getHeader().removeField(FIELD::PossDupFlag);
   message.getHeader().removeField(FIELD::OrigSendingTime);
@@ -1271,7 +1271,6 @@ bool Session::nextQueued(SEQNUM num, const UtcTimeStamp &now) {
 }
 
 void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued) {
-  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   try {
     m_state.onIncoming(msg);
@@ -1297,7 +1296,6 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
 }
 
 void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
-  Locker l(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   const Header &header = message.getHeader();
   const auto markInfiniteDisposition = [this]() {

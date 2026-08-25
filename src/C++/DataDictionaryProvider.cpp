@@ -30,6 +30,25 @@
 namespace FIX {
 DataDictionaryProvider::DataDictionaryProvider(const DataDictionaryProvider &copy) { *this = copy; }
 
+DataDictionaryProvider &DataDictionaryProvider::operator=(const DataDictionaryProvider &copy) {
+  if (this == &copy) {
+    return *this;
+  }
+
+  std::map<std::string, std::shared_ptr<DataDictionary>> transportDictionaries;
+  for (const auto &entry : copy.m_transportDictionaries) {
+    transportDictionaries.emplace(entry.first, std::make_shared<DataDictionary>(*entry.second));
+  }
+  std::map<std::string, std::shared_ptr<DataDictionary>> applicationDictionaries;
+  for (const auto &entry : copy.m_applicationDictionaries) {
+    applicationDictionaries.emplace(entry.first, std::make_shared<DataDictionary>(*entry.second));
+  }
+
+  m_transportDictionaries.swap(transportDictionaries);
+  m_applicationDictionaries.swap(applicationDictionaries);
+  return *this;
+}
+
 const DataDictionary &DataDictionaryProvider::getSessionDataDictionary(const BeginString &beginString) const
     EXCEPT(DataDictionaryNotFound) {
   std::map<std::string, std::shared_ptr<DataDictionary>>::const_iterator find

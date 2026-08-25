@@ -30,6 +30,11 @@
 #include "Values.h"
 #include "scope_guard.hpp"
 
+#ifdef HAVE_SSL
+#include <openssl/crypto.h>
+#endif
+
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -39,9 +44,31 @@ namespace {
 constexpr std::size_t MAX_INFINITE_PLANNED_MESSAGES = 256;
 constexpr std::size_t MAX_INFINITE_PLANNED_BYTES = 16 * 1024 * 1024;
 
+void cleanse(std::string &bytes) noexcept {
+#ifdef HAVE_SSL
+  OPENSSL_cleanse(bytes.data(), bytes.size());
+#else
+  volatile char *cursor = bytes.empty() ? nullptr : &bytes[0];
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    cursor[index] = 0;
+  }
+#endif
+}
+
 bool containsLogonCredentialField(const std::string &bytes) {
   return bytes.find("\00135=A\001") != std::string::npos
          && (bytes.find("\001553=") != std::string::npos || bytes.find("\001554=") != std::string::npos);
+}
+
+bool cleanseCredentialMessages(std::vector<std::string> &messages) noexcept {
+  bool found = false;
+  for (auto &bytes : messages) {
+    if (containsLogonCredentialField(bytes)) {
+      cleanse(bytes);
+      found = true;
+    }
+  }
+  return found;
 }
 
 InfiniteActionData makeActionData(InfiniteSessionActionKind action, InfiniteActionPlan plan) {
@@ -100,40 +127,70 @@ public:
         || static_cast<std::uint64_t>(end) - static_cast<std::uint64_t>(begin) >= MAX_INFINITE_PLANNED_MESSAGES) {
       throw IOException("Infinite effect plan message range exceeds bound");
     }
+
+    std::map<SEQNUM, std::string> loadedBySequence;
+    if (!m_reset) {
+      std::vector<std::string> loaded;
+      try {
+        m_sourceStore.get(begin, end, loaded);
+      } catch (...) {
+        cleanseCredentialMessages(loaded);
+        throw;
+      }
+      if (cleanseCredentialMessages(loaded)) {
+        throw IOException("Infinite effect plan store contains credential-bearing Logon");
+      }
+      if (loaded.size() > MAX_INFINITE_PLANNED_MESSAGES) {
+        throw IOException("Infinite effect plan store returned too many messages");
+      }
+      std::size_t loadedBytes = 0;
+      for (auto &bytes : loaded) {
+        if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - loadedBytes) {
+          throw IOException("Infinite effect plan store returned too many bytes");
+        }
+        loadedBytes += bytes.size();
+        Message message(bytes, false);
+        const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
+        if (sequence < begin || sequence > end || !loadedBySequence.emplace(sequence, std::move(bytes)).second) {
+          throw IOException("Infinite effect plan store returned invalid sequence range");
+        }
+      }
+    }
+
+    std::vector<std::pair<SEQNUM, std::string>> stagedSources;
+    std::vector<std::string> stagedMessages;
+    stagedSources.reserve(loadedBySequence.size());
+    stagedMessages.reserve(static_cast<std::size_t>(end - begin) + 1);
+    std::size_t stagedSourceBytes = m_sourceBytes;
     for (SEQNUM sequence = begin; sequence <= end; ++sequence) {
       const auto cached = m_messages.find(sequence);
       if (cached != m_messages.end()) {
-        messages.push_back(cached->second);
-        continue;
-      }
-      if (m_reset) {
-        continue;
-      }
-
-      std::vector<std::string> loaded;
-      m_sourceStore.get(sequence, sequence, loaded);
-      if (loaded.size() > 1) {
-        throw IOException("Infinite effect plan store returned duplicate sequence");
-      }
-      for (const auto &bytes : loaded) {
-        if (m_sourceMessages.size() >= MAX_INFINITE_PLANNED_MESSAGES
-            || bytes.size() > MAX_INFINITE_PLANNED_BYTES - m_sourceBytes) {
-          throw IOException("Infinite effect plan store input exceeds bound");
+        stagedMessages.push_back(cached->second);
+      } else {
+        const auto source = loadedBySequence.find(sequence);
+        if (source != loadedBySequence.end()) {
+          const auto &bytes = source->second;
+          if (m_sourceMessages.size() >= MAX_INFINITE_PLANNED_MESSAGES
+              || stagedSources.size() >= MAX_INFINITE_PLANNED_MESSAGES - m_sourceMessages.size()
+              || bytes.size() > MAX_INFINITE_PLANNED_BYTES - stagedSourceBytes) {
+            throw IOException("Infinite effect plan store input exceeds bound");
+          }
+          stagedSourceBytes += bytes.size();
+          stagedSources.emplace_back(sequence, bytes);
+          stagedMessages.push_back(bytes);
         }
-        Message message(bytes, false);
-        const auto loadedSequence = message.getHeader().getField<MsgSeqNum>().getValue();
-        if (loadedSequence != sequence) {
-          throw IOException("Infinite effect plan store sequence mismatch");
-        }
-        m_sourceBytes += bytes.size();
-        m_sourceMessages.emplace_back(sequence, bytes);
-        m_messages.emplace(sequence, bytes);
-        messages.push_back(bytes);
       }
       if (sequence == std::numeric_limits<SEQNUM>::max()) {
         break;
       }
     }
+
+    for (auto &source : stagedSources) {
+      m_messages.emplace(source.first, source.second);
+      m_sourceMessages.push_back(std::move(source));
+    }
+    m_sourceBytes = stagedSourceBytes;
+    messages.insert(messages.end(), stagedMessages.begin(), stagedMessages.end());
   }
 
   SEQNUM getNextSenderMsgSeqNum() const override { return m_senderSequence; }
@@ -187,6 +244,57 @@ private:
   UtcTimeStamp m_now;
 };
 
+bool sourceMessagesMatch(const MessageStore &store, const std::vector<std::pair<SEQNUM, std::string>> &expected) {
+  if (expected.empty()) {
+    return true;
+  }
+  if (expected.front().first <= 0 || expected.back().first < expected.front().first
+      || static_cast<std::uint64_t>(expected.back().first) - static_cast<std::uint64_t>(expected.front().first)
+             >= MAX_INFINITE_PLANNED_MESSAGES) {
+    return false;
+  }
+  for (std::size_t index = 1; index < expected.size(); ++index) {
+    if (expected[index - 1].first >= expected[index].first) {
+      return false;
+    }
+  }
+
+  std::vector<std::string> loaded;
+  try {
+    store.get(expected.front().first, expected.back().first, loaded);
+  } catch (...) {
+    cleanseCredentialMessages(loaded);
+    throw;
+  }
+  if (cleanseCredentialMessages(loaded)) {
+    throw IOException("Infinite source store contains credential-bearing Logon");
+  }
+  if (loaded.size() > MAX_INFINITE_PLANNED_MESSAGES) {
+    return false;
+  }
+
+  std::map<SEQNUM, std::string> bySequence;
+  std::size_t loadedBytes = 0;
+  for (auto &bytes : loaded) {
+    if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - loadedBytes) {
+      return false;
+    }
+    loadedBytes += bytes.size();
+    Message message(bytes, false);
+    const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
+    if (!bySequence.emplace(sequence, std::move(bytes)).second) {
+      return false;
+    }
+  }
+  for (const auto &source : expected) {
+    const auto found = bySequence.find(source.first);
+    if (found == bySequence.end() || found->second != source.second) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class RecordingLog : public Log {
 public:
   RecordingLog(InfiniteActionPlan &plan, const UtcTimeStamp &now)
@@ -229,12 +337,11 @@ private:
 } // namespace
 
 bool InfinitePlannedCallback::operator==(const InfinitePlannedCallback &rhs) const {
-  return order == rhs.order && kind == rhs.kind && bytes == rhs.bytes && message.toString() == rhs.message.toString()
-         && observedState == rhs.observedState;
+  return order == rhs.order && kind == rhs.kind && bytes == rhs.bytes && observedState == rhs.observedState;
 }
 
 bool InfinitePlannedMessage::operator==(const InfinitePlannedMessage &rhs) const {
-  return sequence == rhs.sequence && bytes == rhs.bytes && message.toString() == rhs.message.toString();
+  return sequence == rhs.sequence && bytes == rhs.bytes;
 }
 
 bool InfinitePlannedEffect::operator==(const InfinitePlannedEffect &rhs) const {
@@ -250,7 +357,9 @@ bool InfiniteSessionStateFingerprint::operator==(const InfiniteSessionStateFinge
          && heartBtInt == rhs.heartBtInt && lastSentTime == rhs.lastSentTime && lastReceivedTime == rhs.lastReceivedTime
          && storeCreationTime == rhs.storeCreationTime && sessionTimeActive == rhs.sessionTimeActive
          && logonTimeActive == rhs.logonTimeActive && infiniteFenced == rhs.infiniteFenced
-         && logoutReason == rhs.logoutReason && queuedMessages == rhs.queuedMessages
+         && logoutReason == rhs.logoutReason
+         && ((!queuedMessages && !rhs.queuedMessages)
+             || (queuedMessages && rhs.queuedMessages && *queuedMessages == *rhs.queuedMessages))
          && senderDefaultApplVerID == rhs.senderDefaultApplVerID && targetDefaultApplVerID == rhs.targetDefaultApplVerID
          && sendRedundantResendRequests == rhs.sendRedundantResendRequests && checkCompId == rhs.checkCompId
          && checkLatency == rhs.checkLatency && maxLatency == rhs.maxLatency && resetOnLogon == rhs.resetOnLogon
@@ -306,26 +415,41 @@ const InfiniteActionPlan &infiniteActionPlan(const InfiniteActionData &actionDat
   return std::visit([](const auto &data) -> const InfiniteActionPlan & { return data.plan; }, actionData);
 }
 
-InfiniteExpectedSessionState Session::currentInfiniteExpectedState(const UtcTimeStamp &now) const {
+InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
+    const UtcTimeStamp &now,
+    const InfiniteExpectedSessionState *reusableQueueState) const {
   Locker sessionLock(m_mutex);
   Locker lock(m_state.m_mutex);
   const auto senderSequence = m_state.m_pStore->getNextSenderMsgSeqNum();
   const auto targetSequence = m_state.m_pStore->getNextTargetMsgSeqNum();
   const auto storeCreationTime = m_state.m_pStore->getCreationTime();
 
-  std::vector<InfinitePlannedMessage> queue;
   if (m_state.m_queue.size() > MAX_INFINITE_PLANNED_MESSAGES) {
     throw std::length_error("Infinite queued message count exceeds bound");
   }
-  queue.reserve(m_state.m_queue.size());
-  std::size_t queuedBytes = 0;
-  for (const auto &entry : m_state.m_queue) {
-    auto bytes = entry.second.toString();
-    if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - queuedBytes) {
-      throw std::length_error("Infinite queued message bytes exceed bound");
+
+  std::shared_ptr<const InfinitePlannedMessages> queue;
+  const auto &reusableQueue = reusableQueueState ? reusableQueueState->mutableState.queuedMessages : nullptr;
+  // Private planning suppresses queue release and insertion; only reset can change it, which changes its size.
+  if (m_infinitePlan && reusableQueue && reusableQueue->size() == m_state.m_queue.size()) {
+    queue = reusableQueue;
+  } else {
+    auto captured = std::make_shared<InfinitePlannedMessages>();
+    captured->reserve(m_state.m_queue.size());
+    std::size_t queuedBytes = 0;
+    for (const auto &entry : m_state.m_queue) {
+      auto bytes = entry.second.toString();
+      if (containsLogonCredentialField(bytes)) {
+        cleanse(bytes);
+        throw std::invalid_argument("Infinite queued state contains credential-bearing Logon");
+      }
+      if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - queuedBytes) {
+        throw std::length_error("Infinite queued message bytes exceed bound");
+      }
+      queuedBytes += bytes.size();
+      captured->push_back(InfinitePlannedMessage{entry.first, std::move(bytes), entry.second});
     }
-    queuedBytes += bytes.size();
-    queue.push_back(InfinitePlannedMessage{entry.first, std::move(bytes), entry.second});
+    queue = std::move(captured);
   }
 
   const auto resend = m_state.m_resendRange;
@@ -382,8 +506,9 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(const UtcTime
 
 InfiniteSessionClassification Session::classifyInfiniteFrame(
     const InfiniteAtHeadBinding &atHead,
-    const std::string &bytes,
+    std::string &&bytes,
     const UtcTimeStamp &now) const {
+  auto cleanseGuard = sg::make_scope_guard([&bytes]() { cleanse(bytes); });
   Locker sessionLock(m_mutex);
   ensureInfiniteCallbackNotReentrant();
   InfiniteExpectedSessionState expected{};
@@ -527,7 +652,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     recordingLog.onIncoming(bytes);
     session.next(message, now, false);
 
-    plan.resultingState = session.currentInfiniteExpectedState(now);
+    plan.resultingState = session.currentInfiniteExpectedState(
+        now,
+        plan.callbacks.empty() ? &expected : &plan.callbacks.back().observedState);
     plan.resultingState.revision = expected.revision + 1;
     restore();
     restoreGuard.dismiss();
@@ -560,6 +687,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
 
 void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &expected) {
   const auto &state = expected.mutableState;
+  if (m_infiniteSessionFenced && !state.infiniteFenced) {
+    throw IOException("Infinite session fence is monotonic");
+  }
   if (expected.sessionIdentity != m_infiniteSessionIdentity
       || m_state.m_pStore->getNextSenderMsgSeqNum() != expected.senderSequence
       || m_state.m_pStore->getNextTargetMsgSeqNum() != expected.targetSequence
@@ -585,8 +715,10 @@ void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &e
   m_state.m_lastReceivedTime = state.lastReceivedTime;
   m_state.m_logoutReason = state.logoutReason;
   m_state.m_queue.clear();
-  for (const auto &entry : state.queuedMessages) {
-    m_state.m_queue.emplace(entry.sequence, entry.message);
+  if (state.queuedMessages) {
+    for (const auto &entry : *state.queuedMessages) {
+      m_state.m_queue.emplace(entry.sequence, entry.message);
+    }
   }
 
   m_senderDefaultApplVerID = state.senderDefaultApplVerID;
@@ -604,7 +736,7 @@ void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &e
   m_validateLengthAndChecksum = state.validateLengthAndChecksum;
   m_sendNextExpectedMsgSeqNum = state.sendNextExpectedMsgSeqNum;
   m_isNonStopSession = state.nonStopSession;
-  m_infiniteSessionFenced = state.infiniteFenced;
+  m_infiniteSessionFenced = m_infiniteSessionFenced || state.infiniteFenced;
   m_infiniteSessionRevision = expected.revision;
   m_infiniteConfigurationRevision = expected.configurationRevision;
 }
@@ -612,9 +744,21 @@ void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &e
 void Session::applyInfiniteClassification(
     const InfiniteSessionClassification &classification,
     InfiniteEffectAuthorization &&authorization) {
+  const auto &plan = infiniteActionPlan(classification.m_actionData);
+  auto initialNow = plan.now;
+  try {
+    initialNow = m_timestamper();
+  } catch (...) {
+    Locker sessionLock(m_mutex);
+    m_infiniteSessionFenced = true;
+    throw;
+  }
   Locker sessionLock(m_mutex);
   Locker stateLock(m_state.m_mutex);
-  const auto &plan = infiniteActionPlan(classification.m_actionData);
+  if (m_state.m_infiniteCallbackActive.load(std::memory_order_acquire)) {
+    m_infiniteSessionFenced = true;
+    throw IOException("Infinite classification application is already in a callback");
+  }
   if (authorization.m_consumed || authorization.m_binding != classification.m_binding
       || !(authorization.m_expected == classification.m_expected) || authorization.m_action != classification.m_action
       || !(authorization.m_actionData == classification.m_actionData)) {
@@ -628,18 +772,14 @@ void Session::applyInfiniteClassification(
   }
 
   try {
-    if (!(currentInfiniteExpectedState(m_timestamper()) == classification.m_expected)
+    if (!(currentInfiniteExpectedState(initialNow) == classification.m_expected)
         || m_infiniteSessionRevision == std::numeric_limits<std::uint64_t>::max()) {
       m_infiniteSessionFenced = true;
       return;
     }
 
-    for (const auto &source : plan.sourceMessages) {
-      std::vector<std::string> loaded;
-      m_state.m_pStore->get(source.first, source.first, loaded);
-      if (loaded.size() != 1 || loaded.front() != source.second) {
-        throw IOException("Infinite source message changed before application");
-      }
+    if (!sourceMessagesMatch(*m_state.m_pStore, plan.sourceMessages)) {
+      throw IOException("Infinite source message changed before application");
     }
 
     const auto invokeCallback = [&](const InfinitePlannedCallback &callback) {
@@ -647,32 +787,42 @@ void Session::applyInfiniteClassification(
       m_state.m_infiniteCallbackActive.store(true, std::memory_order_release);
       auto callbackGuard = sg::make_scope_guard(
           [this]() { m_state.m_infiniteCallbackActive.store(false, std::memory_order_release); });
-      ReverseLocker stateUnlock(m_state.m_mutex);
-      ReverseLocker sessionUnlock(m_mutex);
-      if (callback.kind == InfiniteCallbackKind::FromAdmin) {
-        m_application.fromAdmin(callback.message, m_sessionID);
-      } else if (callback.kind == InfiniteCallbackKind::FromApplication) {
-        m_application.fromApp(callback.message, m_sessionID);
-      } else if (callback.kind == InfiniteCallbackKind::ToAdmin) {
-        Message outgoing = callback.message;
-        m_application.toAdmin(outgoing, m_sessionID);
-        if (outgoing.toString() != callback.bytes) {
-          throw IOException("Infinite toAdmin callback changed the authorized bytes");
+      auto callbackNow = initialNow;
+      {
+        ReverseLocker stateUnlock(m_state.m_mutex);
+        ReverseLocker sessionUnlock(m_mutex);
+        if (callback.kind == InfiniteCallbackKind::FromAdmin) {
+          m_application.fromAdmin(callback.message, m_sessionID);
+        } else if (callback.kind == InfiniteCallbackKind::FromApplication) {
+          m_application.fromApp(callback.message, m_sessionID);
+        } else if (callback.kind == InfiniteCallbackKind::ToAdmin) {
+          Message outgoing = callback.message;
+          m_application.toAdmin(outgoing, m_sessionID);
+          auto actual = outgoing.toString();
+          auto actualGuard = sg::make_scope_guard([&actual]() { cleanse(actual); });
+          if (actual != callback.bytes) {
+            throw IOException("Infinite toAdmin callback changed the authorized bytes");
+          }
+        } else if (callback.kind == InfiniteCallbackKind::ToApplication) {
+          Message outgoing = callback.message;
+          try {
+            m_application.toApp(outgoing, m_sessionID);
+          } catch (DoNotSend &) {
+            throw IOException("Infinite toApp callback refused the authorized bytes");
+          }
+          if (outgoing.toString() != callback.bytes) {
+            throw IOException("Infinite toApp callback changed the authorized bytes");
+          }
+        } else if (callback.kind == InfiniteCallbackKind::Logon) {
+          m_application.onLogon(m_sessionID);
+        } else if (callback.kind == InfiniteCallbackKind::Logout) {
+          m_application.onLogout(m_sessionID);
         }
-      } else if (callback.kind == InfiniteCallbackKind::ToApplication) {
-        Message outgoing = callback.message;
-        try {
-          m_application.toApp(outgoing, m_sessionID);
-        } catch (DoNotSend &) {
-          throw IOException("Infinite toApp callback refused the authorized bytes");
-        }
-        if (outgoing.toString() != callback.bytes) {
-          throw IOException("Infinite toApp callback changed the authorized bytes");
-        }
-      } else if (callback.kind == InfiniteCallbackKind::Logon) {
-        m_application.onLogon(m_sessionID);
-      } else if (callback.kind == InfiniteCallbackKind::Logout) {
-        m_application.onLogout(m_sessionID);
+        callbackNow = m_timestamper();
+      }
+      if (!(currentInfiniteExpectedState(callbackNow) == callback.observedState)
+          || !sourceMessagesMatch(*m_state.m_pStore, plan.sourceMessages)) {
+        throw IOException("Infinite session changed during callback");
       }
     };
 

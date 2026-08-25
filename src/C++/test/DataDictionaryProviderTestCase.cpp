@@ -25,6 +25,8 @@
 #endif
 
 #include <DataDictionaryProvider.h>
+#include <Fields.h>
+#include <Values.h>
 
 #include "catch_amalgamated.hpp"
 
@@ -40,5 +42,20 @@ TEST_CASE("DataDictionaryProviderTests") {
 
     CHECK(expected.getVersion() == actual.getVersion());
     CHECK(expected.getOrderedFields() == actual.getOrderedFields());
+  }
+
+  SECTION("copies own independent dictionaries") {
+    const BeginString beginString(BeginString_FIX42);
+    auto dictionary = std::make_shared<DataDictionary>();
+    DataDictionaryProvider original;
+    original.addTransportDataDictionary(beginString, dictionary);
+
+    DataDictionaryProvider copied(original);
+    DataDictionaryProvider assigned;
+    assigned = original;
+
+    CHECK(&copied.getSessionDataDictionary(beginString) != dictionary.get());
+    CHECK(&assigned.getSessionDataDictionary(beginString) != dictionary.get());
+    CHECK(&assigned.getSessionDataDictionary(beginString) != &copied.getSessionDataDictionary(beginString));
   }
 }

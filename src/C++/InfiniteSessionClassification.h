@@ -27,6 +27,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <variant>
@@ -70,6 +71,8 @@ struct InfinitePlannedMessage {
   bool operator==(const InfinitePlannedMessage &rhs) const;
 };
 
+using InfinitePlannedMessages = std::vector<InfinitePlannedMessage>;
+
 enum class InfiniteEffectKind : std::uint8_t {
   StoreMessage = 1,
   SetSenderSequence = 2,
@@ -103,7 +106,7 @@ struct InfiniteSessionStateFingerprint {
   bool logonTimeActive;
   bool infiniteFenced;
   std::string logoutReason;
-  std::vector<InfinitePlannedMessage> queuedMessages;
+  std::shared_ptr<const InfinitePlannedMessages> queuedMessages;
   std::string senderDefaultApplVerID;
   std::string targetDefaultApplVerID;
   bool sendRedundantResendRequests;
