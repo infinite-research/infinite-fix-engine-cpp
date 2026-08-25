@@ -1,5 +1,24 @@
 /* -*- C++ -*- */
 
+/****************************************************************************
+** Copyright (c) 2001-2014
+**
+** This file is part of the QuickFIX FIX Engine
+**
+** This file may be distributed under the terms of the quickfixengine.org
+** license as defined by quickfixengine.org and appearing in the file
+** LICENSE included in the packaging of this file.
+**
+** This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
+** WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+**
+** See http://www.quickfixengine.org/LICENSE for licensing information.
+**
+** Contact ask@quickfixengine.org if any conditions of this licensing are
+** not clear to you.
+**
+****************************************************************************/
+
 #ifndef FIX_INFINITESESSIONCLASSIFICATION_H
 #define FIX_INFINITESESSIONCLASSIFICATION_H
 
@@ -10,6 +29,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace FIX {
@@ -36,8 +56,17 @@ enum class InfiniteSequenceDisposition : std::uint8_t {
 enum class InfiniteCallbackKind : std::uint8_t {
   FromAdmin = 1,
   FromApplication = 2,
-  Logon = 3,
-  Logout = 4,
+  ToAdmin = 3,
+  ToApplication = 4,
+  Logon = 5,
+  Logout = 6,
+};
+
+struct InfinitePlannedCallback {
+  InfiniteCallbackKind kind;
+  std::string bytes;
+
+  bool operator==(const InfinitePlannedCallback &rhs) const;
 };
 
 enum class InfiniteEffectKind : std::uint8_t {
@@ -75,9 +104,9 @@ struct InfiniteSessionStateFingerprint {
   SEQNUM resendBegin;
   SEQNUM resendEnd;
   int heartBtInt;
-  UtcTimeStamp lastSentTime;
-  UtcTimeStamp lastReceivedTime;
-  UtcTimeStamp storeCreationTime;
+  UtcTimeStamp lastSentTime{UtcTimeStamp::now()};
+  UtcTimeStamp lastReceivedTime{UtcTimeStamp::now()};
+  UtcTimeStamp storeCreationTime{UtcTimeStamp::now()};
   std::string logoutReason;
   std::vector<std::pair<SEQNUM, std::string>> queuedMessages;
   std::string senderDefaultApplVerID;
@@ -110,7 +139,7 @@ struct InfiniteExpectedSessionState {
   bool operator==(const InfiniteExpectedSessionState &rhs) const;
 };
 
-struct InfiniteActionData {
+struct InfiniteActionPlan {
   std::string exactBytes;
   std::string messageType;
   UtcTimeStamp now;
@@ -118,11 +147,53 @@ struct InfiniteActionData {
   std::string failure;
   InfiniteExpectedSessionState resultingState;
   std::vector<std::pair<SEQNUM, std::string>> sourceMessages;
-  std::vector<InfiniteCallbackKind> callbacks;
+  std::vector<InfinitePlannedCallback> callbacks;
   std::vector<InfinitePlannedEffect> effects;
 
-  bool operator==(const InfiniteActionData &rhs) const;
+  bool operator==(const InfiniteActionPlan &rhs) const;
 };
+
+struct InfiniteProtocolControlData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteProtocolControlData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteSequenceResetData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteSequenceResetData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteLogoutData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteLogoutData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteResendOrQueuedReleaseData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteResendOrQueuedReleaseData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteProtocolDispositionData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteProtocolDispositionData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteApplicationData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteApplicationData &rhs) const { return plan == rhs.plan; }
+};
+struct InfiniteFailureData {
+  InfiniteActionPlan plan;
+  bool operator==(const InfiniteFailureData &rhs) const { return plan == rhs.plan; }
+};
+
+using InfiniteActionData = std::variant<
+    InfiniteProtocolControlData,
+    InfiniteSequenceResetData,
+    InfiniteLogoutData,
+    InfiniteResendOrQueuedReleaseData,
+    InfiniteProtocolDispositionData,
+    InfiniteApplicationData,
+    InfiniteFailureData>;
+
+InfiniteSessionActionKind infiniteActionKind(const InfiniteActionData &actionData);
+InfiniteActionPlan &infiniteActionPlan(InfiniteActionData &actionData);
+const InfiniteActionPlan &infiniteActionPlan(const InfiniteActionData &actionData);
 
 class InfiniteAtHeadBinding {
 public:
@@ -149,11 +220,10 @@ private:
   InfiniteEffectAuthorization(
       std::array<std::uint8_t, 32> binding,
       InfiniteExpectedSessionState expected,
-      InfiniteSessionActionKind action,
       InfiniteActionData actionData)
       : m_binding(std::move(binding)),
         m_expected(std::move(expected)),
-        m_action(action),
+        m_action(infiniteActionKind(actionData)),
         m_actionData(std::move(actionData)) {}
 
   std::array<std::uint8_t, 32> m_binding;
@@ -176,12 +246,11 @@ private:
   InfiniteSessionClassification(
       std::array<std::uint8_t, 32> binding,
       InfiniteExpectedSessionState expected,
-      InfiniteSessionActionKind action,
       InfiniteActionData actionData,
       Message message)
       : m_binding(std::move(binding)),
         m_expected(std::move(expected)),
-        m_action(action),
+        m_action(infiniteActionKind(actionData)),
         m_actionData(std::move(actionData)),
         m_message(std::move(message)) {}
 

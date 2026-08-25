@@ -23,6 +23,7 @@
 #include "config.h"
 #endif
 
+#include "InfiniteSessionClassification.h"
 #include "Session.h"
 #include "Values.h"
 #include <algorithm>
@@ -117,6 +118,7 @@ void Session::fill(Header &header) {
 }
 
 void Session::next(const UtcTimeStamp &now) {
+  ensureInfiniteCallbackNotReentrant();
   try {
     if (!checkSessionTime(now)) {
       reset();
@@ -270,7 +272,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
 
   if (isLoggedOn()) {
     if (m_infinitePlan) {
-      m_infinitePlan->callbacks.push_back(InfiniteCallbackKind::Logon);
+      m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::Logon, ""});
     } else {
       m_application.onLogon(m_sessionID);
     }
@@ -550,6 +552,7 @@ Message Session::newMessage(const MsgType &msgType) const {
 }
 
 bool Session::send(Message &message) {
+  ensureInfiniteCallbackNotReentrant();
   message.getHeader().removeField(FIELD::PossDupFlag);
   message.getHeader().removeField(FIELD::OrigSendingTime);
   return sendRaw(message);
@@ -572,7 +575,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
     }
 
     if (Message::isAdminMsgType(msgType)) {
-      if (!m_infinitePlan) {
+      if (m_infinitePlan) {
+        m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::ToAdmin, message.toString()});
+      } else {
         m_application.toAdmin(message, m_sessionID);
       }
 
@@ -604,7 +609,10 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       }
 
       try {
-        if (!m_infinitePlan) {
+        if (m_infinitePlan) {
+          m_infinitePlan->callbacks.push_back(
+              InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString()});
+        } else {
           m_application.toApp(message, m_sessionID);
         }
         message.toString(messageString);
@@ -637,6 +645,7 @@ bool Session::send(const std::string &string) {
 }
 
 void Session::disconnect() {
+  ensureInfiniteCallbackNotReentrant();
   Locker l(m_mutex);
 
   if (m_pResponder) {
@@ -650,7 +659,7 @@ void Session::disconnect() {
     m_state.receivedLogon(false);
     m_state.sentLogon(false);
     if (m_infinitePlan) {
-      m_infinitePlan->callbacks.push_back(InfiniteCallbackKind::Logout);
+      m_infinitePlan->callbacks.push_back(InfinitePlannedCallback{InfiniteCallbackKind::Logout, ""});
     } else {
       m_application.onLogout(m_sessionID);
     }
@@ -675,6 +684,12 @@ bool Session::resend(Message &message) {
   insertOrigSendingTime(header, sendingTime);
   header.setField(PossDupFlag(true));
   insertSendingTime(header);
+
+  if (m_infinitePlan) {
+    m_infinitePlan->callbacks.push_back(
+        InfinitePlannedCallback{InfiniteCallbackKind::ToApplication, message.toString()});
+    return true;
+  }
 
   try {
     m_application.toApp(message, m_sessionID);
@@ -1002,6 +1017,11 @@ void Session::populateRejectReason(Message &reject, const std::string &text) { r
 bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
   const MsgType *pMsgType = 0;
   const MsgSeqNum *pMsgSeqNum = 0;
+  const auto markInfiniteDisposition = [this]() {
+    if (m_infiniteAction) {
+      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
+    }
+  };
 
   try {
     const Header &header = msg.getHeader();
@@ -1020,10 +1040,12 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
     }
 
     if (!isGoodTime(sendingTime)) {
+      markInfiniteDisposition();
       doBadTime(msg);
       return false;
     }
     if (!isCorrectCompID(senderCompID, targetCompID)) {
+      markInfiniteDisposition();
       doBadCompID(msg);
       return false;
     }
@@ -1047,6 +1069,7 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
       }
     }
   } catch (std::exception &e) {
+    markInfiniteDisposition();
     m_state.onEvent(e.what());
     disconnect();
     return false;
@@ -1091,7 +1114,9 @@ bool Session::validLogonState(const MsgType &msgType) {
 void Session::fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID) {
   if (m_infinitePlan) {
     m_infinitePlan->callbacks.push_back(
-        Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication);
+        InfinitePlannedCallback{
+            Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
+            ""});
     return;
   }
   if (Message::isAdminMsgType(msgType)) {
@@ -1158,7 +1183,9 @@ void Session::doTargetTooHigh(const Message &msg) {
       "MsgSeqNum too high, expecting " + SEQNUM_CONVERTOR::convert(getExpectedTargetNum()) + " but received "
       + SEQNUM_CONVERTOR::convert(msgSeqNum));
 
-  m_state.queue(msgSeqNum, msg);
+  if (!m_infinitePlan) {
+    m_state.queue(msgSeqNum, msg);
+  }
 
   if (m_state.resendRequested()) {
     SessionState::ResendRange range = m_state.resendRange();
@@ -1195,6 +1222,7 @@ bool Session::nextQueued(SEQNUM num, const UtcTimeStamp &now) {
 }
 
 void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued) {
+  ensureInfiniteCallbackNotReentrant();
   try {
     m_state.onIncoming(msg);
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
@@ -1219,10 +1247,17 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
 }
 
 void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
+  ensureInfiniteCallbackNotReentrant();
   const Header &header = message.getHeader();
+  const auto markInfiniteDisposition = [this]() {
+    if (m_infiniteAction) {
+      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
+    }
+  };
 
   try {
     if (!checkSessionTime(now)) {
+      markInfiniteDisposition();
       reset();
       return;
     }
@@ -1260,19 +1295,19 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
     }
 
     if (msgType == MsgType_Logon) {
-      nextLogon(message, now);
+      nextLogon(message, now, !m_infinitePlan);
     } else if (msgType == MsgType_Heartbeat) {
-      nextHeartbeat(message, now);
+      nextHeartbeat(message, now, !m_infinitePlan);
     } else if (msgType == MsgType_TestRequest) {
-      nextTestRequest(message, now);
+      nextTestRequest(message, now, !m_infinitePlan);
     } else if (msgType == MsgType_SequenceReset) {
-      nextSequenceReset(message, now);
+      nextSequenceReset(message, now, !m_infinitePlan);
     } else if (msgType == MsgType_Logout) {
       nextLogout(message, now);
     } else if (msgType == MsgType_ResendRequest) {
       nextResendRequest(message, now);
     } else if (msgType == MsgType_Reject) {
-      nextReject(message, now);
+      nextReject(message, now, !m_infinitePlan);
     } else {
       if (!verify(message)) {
         return;
@@ -1280,10 +1315,13 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       m_state.incrNextTargetMsgSeqNum();
     }
   } catch (MessageParseError &e) {
+    markInfiniteDisposition();
     m_state.onEvent(e.what());
   } catch (RequiredTagMissing &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_REQUIRED_TAG_MISSING, e.field));
   } catch (FieldNotFound &e) {
+    markInfiniteDisposition();
     if (header.getField(FIELD::BeginString) >= FIX::BeginString_FIX42 && message.isApp()) {
       LOGEX(generateBusinessReject(message, BusinessRejectReason_CONDITIONALLY_REQUIRED_FIELD_MISSING, e.field));
     } else {
@@ -1294,36 +1332,49 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       }
     }
   } catch (InvalidTagNumber &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INVALID_TAG_NUMBER, e.field));
   } catch (NoTagValue &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_SPECIFIED_WITHOUT_A_VALUE, e.field));
   } catch (TagNotDefinedForMessage &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_NOT_DEFINED_FOR_THIS_MESSAGE_TYPE, e.field));
   } catch (InvalidMessageType &) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INVALID_MSGTYPE));
   } catch (UnsupportedMessageType &) {
+    markInfiniteDisposition();
     if (header.getField(FIELD::BeginString) >= FIX::BeginString_FIX42) {
       LOGEX(generateBusinessReject(message, BusinessRejectReason_UNSUPPORTED_MESSAGE_TYPE));
     } else {
       LOGEX(generateReject(message, "Unsupported message type"));
     }
   } catch (TagOutOfOrder &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_SPECIFIED_OUT_OF_REQUIRED_ORDER, e.field));
   } catch (IncorrectDataFormat &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INCORRECT_DATA_FORMAT_FOR_VALUE, e.field));
   } catch (IncorrectTagValue &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_VALUE_IS_INCORRECT, e.field));
   } catch (RepeatedTag &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_APPEARS_MORE_THAN_ONCE, e.field));
   } catch (RepeatingGroupCountMismatch &e) {
+    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP, e.field));
   } catch (InvalidMessage &e) {
+    markInfiniteDisposition();
     m_state.onEvent(e.what());
   } catch (RejectLogon &e) {
+    markInfiniteDisposition();
     m_state.onEvent(e.what());
     generateLogout(e.what());
     disconnect();
   } catch (UnsupportedVersion &) {
+    markInfiniteDisposition();
     if (header.getField(FIELD::MsgType) == MsgType_Logout) {
       nextLogout(message, now);
     } else {
@@ -1331,15 +1382,16 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       m_state.incrNextTargetMsgSeqNum();
     }
   } catch (IOException &e) {
+    markInfiniteDisposition();
     m_state.onEvent(e.what());
     disconnect();
   }
 
-  if (!queued) {
+  if (!queued && !m_infinitePlan) {
     nextQueued(now);
   }
 
-  if (isLoggedOn()) {
+  if (isLoggedOn() && !m_infinitePlan) {
     next(m_timestamper());
   }
 }
