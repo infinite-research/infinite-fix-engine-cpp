@@ -123,6 +123,10 @@ public:
     session.m_sessionTime = sessionTime;
   }
 
+  static void setTimestamper(Session &session, std::function<UtcTimeStamp()> timestamper) {
+    session.m_timestamper = std::move(timestamper);
+  }
+
   static Message queuedMessage(const Session &session, SEQNUM sequence) {
     auto &mutableSession = const_cast<Session &>(session);
     Message message;
@@ -346,6 +350,9 @@ struct RecordingStore : MemoryStore {
       getCondition.wait(lock, [this]() { return releaseGet; });
     }
     MemoryStore::get(begin, end, messages);
+    if (reverseReads) {
+      std::reverse(messages.begin(), messages.end());
+    }
   }
   void setNextSenderMsgSeqNum(SEQNUM sequence) override {
     recordOperation(ledger, "store:sender:" + std::to_string(sequence));
@@ -410,6 +417,7 @@ struct RecordingStore : MemoryStore {
   mutable bool blockGet{false};
   mutable bool getEntered{false};
   mutable bool releaseGet{false};
+  mutable bool reverseReads{false};
   mutable std::mutex getMutex;
   mutable std::condition_variable getCondition;
 };
@@ -618,6 +626,26 @@ struct Fixture {
 };
 
 TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][session]") {
+  SECTION("Session privately owns transport and application dictionaries") {
+    const BeginString beginString(BeginString_FIX42);
+    const ApplVerID applVerID(ApplVerID_FIX50);
+    auto transportDictionary = std::make_shared<DataDictionary>();
+    transportDictionary->setVersion(BeginString_FIX42);
+    auto applicationDictionary = std::make_shared<DataDictionary>();
+    applicationDictionary->setVersion(BeginString_FIX50);
+    DataDictionaryProvider replacement;
+    replacement.addTransportDataDictionary(beginString, transportDictionary);
+    replacement.addApplicationDataDictionary(applVerID, applicationDictionary);
+
+    session.setDataDictionaryProvider(replacement);
+
+    const auto &installed = session.getDataDictionaryProvider();
+    CHECK(&installed.getSessionDataDictionary(beginString) != transportDictionary.get());
+    CHECK(&installed.getApplicationDataDictionary(applVerID) != applicationDictionary.get());
+    CHECK(installed.getSessionDataDictionary(beginString).getVersion() == BeginString_FIX42);
+    CHECK(installed.getApplicationDataDictionary(applVerID).getVersion() == BeginString_FIX50);
+  }
+
   SECTION("classification is effect free and authorized application is one use") {
     const auto before = snapshot();
     const auto binding = InfiniteSessionClassificationTestAccess::atHead(0x11);
@@ -1294,6 +1322,25 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     checkFencedWithoutAuthorizedEffects(snapshot(), before);
   }
 
+  SECTION("application-time clock failures fence before the first authorized effect") {
+    const auto message = applicationMessage(session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6c),
+        message.toString(),
+        now);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    const auto before = snapshot();
+    InfiniteSessionClassificationTestAccess::setTimestamper(session, []() -> UtcTimeStamp {
+      throw std::runtime_error("clock failed");
+    });
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    InfiniteSessionClassificationTestAccess::setTimestamper(session, [this]() { return now; });
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
   SECTION("resend classification captures toApp without invoking it") {
     FIX42::NewOrderSingle outbound(
         ClOrdID("OUT"),
@@ -1353,6 +1400,99 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
 
     checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("an empty resend source range binds the absence of messages") {
+    session.setNextSenderMsgSeqNum(3);
+    clearEffects();
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(2), EndSeqNo(2)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6d),
+        request.toString(),
+        now);
+    const auto &plan = infiniteActionPlan(classification.actionData());
+    REQUIRE(classification.kind() == InfiniteSessionActionKind::ResendOrQueuedRelease);
+    CHECK(plan.sourceRangeRead);
+    CHECK(plan.sourceRangeBegin == 2);
+    CHECK(plan.sourceRangeEnd == 2);
+    CHECK(plan.sourceMessages.empty());
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    REQUIRE(storeFactory.store->set(2, applicationMessage(2).toString()));
+    clearEffects();
+    const auto before = snapshot();
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("a sparse resend source range binds later additions") {
+    REQUIRE(storeFactory.store->set(1, applicationMessage(1).toString()));
+    session.setNextSenderMsgSeqNum(3);
+    clearEffects();
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(2)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6d),
+        request.toString(),
+        now);
+    const auto &plan = infiniteActionPlan(classification.actionData());
+    REQUIRE(classification.kind() == InfiniteSessionActionKind::ResendOrQueuedRelease);
+    REQUIRE(plan.sourceMessages.size() == 1);
+    CHECK(plan.sourceMessages.front().first == 1);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    REQUIRE(storeFactory.store->set(2, applicationMessage(2).toString()));
+    clearEffects();
+    const auto before = snapshot();
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("a resend source range binds the store response order") {
+    REQUIRE(storeFactory.store->set(1, applicationMessage(1).toString()));
+    REQUIRE(storeFactory.store->set(2, applicationMessage(2).toString()));
+    session.setNextSenderMsgSeqNum(3);
+    clearEffects();
+    storeFactory.store->reverseReads = true;
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(1), EndSeqNo(2)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6d),
+        request.toString(),
+        now);
+    const auto &sources = infiniteActionPlan(classification.actionData()).sourceMessages;
+    REQUIRE(sources.size() == 2);
+    CHECK(sources[0].first == 2);
+    CHECK(sources[1].first == 1);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    storeFactory.store->reverseReads = false;
+    clearEffects();
+    const auto before = snapshot();
+
+    CHECK_THROWS(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+
+    checkFencedWithoutAuthorizedEffects(snapshot(), before);
+  }
+
+  SECTION("an inverted resend store range remains an empty legacy read") {
+    clearEffects();
+    const auto request = finish(FIX42::ResendRequest(BeginSeqNo(10), EndSeqNo(0)), session.getExpectedTargetNum());
+    const auto classification = InfiniteSessionClassificationTestAccess::classify(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x6d),
+        request.toString(),
+        now);
+
+    CHECK(classification.kind() != InfiniteSessionActionKind::Failure);
+    CHECK_FALSE(infiniteActionPlan(classification.actionData()).sourceRangeRead);
+    CHECK(storeFactory.store->getCalls == 0);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+
+    CHECK_NOTHROW(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
+    CHECK_FALSE(InfiniteSessionClassificationTestAccess::state(session).mutableState.infiniteFenced);
   }
 
   SECTION("the captured effect order preserves sequence progress before output") {

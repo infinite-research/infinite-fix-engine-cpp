@@ -169,6 +169,9 @@ struct InfiniteActionPlan {
   std::vector<InfinitePlannedCallback> callbacks;
   std::vector<InfinitePlannedEffect> effects;
   std::size_t operationCount;
+  bool sourceRangeRead{false};
+  SEQNUM sourceRangeBegin{0};
+  SEQNUM sourceRangeEnd{0};
 
   bool operator==(const InfiniteActionPlan &rhs) const;
 };

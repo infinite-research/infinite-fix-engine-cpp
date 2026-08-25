@@ -28,25 +28,19 @@
 #include "Fields.h"
 
 namespace FIX {
-DataDictionaryProvider::DataDictionaryProvider(const DataDictionaryProvider &copy) { *this = copy; }
-
-DataDictionaryProvider &DataDictionaryProvider::operator=(const DataDictionaryProvider &copy) {
-  if (this == &copy) {
-    return *this;
+DataDictionaryProvider DataDictionaryProvider::deepCopy() const {
+  DataDictionaryProvider copy;
+  for (const auto &entry : m_transportDictionaries) {
+    copy.m_transportDictionaries.emplace(
+        entry.first,
+        entry.second ? std::make_shared<DataDictionary>(*entry.second) : nullptr);
   }
-
-  std::map<std::string, std::shared_ptr<DataDictionary>> transportDictionaries;
-  for (const auto &entry : copy.m_transportDictionaries) {
-    transportDictionaries.emplace(entry.first, std::make_shared<DataDictionary>(*entry.second));
+  for (const auto &entry : m_applicationDictionaries) {
+    copy.m_applicationDictionaries.emplace(
+        entry.first,
+        entry.second ? std::make_shared<DataDictionary>(*entry.second) : nullptr);
   }
-  std::map<std::string, std::shared_ptr<DataDictionary>> applicationDictionaries;
-  for (const auto &entry : copy.m_applicationDictionaries) {
-    applicationDictionaries.emplace(entry.first, std::make_shared<DataDictionary>(*entry.second));
-  }
-
-  m_transportDictionaries.swap(transportDictionaries);
-  m_applicationDictionaries.swap(applicationDictionaries);
-  return *this;
+  return copy;
 }
 
 const DataDictionary &DataDictionaryProvider::getSessionDataDictionary(const BeginString &beginString) const

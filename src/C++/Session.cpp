@@ -107,7 +107,7 @@ Session::Session(
       m_sendNextExpectedMsgSeqNum(false),
       m_isNonStopSession(false),
       m_state(m_timestamper()),
-      m_dataDictionaryProvider(dataDictionaryProvider),
+      m_dataDictionaryProvider(dataDictionaryProvider.deepCopy()),
       m_messageStoreFactory(messageStoreFactory),
       m_pLogFactory(pLogFactory),
       m_pResponder(0),

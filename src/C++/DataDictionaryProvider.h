@@ -33,6 +33,7 @@
 namespace FIX {
 class BeginString;
 class ApplVerID;
+class Session;
 
 /**
  * Queries for DataDictionary based on appropriate version of %FIX.
@@ -41,8 +42,6 @@ class ApplVerID;
 class DataDictionaryProvider {
 public:
   DataDictionaryProvider() {}
-  DataDictionaryProvider(const DataDictionaryProvider &copy);
-  DataDictionaryProvider &operator=(const DataDictionaryProvider &copy);
 
   const DataDictionary &getSessionDataDictionary(const BeginString &beginString) const EXCEPT(DataDictionaryNotFound);
 
@@ -59,6 +58,9 @@ public:
   }
 
 private:
+  friend class Session;
+  DataDictionaryProvider deepCopy() const;
+
   std::map<std::string, std::shared_ptr<DataDictionary>> m_transportDictionaries;
   std::map<std::string, std::shared_ptr<DataDictionary>> m_applicationDictionaries;
   DataDictionary emptyDataDictionary;

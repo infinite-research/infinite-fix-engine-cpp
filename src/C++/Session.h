@@ -107,7 +107,7 @@ public:
   void setDataDictionaryProvider(const DataDictionaryProvider &dataDictionaryProvider) {
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
-    m_dataDictionaryProvider = dataDictionaryProvider;
+    m_dataDictionaryProvider = dataDictionaryProvider.deepCopy();
   }
   const DataDictionaryProvider &getDataDictionaryProvider() const { return m_dataDictionaryProvider; }
 
@@ -413,7 +413,7 @@ private:
   static std::uint64_t nextInfiniteGeneration();
   void advanceInfiniteConfigurationRevision();
   void recordInfiniteCallback(InfiniteCallbackKind, const std::string &, const Message & = Message());
-  void installInfiniteExpectedState(const InfiniteExpectedSessionState &);
+  void installInfiniteExpectedState(const InfiniteExpectedSessionState &, bool queueAlreadyInstalled = false);
 
   InfiniteExpectedSessionState currentInfiniteExpectedState(
       const UtcTimeStamp &,
