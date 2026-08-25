@@ -69,13 +69,13 @@ public:
   virtual ~Session();
 
   void logon() {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_state.enabled(true);
     m_state.logoutReason("");
   }
   void logout(const std::string &reason = "") {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_state.enabled(false);
     m_state.logoutReason(reason);
@@ -94,24 +94,24 @@ public:
     m_state.reset(m_timestamper());
   }
   void refresh() EXCEPT(IOException) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_state.refresh();
   }
   void setNextSenderMsgSeqNum(SEQNUM num) EXCEPT(IOException) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_state.setNextSenderMsgSeqNum(num);
   }
   void setNextTargetMsgSeqNum(SEQNUM num) EXCEPT(IOException) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_state.setNextTargetMsgSeqNum(num);
   }
 
   const SessionID &getSessionID() const { return m_sessionID; }
   void setDataDictionaryProvider(const DataDictionaryProvider &dataDictionaryProvider) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_dataDictionaryProvider = dataDictionaryProvider.deepCopy();
@@ -148,7 +148,7 @@ public:
 
   const TimeRange &getLogonTime() { return m_logonTime; }
   void setLogonTime(const TimeRange &value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_logonTime = value;
@@ -156,7 +156,7 @@ public:
 
   const std::string &getSenderDefaultApplVerID() { return m_senderDefaultApplVerID; }
   void setSenderDefaultApplVerID(const std::string &senderDefaultApplVerID) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_senderDefaultApplVerID = senderDefaultApplVerID;
@@ -164,7 +164,7 @@ public:
 
   const std::string &getTargetDefaultApplVerID() { return m_targetDefaultApplVerID; }
   void setTargetDefaultApplVerID(const std::string &targetDefaultApplVerID) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_targetDefaultApplVerID = targetDefaultApplVerID;
@@ -172,7 +172,7 @@ public:
 
   bool getSendRedundantResendRequests() { return m_sendRedundantResendRequests; }
   void setSendRedundantResendRequests(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_sendRedundantResendRequests = value;
@@ -180,7 +180,7 @@ public:
 
   bool getCheckCompId() { return m_checkCompId; }
   void setCheckCompId(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_checkCompId = value;
@@ -188,7 +188,7 @@ public:
 
   bool getCheckLatency() { return m_checkLatency; }
   void setCheckLatency(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_checkLatency = value;
@@ -196,7 +196,7 @@ public:
 
   int getMaxLatency() { return m_maxLatency; }
   void setMaxLatency(int value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_maxLatency = value;
@@ -204,7 +204,7 @@ public:
 
   int getLogonTimeout() { return m_state.logonTimeout(); }
   void setLogonTimeout(int value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_state.logonTimeout(value);
@@ -212,7 +212,7 @@ public:
 
   int getLogoutTimeout() { return m_state.logoutTimeout(); }
   void setLogoutTimeout(int value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_state.logoutTimeout(value);
@@ -220,7 +220,7 @@ public:
 
   bool getResetOnLogon() { return m_resetOnLogon; }
   void setResetOnLogon(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_resetOnLogon = value;
@@ -228,7 +228,7 @@ public:
 
   bool getResetOnLogout() { return m_resetOnLogout; }
   void setResetOnLogout(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_resetOnLogout = value;
@@ -236,7 +236,7 @@ public:
 
   bool getResetOnDisconnect() { return m_resetOnDisconnect; }
   void setResetOnDisconnect(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_resetOnDisconnect = value;
@@ -244,7 +244,7 @@ public:
 
   bool getRefreshOnLogon() { return m_refreshOnLogon; }
   void setRefreshOnLogon(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_refreshOnLogon = value;
@@ -252,7 +252,7 @@ public:
 
   bool getMillisecondsInTimeStamp() { return (m_timestampPrecision == 3); }
   void setMillisecondsInTimeStamp(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     if (value) {
@@ -263,7 +263,7 @@ public:
   }
   int getTimestampPrecision() { return m_timestampPrecision; }
   void setTimestampPrecision(int precision) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     if (precision < 0 || precision > 9) {
       return;
@@ -285,7 +285,7 @@ public:
 
   bool getPersistMessages() { return m_persistMessages; }
   void setPersistMessages(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_persistMessages = value;
@@ -293,7 +293,7 @@ public:
 
   bool getValidateLengthAndChecksum() { return m_validateLengthAndChecksum; }
   void setValidateLengthAndChecksum(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_validateLengthAndChecksum = value;
@@ -301,7 +301,7 @@ public:
 
   bool getSendNextExpectedMsgSeqNum() { return m_sendNextExpectedMsgSeqNum; }
   void setSendNextExpectedMsgSeqNum(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_sendNextExpectedMsgSeqNum = value;
@@ -309,7 +309,7 @@ public:
 
   bool getIsNonStopSession() const { return m_isNonStopSession; }
   void setIsNonStopSession(bool value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     advanceInfiniteConfigurationRevision();
     m_isNonStopSession = value;
@@ -317,7 +317,7 @@ public:
 
   const std::set<std::string> &getAllowedRemoteAddresses() const { return m_allowedRemoteAddresses; }
   void setAllowedRemoteAddresses(const std::set<std::string> &value) {
-    Locker l(m_state.m_mutex);
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotReentrant();
     m_allowedRemoteAddresses = value;
   }
