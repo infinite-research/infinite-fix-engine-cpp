@@ -57,8 +57,28 @@ void cleanse(std::string &bytes) noexcept {
 }
 
 bool containsLogonCredentialField(const std::string &bytes) {
-  return bytes.find("\00135=A\001") != std::string::npos
-         && (bytes.find("\001553=") != std::string::npos || bytes.find("\001554=") != std::string::npos);
+  bool isLogon = false;
+  bool hasCredential = false;
+  for (std::size_t fieldStart = 0; fieldStart < bytes.size();) {
+    const auto fieldEnd = bytes.find('\001', fieldStart);
+    const auto valueEnd = fieldEnd == std::string::npos ? bytes.size() : fieldEnd;
+    const auto equals = bytes.find('=', fieldStart);
+    if (equals < valueEnd) {
+      auto tagStart = fieldStart;
+      while (tagStart < equals && bytes[tagStart] == '0') {
+        ++tagStart;
+      }
+      const auto isTag
+          = [&](const char *tag) { return tagStart < equals && bytes.compare(tagStart, equals - tagStart, tag) == 0; };
+      isLogon = isLogon || (isTag("35") && bytes.compare(equals + 1, valueEnd - equals - 1, "A") == 0);
+      hasCredential = hasCredential || isTag("553") || isTag("554");
+    }
+    if (fieldEnd == std::string::npos) {
+      break;
+    }
+    fieldStart = fieldEnd + 1;
+  }
+  return isLogon && hasCredential;
 }
 
 bool cleanseCredentialMessages(std::vector<std::string> &messages) noexcept {
@@ -918,16 +938,29 @@ void Session::applyInfiniteClassification(
 }
 
 void Session::cleanseInfiniteMessageCredentials(Message &message) noexcept {
+  cleanseInfiniteFieldMapCredentials(message);
+  cleanseInfiniteFieldMapCredentials(message.getHeader());
+  cleanseInfiniteFieldMapCredentials(message.getTrailer());
+}
+
+void Session::cleanseInfiniteFieldMapCredentials(FieldMap &fields) noexcept {
   for (const int tag : {FIELD::Username, FIELD::Password}) {
-    if (!message.isSetField(tag)) {
+    if (!fields.isSetField(tag)) {
       continue;
     }
     try {
-      auto &field = const_cast<FieldBase &>(message.getFieldRef(tag));
+      auto &field = const_cast<FieldBase &>(fields.getFieldRef(tag));
       cleanse(field.m_string);
       cleanse(field.m_data);
       field.setString("");
     } catch (...) {}
+  }
+  for (const auto &groupSet : fields.groups()) {
+    for (auto *group : groupSet.second) {
+      if (group) {
+        cleanseInfiniteFieldMapCredentials(*group);
+      }
+    }
   }
 }
 } // namespace FIX

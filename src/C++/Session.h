@@ -442,6 +442,7 @@ private:
   void advanceInfiniteConfigurationRevision();
   void recordInfiniteCallback(InfiniteCallbackKind, const std::string &, const Message & = Message());
   static void cleanseInfiniteMessageCredentials(Message &) noexcept;
+  static void cleanseInfiniteFieldMapCredentials(FieldMap &) noexcept;
   void installInfiniteExpectedState(const InfiniteExpectedSessionState &, bool queueAlreadyInstalled = false);
 
   InfiniteExpectedSessionState currentInfiniteExpectedState(

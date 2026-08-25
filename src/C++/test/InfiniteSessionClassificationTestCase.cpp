@@ -174,6 +174,37 @@ template <typename MessageType> MessageType finish(MessageType message, SEQNUM s
   return message;
 }
 
+std::string rewriteWireTag(std::string bytes, const std::string &tag, const std::string &replacement) {
+  const auto field = bytes.find("\001" + tag + "=");
+  if (field == std::string::npos) {
+    throw std::runtime_error("FIX field not found");
+  }
+  bytes.replace(field + 1, tag.size(), replacement);
+
+  const auto bodyLengthField = bytes.find("\0019=");
+  auto checksumField = bytes.rfind("\00110=");
+  if (bodyLengthField == std::string::npos || checksumField == std::string::npos) {
+    throw std::runtime_error("FIX envelope fields not found");
+  }
+  const auto bodyLengthStart = bodyLengthField + 3;
+  const auto bodyDelimiter = bytes.find('\001', bodyLengthStart);
+  if (bodyDelimiter == std::string::npos) {
+    throw std::runtime_error("FIX BodyLength delimiter not found");
+  }
+  const auto bodyStart = bodyDelimiter + 1;
+  bytes.replace(bodyLengthStart, bodyStart - bodyLengthStart - 1, std::to_string(checksumField + 1 - bodyStart));
+
+  checksumField = bytes.rfind("\00110=");
+  unsigned checksum = 0;
+  for (std::size_t index = 0; index <= checksumField; ++index) {
+    checksum += static_cast<unsigned char>(bytes[index]);
+  }
+  auto encodedChecksum = std::to_string(checksum % 256);
+  encodedChecksum.insert(encodedChecksum.begin(), 3 - encodedChecksum.size(), '0');
+  bytes.replace(checksumField + 4, 3, encodedChecksum);
+  return bytes;
+}
+
 FIX42::NewOrderSingle applicationMessage(SEQNUM sequence) {
   return finish(
       FIX42::NewOrderSingle(
@@ -277,8 +308,8 @@ struct RecordingEndpoint : NullApplication, Responder {
       message.setField(Text("changed"));
     }
     if (injectToAppCredentials) {
-      message.setField(Username("sensitive-user"));
-      message.setField(Password("sensitive-password"));
+      message.getHeader().setField(Username("sensitive-user"));
+      message.getTrailer().setField(Password("sensitive-password"));
     }
   }
   void fromAdmin(const Message &message, const SessionID &) override {
@@ -642,15 +673,31 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     auto logon = finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), 1);
     logon.setField(Username("sensitive-user"));
     logon.setField(Password("sensitive-password"));
+    logon.getHeader().setField(Username("sensitive-header"));
+    logon.getTrailer().setField(Password("sensitive-trailer"));
+    Group group(FIELD::NoRelatedSym, FIELD::Symbol);
+    group.setField(Username("sensitive-group"));
+    logon.addGroup(group);
     logon.getFieldRef(FIELD::Username).getFixString();
     logon.getFieldRef(FIELD::Password).getFixString();
+    logon.getHeader().getFieldRef(FIELD::Username).getFixString();
+    logon.getTrailer().getFieldRef(FIELD::Password).getFixString();
+    logon.getGroupRef(1, FIELD::NoRelatedSym).getFieldRef(FIELD::Username).getFixString();
 
     InfiniteSessionClassificationTestAccess::cleanseCredentials(logon);
 
     CHECK(logon.getField(FIELD::Username).empty());
     CHECK(logon.getField(FIELD::Password).empty());
+    CHECK(logon.getHeader().getField(FIELD::Username).empty());
+    CHECK(logon.getTrailer().getField(FIELD::Password).empty());
     CHECK(logon.getFieldRef(FIELD::Username).getFixString() == "553=\001");
     CHECK(logon.getFieldRef(FIELD::Password).getFixString() == "554=\001");
+    CHECK(logon.getHeader().getFieldRef(FIELD::Username).getFixString() == "553=\001");
+    CHECK(logon.getTrailer().getFieldRef(FIELD::Password).getFixString() == "554=\001");
+    Group cleansedGroup(FIELD::NoRelatedSym, FIELD::Symbol);
+    logon.getGroup(1, cleansedGroup);
+    CHECK(cleansedGroup.getField(FIELD::Username).empty());
+    CHECK(cleansedGroup.getFieldRef(FIELD::Username).getFixString() == "553=\001");
   }
 
   SECTION("Session privately owns transport and application dictionaries") {
@@ -735,6 +782,48 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(plan.sourceMessages.empty());
     CHECK(plan.callbacks.empty());
     CHECK(plan.effects.empty());
+  }
+
+  SECTION("noncanonical Logon and credential tags are rejected before retention") {
+    struct Case {
+      bool username;
+      const char *tag;
+      const char *replacement;
+    };
+    const Case cases[] = {{true, "35", "035"}, {true, "553", "0553"}, {false, "554", "0554"}};
+
+    for (const auto &test : cases) {
+      CAPTURE(test.replacement);
+      const std::string secret = "not-retained-leading-zero-secret";
+      FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+      if (test.username) {
+        logon.setField(Username(secret));
+      } else {
+        logon.setField(Password(secret));
+      }
+      auto bytes = rewriteWireTag(
+          finish(std::move(logon), session.getExpectedTargetNum()).toString(),
+          test.tag,
+          test.replacement);
+      REQUIRE(bytes.find("\001" + std::string(test.replacement) + "=") != std::string::npos);
+      const auto before = snapshot();
+
+      const auto classification = InfiniteSessionClassificationTestAccess::classifyOwned(
+          session,
+          InfiniteSessionClassificationTestAccess::atHead(0x21),
+          bytes,
+          now);
+      const auto &plan = infiniteActionPlan(classification.actionData());
+
+      CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
+      CHECK(std::all_of(bytes.begin(), bytes.end(), [](char value) { return value == '\0'; }));
+      CHECK(snapshot() == before);
+      CHECK(classification.message().toString().find(secret) == std::string::npos);
+      CHECK(plan.failure.find(secret) == std::string::npos);
+      CHECK(plan.sourceMessages.empty());
+      CHECK(plan.callbacks.empty());
+      CHECK(plan.effects.empty());
+    }
   }
 
   SECTION("credential-bearing queued Logon is never copied into an Infinite state snapshot") {
