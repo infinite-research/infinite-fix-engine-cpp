@@ -45,7 +45,14 @@ InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBa
 
 std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFrameFault() const {
   const auto begin = m_parser.m_buffer.find("8=");
+  if (begin == std::string::npos) {
+    return std::nullopt;
+  }
   const auto beginStringEnd = m_parser.m_buffer.find('\001', begin);
+  const auto nextBegin = m_parser.m_buffer.find("8=", begin + 2);
+  if (nextBegin != std::string::npos && (beginStringEnd == std::string::npos || nextBegin < beginStringEnd)) {
+    return InfiniteDispatchFault::MalformedFrame;
+  }
   if (beginStringEnd == std::string::npos) {
     return std::nullopt;
   }
@@ -86,6 +93,10 @@ std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFr
   }
 
   const auto checksumBegin = bodyBegin + bodyLength;
+  const auto firstChecksum = m_parser.m_buffer.find("\00110=", bodyBegin);
+  if (firstChecksum != std::string::npos && firstChecksum + 1 != checksumBegin) {
+    return InfiniteDispatchFault::MalformedFrame;
+  }
   if (m_parser.m_buffer.size() >= checksumBegin && m_parser.m_buffer[checksumBegin - 1] != '\001') {
     return InfiniteDispatchFault::MalformedFrame;
   }

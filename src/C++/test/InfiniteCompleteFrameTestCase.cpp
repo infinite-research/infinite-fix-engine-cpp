@@ -278,6 +278,34 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
+  SECTION("an unterminated BeginString cannot borrow from a following frame") {
+    const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
+    const auto stream = std::string("8=FIX.4.2") + following;
+
+    InfiniteCompleteFrameDispatcher coalesced({1, MAX_FRAME_BYTES});
+    const auto coalescedResult = coalesced.process(stream.data(), stream.size(), 1);
+    CHECK(coalescedResult.frames.empty());
+    CHECK(coalescedResult.terminalFault == InfiniteDispatchFault::MalformedFrame);
+
+    InfiniteCompleteFrameDispatcher fragmented({1, MAX_FRAME_BYTES});
+    const std::string prefix = "8=FIX.4.2";
+    const auto first = fragmented.process(prefix.data(), prefix.size(), 1);
+    CHECK(first.frames.empty());
+    CHECK_FALSE(first.terminalFault.has_value());
+    const auto second = fragmented.process(following.data(), following.size(), 2);
+    CHECK(second.frames.empty());
+    CHECK(second.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
+  SECTION("an overstated BodyLength cannot align with a following checksum") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
+    const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
+    const auto stream = std::string("8=FIX.4.2\0019=51\00135=A\001108=30\00110=026\001") + following;
+    const auto result = dispatcher.process(stream.data(), stream.size(), 1);
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
   SECTION("checksum tag requires its preceding delimiter") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30X10=026\001";
