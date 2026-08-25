@@ -159,8 +159,8 @@ public:
   }
 
   bool set(SEQNUM s, const std::string &m) EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     return m_pStore->set(s, m);
   }
   void get(SEQNUM b, SEQNUM e, std::vector<std::string> &m) const EXCEPT(IOException) {
@@ -176,23 +176,23 @@ public:
     return m_pStore->getNextTargetMsgSeqNum();
   }
   void setNextSenderMsgSeqNum(SEQNUM n) EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->setNextSenderMsgSeqNum(n);
   }
   void setNextTargetMsgSeqNum(SEQNUM n) EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->setNextTargetMsgSeqNum(n);
   }
   void incrNextSenderMsgSeqNum() EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->incrNextSenderMsgSeqNum();
   }
   void incrNextTargetMsgSeqNum() EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->incrNextTargetMsgSeqNum();
   }
   UtcTimeStamp getCreationTime() const EXCEPT(IOException) {
@@ -200,54 +200,54 @@ public:
     return m_pStore->getCreationTime();
   }
   void reset(const UtcTimeStamp &now) EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->reset(now);
   }
   void refresh() EXCEPT(IOException) {
-    ensureInfiniteCallbackNotActive();
     Locker l(m_mutex);
+    ensureInfiniteCallbackNotActive();
     m_pStore->refresh();
   }
 
   void clear() {
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
-    Locker l(m_mutex);
     m_pLog->clear();
   }
   void backup() {
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
-    Locker l(m_mutex);
     m_pLog->backup();
   }
   void onIncoming(const std::string &string) {
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
-    Locker l(m_mutex);
     m_pLog->onIncoming(string);
   }
   void onOutgoing(const std::string &string) {
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
-    Locker l(m_mutex);
     m_pLog->onOutgoing(string);
   }
   void onEvent(const std::string &string) {
+    Locker l(m_mutex);
     ensureInfiniteCallbackNotActive();
     if (!m_pLog) {
       return;
     }
-    Locker l(m_mutex);
     m_pLog->onEvent(string);
   }
 

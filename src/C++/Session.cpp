@@ -607,6 +607,7 @@ bool Session::send(Message &message) {
 
 bool Session::sendRaw(Message &message, SEQNUM num) {
   Locker l(m_mutex);
+  ensureInfiniteCallbackNotReentrant();
 
   try {
     Header &header = message.getHeader();

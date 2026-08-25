@@ -28,6 +28,8 @@
 #include "Fields.h"
 
 namespace FIX {
+DataDictionaryProvider::DataDictionaryProvider(const DataDictionaryProvider &copy) = default;
+
 DataDictionaryProvider DataDictionaryProvider::deepCopy() const {
   DataDictionaryProvider copy;
   for (const auto &entry : m_transportDictionaries) {

@@ -36,6 +36,8 @@
 #include <string_view>
 
 namespace FIX {
+class Session;
+
 /**
  * Base representation of all Field classes.
  *
@@ -64,6 +66,7 @@ class FieldBase {
   };
 
   friend class Message;
+  friend class Session;
 
   /// Constructor which also calculates field metrics
   FieldBase(

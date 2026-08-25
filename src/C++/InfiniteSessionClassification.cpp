@@ -136,10 +136,13 @@ public:
     }
 
     std::vector<std::string> loaded;
-    std::map<SEQNUM, std::size_t> loadedBySequence;
+    std::set<SEQNUM> loadedSequences;
     if (!m_reset) {
       if (m_plan.sourceRangeRead) {
         throw IOException("Infinite effect plan read more than one source range");
+      }
+      if (!m_messages.empty()) {
+        throw IOException("Infinite effect plan read after a planned message-store write");
       }
       try {
         m_sourceStore.get(begin, end, loaded);
@@ -162,27 +165,26 @@ public:
         loadedBytes += bytes.size();
         Message message(bytes, false);
         const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
-        if (sequence < begin || sequence > end || !loadedBySequence.emplace(sequence, index).second) {
+        if (sequence < begin || sequence > end || !loadedSequences.insert(sequence).second) {
           throw IOException("Infinite effect plan store returned invalid sequence range");
         }
       }
     }
 
     std::vector<std::string> stagedMessages;
-    stagedMessages.reserve(static_cast<std::size_t>(end - begin) + 1);
-    for (SEQNUM sequence = begin; sequence <= end; ++sequence) {
-      const auto cached = m_messages.find(sequence);
-      if (cached != m_messages.end()) {
-        stagedMessages.push_back(cached->second);
-      } else {
-        const auto source = loadedBySequence.find(sequence);
-        if (source != loadedBySequence.end()) {
-          stagedMessages.push_back(loaded[source->second]);
+    if (m_reset) {
+      stagedMessages.reserve(static_cast<std::size_t>(end - begin) + 1);
+      for (SEQNUM sequence = begin; sequence <= end; ++sequence) {
+        const auto cached = m_messages.find(sequence);
+        if (cached != m_messages.end()) {
+          stagedMessages.push_back(cached->second);
+        }
+        if (sequence == std::numeric_limits<SEQNUM>::max()) {
+          break;
         }
       }
-      if (sequence == std::numeric_limits<SEQNUM>::max()) {
-        break;
-      }
+    } else {
+      stagedMessages = loaded;
     }
 
     if (!m_reset) {
@@ -816,6 +818,7 @@ void Session::applyInfiniteClassification(
           m_application.fromApp(callback.message, m_sessionID);
         } else if (callback.kind == InfiniteCallbackKind::ToAdmin) {
           Message outgoing = callback.message;
+          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessageCredentials(outgoing); });
           m_application.toAdmin(outgoing, m_sessionID);
           auto actual = outgoing.toString();
           auto actualGuard = sg::make_scope_guard([&actual]() { cleanse(actual); });
@@ -824,6 +827,7 @@ void Session::applyInfiniteClassification(
           }
         } else if (callback.kind == InfiniteCallbackKind::ToApplication) {
           Message outgoing = callback.message;
+          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessageCredentials(outgoing); });
           try {
             m_application.toApp(outgoing, m_sessionID);
           } catch (DoNotSend &) {
@@ -908,6 +912,20 @@ void Session::applyInfiniteClassification(
     m_state.m_infiniteCallbackActive.store(false, std::memory_order_release);
     m_infiniteSessionFenced = true;
     throw;
+  }
+}
+
+void Session::cleanseInfiniteMessageCredentials(Message &message) noexcept {
+  for (const int tag : {FIELD::Username, FIELD::Password}) {
+    if (!message.isSetField(tag)) {
+      continue;
+    }
+    try {
+      auto &field = const_cast<FieldBase &>(message.getFieldRef(tag));
+      cleanse(field.m_string);
+      cleanse(field.m_data);
+      field.setString("");
+    } catch (...) {}
   }
 }
 } // namespace FIX
