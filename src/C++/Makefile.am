@@ -161,7 +161,7 @@ all-local:
 	ln -s ../src/C++/.libs/libquickfix.so $(top_builddir)/lib/libquickfix.so
 	ln -s ../src/C++/.libs/libquickfix.dylib $(top_builddir)/lib/libquickfix.dylib
 	for header in *.h; do \
-		case $$header in Infinite*.h) ;; *) bash ./copy.sh "$(top_builddir)/include/quickfix" "$$header" ;; esac; \
+		case $$header in Infinite*.h) ;; *) bash ./copy.sh "$(top_builddir)/include/quickfix" "$$header" || exit 1 ;; esac; \
 	done
 	bash ./copy.sh $(top_builddir)/include/quickfix fix*/*.h
 
@@ -183,7 +183,7 @@ install-exec-local: *.h
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp2
 	mkdir $(DESTDIR)$(pkgincludedir)/fixt11
 	for header in *.h; do \
-		case $$header in Infinite*.h) ;; *) cp "$$header" "$(DESTDIR)$(pkgincludedir)" ;; esac; \
+		case $$header in Infinite*.h) ;; *) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; esac; \
 	done
 	cp fix40/*.h $(DESTDIR)$(pkgincludedir)/fix40
 	cp fix41/*.h $(DESTDIR)$(pkgincludedir)/fix41

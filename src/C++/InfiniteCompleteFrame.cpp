@@ -45,10 +45,21 @@ InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBa
 
 std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFrameFault() const {
   const auto begin = m_parser.m_buffer.find("8=");
-  const auto lengthBegin = m_parser.m_buffer.find("\0019=", begin);
-  if (lengthBegin == std::string::npos) {
+  const auto beginStringEnd = m_parser.m_buffer.find('\001', begin);
+  if (beginStringEnd == std::string::npos) {
     return std::nullopt;
   }
+  constexpr char BODY_LENGTH_PREFIX[] = "\0019=";
+  const auto lengthPrefixAvailable = std::min(std::size_t{3}, m_parser.m_buffer.size() - beginStringEnd);
+  for (std::size_t index = 0; index < lengthPrefixAvailable; ++index) {
+    if (m_parser.m_buffer[beginStringEnd + index] != BODY_LENGTH_PREFIX[index]) {
+      return InfiniteDispatchFault::MalformedFrame;
+    }
+  }
+  if (lengthPrefixAvailable < 3) {
+    return std::nullopt;
+  }
+  const auto lengthBegin = beginStringEnd;
   const auto digitsBegin = lengthBegin + 3;
   const auto digitsEnd = m_parser.m_buffer.find('\001', digitsBegin);
   if (digitsEnd == std::string::npos) {
