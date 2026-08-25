@@ -73,6 +73,11 @@ if (QUICKFIX_TESTS)
     ${PROJECT_SOURCE_DIR}/src/C++)
     
   target_link_libraries(ut ${PROJECT_NAME})
+
+  add_test(
+    NAME infinite_complete_frame_dispatcher
+    COMMAND ut "InfiniteCompleteFrameDispatcherTests"
+               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
   
   if (NOT WIN32)
   ADD_CUSTOM_TARGET(ut_target ALL

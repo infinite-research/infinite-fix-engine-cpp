@@ -258,6 +258,25 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
+  SECTION("every coalesced frame is boundary checked") {
+    InfiniteCompleteFrameDispatcher dispatcher({3, MAX_FRAME_BYTES});
+    const std::string valid = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=026\001";
+    const std::string following = "8=FIX.4.2\0019=17\00135=4\00136=88\001123=Y\00110=028\001";
+    const auto stream = valid + "8=FIX.4.2\0019=30\00135=A\001108=30\00110=026\001" + following;
+    const auto result = dispatcher.process(stream.data(), stream.size(), 1);
+    REQUIRE(result.frames.size() == 1);
+    CHECK(result.frames[0].bytes == valid);
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
+  SECTION("checksum tag requires its preceding delimiter") {
+    InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
+    const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30X10=026\001";
+    const auto result = dispatcher.process(malformed.data(), malformed.size(), 1);
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
+  }
+
   SECTION("checksum framing must be exact") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
     const std::string malformed = "8=FIX.4.2\0019=12\00135=A\001108=30\00110=6\001";

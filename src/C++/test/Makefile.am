@@ -55,3 +55,18 @@ ut_SOURCES = \
 AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH=\"$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv\" \
 	-I..
+
+check-local:
+	@fixture="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"; \
+	expected="60d02ae5f56f7d4c9e8239eb435b1cebd2295c57ea86bd68d49820a9d620996b"; \
+	if command -v sha256sum >/dev/null 2>&1; then \
+		actual=`sha256sum "$$fixture" | sed 's/[[:space:]].*//'`; \
+	elif command -v shasum >/dev/null 2>&1; then \
+		actual=`shasum -a 256 "$$fixture" | sed 's/[[:space:]].*//'`; \
+	elif command -v openssl >/dev/null 2>&1; then \
+		actual=`openssl dgst -sha256 "$$fixture" | sed 's/^.*= //'`; \
+	else \
+		echo "no SHA-256 tool available for complete-frame fixture verification" >&2; \
+		exit 1; \
+	fi; \
+	test "$$actual" = "$$expected" || { echo "complete-frame fixture digest mismatch" >&2; exit 1; }

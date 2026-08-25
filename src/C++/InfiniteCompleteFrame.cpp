@@ -75,6 +75,9 @@ std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::declaredFr
   }
 
   const auto checksumBegin = bodyBegin + bodyLength;
+  if (m_parser.m_buffer.size() >= checksumBegin && m_parser.m_buffer[checksumBegin - 1] != '\001') {
+    return InfiniteDispatchFault::MalformedFrame;
+  }
   const auto checksumAvailable = std::min(
       CHECKSUM_FIELD_BYTES,
       m_parser.m_buffer.size() > checksumBegin ? m_parser.m_buffer.size() - checksumBegin : std::size_t{0});
@@ -123,8 +126,15 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
     }
 
     try {
-      std::string message;
-      while (m_parser.readFixMessage(message)) {
+      while (true) {
+        if (const auto fault = declaredFrameFault()) {
+          result.terminalFault = fault;
+          return result;
+        }
+        std::string message;
+        if (!m_parser.readFixMessage(message)) {
+          break;
+        }
         if (message.size() > MAX_FRAME_BYTES) {
           result.terminalFault = InfiniteDispatchFault::FrameTooLarge;
           return result;
