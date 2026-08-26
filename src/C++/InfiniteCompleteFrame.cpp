@@ -40,12 +40,17 @@ constexpr std::size_t CHECKSUM_FIELD_BYTES = 7;
 std::int64_t clockTaiNow() {
 #ifdef CLOCK_TAI
   timespec value{};
-  if (clock_gettime(CLOCK_TAI, &value) != 0 || value.tv_sec <= 0 || value.tv_nsec < 0 || value.tv_nsec >= 1'000'000'000
-      || static_cast<std::uint64_t>(value.tv_sec)
-             > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / UINT64_C(1000000000)) {
+  if (clock_gettime(CLOCK_TAI, &value) != 0 || value.tv_sec <= 0 || value.tv_nsec < 0
+      || value.tv_nsec >= 1'000'000'000) {
     throw std::runtime_error("CLOCK_TAI unavailable");
   }
-  return static_cast<std::int64_t>(value.tv_sec) * INT64_C(1000000000) + value.tv_nsec;
+  const auto seconds = static_cast<std::uint64_t>(value.tv_sec);
+  const auto nanoseconds = static_cast<std::uint64_t>(value.tv_nsec);
+  const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  if (seconds > (maximum - nanoseconds) / UINT64_C(1000000000)) {
+    throw std::runtime_error("CLOCK_TAI unavailable");
+  }
+  return static_cast<std::int64_t>(seconds * UINT64_C(1000000000) + nanoseconds);
 #else
   throw std::runtime_error("CLOCK_TAI unavailable");
 #endif

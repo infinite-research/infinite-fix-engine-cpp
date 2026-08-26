@@ -751,10 +751,15 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     AlignedBytes callbackBytes(sizeof(irfq_infinite_bootstrap_response_v1));
     auto &callbackResponse = initializeCallbackOutput<irfq_infinite_bootstrap_response_v1>(callbackBytes);
     irfq_infinite_status_v1 returned;
-    {
+    try {
       CallbackScope scope(engine.get(), nullptr);
       returned
           = engine->callbacks.bootstrap(engine->callbacks.context, request, callbackBytes.data(), callbackBytes.size());
+    } catch (...) {
+      if (validHandle(callbackResponse.connection)) {
+        rejectAcceptedExternal(engine, callbackResponse.connection, 0);
+      }
+      return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
     const auto expectedCallbackStatus
         = callbackResponse.outcome == IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1   ? IRFQ_INFINITE_STATUS_OK_V1
