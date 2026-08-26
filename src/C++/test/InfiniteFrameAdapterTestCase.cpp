@@ -183,6 +183,16 @@ struct CallbackContext {
   bool waitReservedNonzero{false};
   bool authorizeReservedNonzero{false};
   bool throwAfterBootstrapAccept{false};
+  bool registrationNotRegistered{false};
+  bool wrongWaitLifecycle{false};
+  bool reuseRegistrationToken{false};
+  bool reuseAuthorization{false};
+  bool waitForFenceAfterReentry{false};
+  bool credentialsObserved{false};
+  bool fenceThrows{false};
+  bool releaseThrows{false};
+  irfq_infinite_status_v1 fenceAcknowledgement{IRFQ_INFINITE_STATUS_STREAM_FENCED_V1};
+  irfq_infinite_status_v1 releaseAcknowledgement{IRFQ_INFINITE_STATUS_CLOSED_V1};
 };
 
 irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection) {
@@ -237,10 +247,15 @@ template <typename T> irfq_infinite_status_v1 publishFixed(void *outputBuffer, s
 
 irfq_infinite_status_v1 bootstrapCallback(
     void *opaque,
-    const irfq_infinite_bootstrap_request_v1 *,
+    const irfq_infinite_bootstrap_request_v1 *request,
     void *outputBuffer,
     std::uint64_t capacity) {
   auto &context = *static_cast<CallbackContext *>(opaque);
+  const std::string frame(
+      reinterpret_cast<const char *>(request->frame.data),
+      static_cast<std::size_t>(request->frame.length));
+  context.credentialsObserved = frame.find("\001553=adapter-user\001") != std::string::npos
+                                && frame.find("\001554=adapter-password\001") != std::string::npos;
   auto response = output<irfq_infinite_bootstrap_response_v1>();
   response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
   {
@@ -350,7 +365,10 @@ irfq_infinite_status_v1 registerCallback(
     context.registrationEntered = true;
     context.condition.notify_all();
     context.condition.wait(lock, [&context]() { return !context.blockRegistration || context.fenced; });
-    if (context.fenced) {
+    if (context.registrationNotRegistered) {
+      response->header.status = IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1;
+      response->result_count = 0;
+    } else if (context.fenced) {
       response->header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       response->result_count = 0;
     } else {
@@ -361,7 +379,8 @@ irfq_infinite_status_v1 registerCallback(
         if (context.gapRegistrationOrdinal && index == 1) {
           ++context.nextOrdinal;
         }
-        results[index] = {context.nextOrdinal++, {context.nextToken++, UINT64_C(1)}, frame.observed_tai_ns};
+        const auto token = context.reuseRegistrationToken ? context.nextToken : context.nextToken++;
+        results[index] = {context.nextOrdinal++, {token, UINT64_C(1)}, frame.observed_tai_ns};
       }
     }
   }
@@ -383,10 +402,18 @@ irfq_infinite_status_v1 waitCallback(
   auto &context = *static_cast<CallbackContext *>(opaque);
   if (context.reenterWait) {
     context.waitReentryStatus = nestedDispatch(context.adapterConnection);
+    if (context.waitForFenceAfterReentry) {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      context.condition.wait(lock, [&context]() { return context.fenced; });
+    }
   }
   auto response = output<irfq_infinite_operation_response_v1>();
   response.header.status = context.fenced ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1 : IRFQ_INFINITE_STATUS_AT_HEAD_V1;
   response.lifecycle = context.fenced ? IRFQ_INFINITE_CONNECTION_CLOSING_V1 : IRFQ_INFINITE_CONNECTION_OPEN_V1;
+  if (context.wrongWaitLifecycle) {
+    response.lifecycle = response.header.status == IRFQ_INFINITE_STATUS_AT_HEAD_V1 ? IRFQ_INFINITE_CONNECTION_CLOSING_V1
+                                                                                   : IRFQ_INFINITE_CONNECTION_OPEN_V1;
+  }
   response.reserved = context.waitReservedNonzero ? 1 : 0;
   return publishFixed(outputBuffer, capacity, response);
 }
@@ -399,13 +426,19 @@ irfq_infinite_status_v1 authorizeCallback(
   auto &context = *static_cast<CallbackContext *>(opaque);
   if (context.reenterAuthorize) {
     context.authorizeReentryStatus = nestedDispatch(context.adapterConnection);
+    if (context.waitForFenceAfterReentry) {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      context.condition.wait(lock, [&context]() { return context.fenced; });
+    }
   }
   auto response = output<irfq_infinite_classification_callback_response_v1>();
   response.header.status = context.fenced ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
                            : request->sequence_disposition == IRFQ_INFINITE_SEQUENCE_AT_HEAD_V1
                                ? IRFQ_INFINITE_STATUS_AUTHORIZED_CONSUME_V1
                                : IRFQ_INFINITE_STATUS_AUTHORIZED_NO_CONSUME_V1;
-  response.authorization = {context.nextAuthorization++, request->classification.generation};
+  const auto authorization = context.reuseAuthorization ? context.nextAuthorization : context.nextAuthorization++;
+  response.authorization
+      = {authorization, context.reuseAuthorization ? UINT64_C(1) : request->classification.generation};
   response.outcome = response.header.status;
   response.reserved = context.authorizeReservedNonzero ? 1 : 0;
   return publishFixed(outputBuffer, capacity, response);
@@ -419,7 +452,10 @@ irfq_infinite_status_v1 fenceCallback(void *opaque, irfq_infinite_handle_v1, std
     ++context.fenceCount;
   }
   context.condition.notify_all();
-  return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+  if (context.fenceThrows) {
+    throw std::runtime_error("fence callback failure");
+  }
+  return context.fenceAcknowledgement;
 }
 
 irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1 externalConnection, std::uint32_t) {
@@ -449,7 +485,10 @@ irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1 ex
       context.secondReleaseCloseStatus = status;
     }
   }
-  return IRFQ_INFINITE_STATUS_CLOSED_V1;
+  if (context.releaseThrows) {
+    throw std::runtime_error("release callback failure");
+  }
+  return context.releaseAcknowledgement;
 }
 
 irfq_infinite_callback_table_v1 callbacks(CallbackContext &context) {
@@ -486,18 +525,79 @@ struct BootstrapResult {
   irfq_infinite_bootstrap_response_v1 response;
 };
 
-BootstrapResult bootstrapConnection(irfq_infinite_handle_v1 engine, const std::string &sender, std::uint64_t nonce) {
-  const auto logon
-      = finishFix("35=A\00134=1\00149=" + sender + "\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001");
+BootstrapResult bootstrapFrame(
+    irfq_infinite_handle_v1 engine,
+    const std::string &logon,
+    std::uint64_t nonce,
+    std::int64_t observation = 1) {
   const irfq_infinite_bootstrap_request_v1 request{
       sizeof(request),
       IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
       {reinterpret_cast<const std::uint8_t *>(logon.data()), logon.size()},
-      1,
+      observation,
       {nonce, nonce + 1}};
   auto response = output<irfq_infinite_bootstrap_response_v1>();
   const auto status = irfq_infinite_connection_bootstrap_v1(engine, &request, &response, sizeof(response));
   return {status, response};
+}
+
+BootstrapResult bootstrapConnection(irfq_infinite_handle_v1 engine, const std::string &sender, std::uint64_t nonce) {
+  return bootstrapFrame(
+      engine,
+      finishFix("35=A\00134=1\00149=" + sender + "\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001"),
+      nonce);
+}
+
+struct RegistrationResult {
+  irfq_infinite_status_v1 status;
+  irfq_infinite_registration_result_v1 registration;
+  std::uint32_t count;
+  irfq_infinite_dispatch_fault_v1 fault;
+  std::uint64_t writtenLength;
+};
+
+RegistrationResult dispatchFrame(irfq_infinite_handle_v1 connection, const std::string &frame) {
+  const irfq_infinite_dispatch_request_v1 request{
+      sizeof(request),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {reinterpret_cast<const std::uint8_t *>(frame.data()), frame.size()},
+      {}};
+  auto bytes = dispatchOutput();
+  const auto status = irfq_infinite_connection_dispatch_v1(connection, &request, bytes.data(), bytes.size());
+  const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
+  irfq_infinite_registration_result_v1 registration{};
+  if (response->result_count != 0) {
+    registration = *reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
+  }
+  return {status, registration, response->result_count, response->fault, response->header.written_length};
+}
+
+irfq_infinite_status_v1 waitAtHead(irfq_infinite_handle_v1 connection, irfq_infinite_handle_v1 token) {
+  const irfq_infinite_head_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, token, {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  return irfq_infinite_connection_wait_head_v1(connection, &request, &response, sizeof(response));
+}
+
+std::pair<irfq_infinite_status_v1, irfq_infinite_classification_response_v1> classifyAtHead(
+    irfq_infinite_handle_v1 connection,
+    irfq_infinite_handle_v1 token) {
+  const irfq_infinite_head_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, token, {}};
+  auto response = output<irfq_infinite_classification_response_v1>();
+  const auto status = irfq_infinite_connection_classify_v1(connection, &request, &response, sizeof(response));
+  return {status, response};
+}
+
+irfq_infinite_status_v1 applyClassification(
+    irfq_infinite_handle_v1 connection,
+    const irfq_infinite_classification_response_v1 &classification) {
+  const irfq_infinite_apply_request_v1 request{
+      sizeof(request),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      classification.classification,
+      classification.authorization,
+      {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  return irfq_infinite_connection_apply_v1(connection, &request, &response, sizeof(response));
 }
 
 void closeConnection(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) { nestedClose(connection, reason); }
@@ -533,6 +633,19 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(
       fixture.text("contract", "session_store_semantics") == "exact_bytes>replacement_delta>reset_reuse>retained_get");
   CHECK(fixture.text("contract", "output_publication") == "zero_written>validate>stage>copy>publish_written");
+  CHECK(fixture.text("contract", "registration_rejection") == "fence_after_consumed_batch");
+  CHECK(fixture.text("contract", "wait_pair") == "AT_HEAD+OPEN|STREAM_FENCED+CLOSING");
+  CHECK(fixture.text("contract", "close_identity") == "exact_tombstone_only_until_shutdown");
+  CHECK(fixture.text("contract", "session_identity") == "process_global_single_owner");
+  CHECK(fixture.text("contract", "bootstrap_acceptance") == "logged_on+connected+dictionary_valid");
+  CHECK(fixture.text("contract", "dictionaries") == "approved_installed_immutable_only");
+  CHECK(fixture.text("contract", "lifecycle_callback_failure") == "CLOSING+terminal_error+waiters_woken");
+  CHECK(fixture.text("contract", "bootstrap_credentials") == "callback_only>scrub_before_session");
+  CHECK(fixture.text("contract", "bootstrap_observation") == "connection_clock_baseline");
+  CHECK(fixture.text("contract", "input_output_alias") == "reject_before_output_mutation");
+  CHECK(fixture.text("contract", "capability_retirement") == "fresh_adapter_handles+live_external_mapping");
+  CHECK(fixture.text("contract", "pending_plan_bound") == "one_per_connection");
+  CHECK(fixture.text("contract", "candidate_storage") == "move_after_validation");
   CHECK(fixture.number("constant", "abi_version") == IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1);
   CHECK(fixture.number("constant", "required_capabilities") == IRFQ_INFINITE_REQUIRED_CAPABILITIES_V1);
   CHECK(fixture.number("constant", "max_connections") == IRFQ_INFINITE_MAX_CONNECTIONS_V1);
@@ -1518,6 +1631,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry-fence]") {
     const auto bootstrapped = bootstrapConnection(initialized.engine, sender, duringWait ? 7000 : 7100);
     REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
     context.adapterConnection = bootstrapped.response.connection;
+    context.waitForFenceAfterReentry = true;
     const auto heartbeat
         = finishFix("35=0\00134=2\00149=" + std::string(sender) + "\00156=VENUE\00152=20260826-08:08:09.000\001");
     const irfq_infinite_dispatch_request_v1 dispatch{
@@ -1700,8 +1814,12 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-close-cycle]
   firstClose.join();
   secondClose.join();
   CHECK(context.releaseCrossCallbacksEntered == 2);
-  CHECK(context.firstReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1);
-  CHECK(context.secondReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  CHECK(
+      (context.firstReleaseCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+       || context.firstReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1));
+  CHECK(
+      (context.secondReleaseCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+       || context.secondReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1));
   CHECK(context.releaseCount == 2);
   shutdownEngine(initialized.engine);
 }
@@ -1824,4 +1942,384 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accountin
     REQUIRE(retained.size() == 1);
     CHECK(retained.front() == reused);
   }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][registration-rejection-fences]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "REGREJECT", 11000);
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  context.registrationNotRegistered = true;
+  const auto heartbeat = finishFix("35=0\00134=2\00149=REGREJECT\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto rejected = dispatchFrame(bootstrapped.response.connection, heartbeat);
+  CHECK(rejected.status == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+  CHECK(rejected.count == 0);
+  CHECK(context.fenceCount == 1);
+  CHECK(dispatchFrame(bootstrapped.response.connection, heartbeat).status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  closeConnection(bootstrapped.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][wait-status-lifecycle-pair]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "WAITPAIR", 11100);
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto heartbeat = finishFix("35=0\00134=2\00149=WAITPAIR\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto registered = dispatchFrame(bootstrapped.response.connection, heartbeat);
+  REQUIRE(registered.status == IRFQ_INFINITE_STATUS_OK_V1);
+  context.wrongWaitLifecycle = true;
+  CHECK(
+      waitAtHead(bootstrapped.response.connection, registered.registration.token)
+      == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.fenceCount == 1);
+  closeConnection(bootstrapped.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][close-handle-identity]") {
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "CLOSEIDENTITY", 11200);
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  CHECK(
+      (bootstrapped.response.connection.object != initialized.engine.object
+       || bootstrapped.response.connection.generation != initialized.engine.generation));
+  const irfq_infinite_close_request_v1 request{
+      sizeof(request),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      UINT32_C(73),
+      {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  REQUIRE(
+      irfq_infinite_connection_close_v1(bootstrapped.response.connection, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(bootstrapped.response.connection, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  CHECK(response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSED_V1);
+
+  auto forged = bootstrapped.response.connection;
+  ++forged.generation;
+  response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(forged, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+  CHECK(response.lifecycle != IRFQ_INFINITE_CONNECTION_CLOSED_V1);
+
+  const irfq_infinite_handle_v1 forgedLow{bootstrapped.response.connection.object, initialized.engine.generation};
+  response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(forgedLow, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+  CHECK(response.lifecycle != IRFQ_INFINITE_CONNECTION_CLOSED_V1);
+
+  auto invalid = request;
+  invalid.reserved[0] = 1;
+  response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(bootstrapped.response.connection, &invalid, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1);
+  shutdownEngine(initialized.engine);
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][sequential-connection-capacity]") {
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  irfq_infinite_handle_v1 first{};
+  irfq_infinite_handle_v1 last{};
+  for (std::uint64_t index = 0; index <= IRFQ_INFINITE_MAX_CONNECTIONS_V1; ++index) {
+    const auto bootstrapped
+        = bootstrapConnection(initialized.engine, "SERIAL" + std::to_string(index), UINT64_C(13000) + index * 2);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    if (index == 0) {
+      first = bootstrapped.response.connection;
+    }
+    last = bootstrapped.response.connection;
+    REQUIRE(nestedClose(last, UINT32_C(81)) == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  }
+
+  const irfq_infinite_close_request_v1 request{
+      sizeof(request),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      UINT32_C(82),
+      {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(first, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  auto future = last;
+  ++future.generation;
+  response = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_close_v1(future, &request, &response, sizeof(response))
+      == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+  shutdownEngine(initialized.engine);
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-session-validation]") {
+  SECTION("required dictionary validation rejects an incomplete logon") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto missingHeartbeat
+        = finishFix("35=A\00134=1\00149=MISSINGHEARTBEAT\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001");
+    const auto result = bootstrapFrame(initialized.engine, missingHeartbeat, 11300);
+    CHECK(result.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(context.fenceCount == 1);
+    CHECK(context.releaseCount == 1);
+    shutdownEngine(initialized.engine);
+  }
+
+  SECTION("dictionary enum validation rejects invalid encryption method") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto invalidEnum
+        = finishFix("35=A\00134=1\00149=INVALIDENUM\00156=VENUE\00152=20260826-08:08:08.000\00198=999\001108=30\001");
+    const auto result = bootstrapFrame(initialized.engine, invalidEnum, 11400);
+    CHECK(result.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(context.fenceCount == 1);
+    CHECK(context.releaseCount == 1);
+    shutdownEngine(initialized.engine);
+  }
+
+  SECTION("a process-global session identity has one owner") {
+    CallbackContext firstContext;
+    CallbackContext secondContext;
+    const auto firstEngine = initializeEngine(firstContext);
+    const auto secondEngine = initializeEngine(secondContext);
+    const auto first = bootstrapConnection(firstEngine.engine, "SINGLEOWNER", 11500);
+    REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto duplicate = bootstrapConnection(secondEngine.engine, "SINGLEOWNER", 11600);
+    CHECK(duplicate.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(secondContext.fenceCount == 1);
+    CHECK(secondContext.releaseCount == 1);
+    closeConnection(first.response.connection);
+    shutdownEngine(firstEngine.engine);
+    shutdownEngine(secondEngine.engine);
+  }
+
+  SECTION("credentials are visible to the synchronous bootstrap authority") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto credentialLogon = finishFix(
+        "35=A\00134=1\00149=CREDENTIALS\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001"
+        "553=adapter-user\001554=adapter-password\001");
+    const auto result = bootstrapFrame(initialized.engine, credentialLogon, 11700);
+    REQUIRE(result.status == IRFQ_INFINITE_STATUS_OK_V1);
+    CHECK(context.credentialsObserved);
+    closeConnection(result.response.connection);
+    shutdownEngine(initialized.engine);
+  }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle-callback-failure]") {
+  const auto exercise = [](bool releaseFailure) {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped
+        = bootstrapConnection(initialized.engine, releaseFailure ? "RELEASEFAILURE" : "FENCEFAILURE", 11800);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    if (releaseFailure) {
+      context.releaseThrows = true;
+    } else {
+      context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
+    }
+    const irfq_infinite_close_request_v1 request{
+        sizeof(request),
+        IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+        UINT32_C(79),
+        {}};
+    auto response = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_connection_close_v1(bootstrapped.response.connection, &request, &response, sizeof(response))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(response.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+    auto dispatch = dispatchOutput();
+    const irfq_infinite_dispatch_request_v1 empty{
+        sizeof(empty),
+        IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+        {nullptr, 0},
+        {}};
+    CHECK(
+        irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &empty, dispatch.data(), dispatch.size())
+        == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    response = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_connection_close_v1(bootstrapped.response.connection, &request, &response, sizeof(response))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    auto shutdown = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(shutdown.lifecycle == IRFQ_INFINITE_ENGINE_CLOSING_V1);
+  };
+  SECTION("wrong fence acknowledgement") { exercise(false); }
+  SECTION("throwing release callback") { exercise(true); }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-observation-baseline]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto logon
+      = finishFix("35=A\00134=1\00149=OBSBASE\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001");
+  const auto bootstrapped = bootstrapFrame(initialized.engine, logon, 11900, std::numeric_limits<std::int64_t>::max());
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto heartbeat = finishFix("35=0\00134=2\00149=OBSBASE\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto result = dispatchFrame(bootstrapped.response.connection, heartbeat);
+  CHECK(result.status == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+  CHECK(result.fault == IRFQ_INFINITE_DISPATCH_FAULT_INVALID_OBSERVATION_V1);
+  CHECK(context.fenceCount == 1);
+  closeConnection(bootstrapped.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][input-output-alias]") {
+  SECTION("request and output overlap") {
+    alignas(8) std::array<std::uint8_t, IRFQ_INFINITE_DISPATCH_OUTPUT_CAPACITY_V1> bytes{};
+    auto *request = reinterpret_cast<irfq_infinite_dispatch_request_v1 *>(bytes.data());
+    request->structure_size = sizeof(*request);
+    request->abi_version = IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1;
+    request->input = {nullptr, UINT64_C(17)};
+    const auto before = bytes;
+    CHECK(
+        irfq_infinite_connection_dispatch_v1({UINT64_C(9), UINT64_C(9)}, request, bytes.data(), bytes.size())
+        == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1);
+    CHECK(bytes == before);
+  }
+
+#ifdef CLOCK_TAI
+  SECTION("input and output overlap") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped = bootstrapConnection(initialized.engine, "SLICEALIAS", 12000);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    auto bytes = dispatchOutput();
+    const auto before = bytes.bytes;
+    const irfq_infinite_dispatch_request_v1 request{
+        sizeof(request),
+        IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+        {bytes.data(), sizeof(irfq_infinite_dispatch_response_v1)},
+        {}};
+    CHECK(
+        irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &request, bytes.data(), bytes.size())
+        == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1);
+    CHECK(bytes.bytes == before);
+    closeConnection(bootstrapped.response.connection);
+    shutdownEngine(initialized.engine);
+  }
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][capability-retirement-and-plan-bound]") {
+#ifdef CLOCK_TAI
+  SECTION("reused external gate tokens receive fresh adapter handles") {
+    CallbackContext context;
+    context.reuseRegistrationToken = true;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped = bootstrapConnection(initialized.engine, "TOKRETIRE", 12100);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto first = dispatchFrame(
+        bootstrapped.response.connection,
+        finishFix("35=0\00134=2\00149=TOKRETIRE\00156=VENUE\00152=20260826-08:08:09.000\001"));
+    REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
+    REQUIRE(waitAtHead(bootstrapped.response.connection, first.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    const auto firstClassification = classifyAtHead(bootstrapped.response.connection, first.registration.token);
+    REQUIRE(firstClassification.first == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    REQUIRE(
+        applyClassification(bootstrapped.response.connection, firstClassification.second)
+        == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    const auto second = dispatchFrame(
+        bootstrapped.response.connection,
+        finishFix("35=0\00134=3\00149=TOKRETIRE\00156=VENUE\00152=20260826-08:08:10.000\001"));
+    REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
+    CHECK(
+        (second.registration.token.object != first.registration.token.object
+         || second.registration.token.generation != first.registration.token.generation));
+    REQUIRE(waitAtHead(bootstrapped.response.connection, second.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    const auto secondClassification = classifyAtHead(bootstrapped.response.connection, second.registration.token);
+    REQUIRE(secondClassification.first == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    CHECK(
+        applyClassification(bootstrapped.response.connection, secondClassification.second)
+        == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(context.fenceCount == 0);
+    closeConnection(bootstrapped.response.connection);
+    shutdownEngine(initialized.engine);
+  }
+
+  SECTION("reused external authorizations receive fresh adapter handles") {
+    CallbackContext context;
+    context.reuseAuthorization = true;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped = bootstrapConnection(initialized.engine, "AUTHRETIRE", 12200);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto first = dispatchFrame(
+        bootstrapped.response.connection,
+        finishFix("35=0\00134=2\00149=AUTHRETIRE\00156=VENUE\00152=20260826-08:08:09.000\001"));
+    REQUIRE(waitAtHead(bootstrapped.response.connection, first.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    const auto firstClassification = classifyAtHead(bootstrapped.response.connection, first.registration.token);
+    REQUIRE(firstClassification.first == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    REQUIRE(
+        applyClassification(bootstrapped.response.connection, firstClassification.second)
+        == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    const auto second = dispatchFrame(
+        bootstrapped.response.connection,
+        finishFix("35=0\00134=3\00149=AUTHRETIRE\00156=VENUE\00152=20260826-08:08:10.000\001"));
+    REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
+    REQUIRE(waitAtHead(bootstrapped.response.connection, second.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    const auto secondClassification = classifyAtHead(bootstrapped.response.connection, second.registration.token);
+    REQUIRE(secondClassification.first == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    CHECK(
+        (secondClassification.second.authorization.object != firstClassification.second.authorization.object
+         || secondClassification.second.authorization.generation
+                != firstClassification.second.authorization.generation));
+    CHECK(
+        applyClassification(bootstrapped.response.connection, secondClassification.second)
+        == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(context.fenceCount == 0);
+    closeConnection(bootstrapped.response.connection);
+    shutdownEngine(initialized.engine);
+  }
+
+  SECTION("only one deep-owned classification may be pending") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped = bootstrapConnection(initialized.engine, "ONEPLAN", 12300);
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto first = finishFix("35=0\00134=2\00149=ONEPLAN\00156=VENUE\00152=20260826-08:08:09.000\001");
+    const auto second = finishFix("35=0\00134=3\00149=ONEPLAN\00156=VENUE\00152=20260826-08:08:10.000\001");
+    const auto batch = first + second;
+    const irfq_infinite_dispatch_request_v1 dispatch{
+        sizeof(dispatch),
+        IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+        {reinterpret_cast<const std::uint8_t *>(batch.data()), batch.size()},
+        {}};
+    auto bytes = dispatchOutput();
+    REQUIRE(
+        irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
+        == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
+    REQUIRE(response->result_count == 2);
+    const auto *registrations
+        = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
+    REQUIRE(waitAtHead(bootstrapped.response.connection, registrations[0].token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    REQUIRE(waitAtHead(bootstrapped.response.connection, registrations[1].token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    REQUIRE(
+        classifyAtHead(bootstrapped.response.connection, registrations[0].token).first
+        == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    CHECK(
+        classifyAtHead(bootstrapped.response.connection, registrations[1].token).first
+        == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(context.fenceCount == 1);
+    closeConnection(bootstrapped.response.connection);
+    shutdownEngine(initialized.engine);
+  }
+#endif
 }
