@@ -15,6 +15,7 @@ libquickfix_la_SOURCES = \
 	InfiniteCompleteFrame.h \
 	InfiniteFrameAdapter.cpp \
 	InfiniteFrameAdapter.h \
+	InfiniteFrameAdapterStore.h \
 	InfiniteSessionClassification.cpp \
 	InfiniteSessionClassification.h \
 	Parser.cpp \
