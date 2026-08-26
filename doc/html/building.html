@@ -172,6 +172,24 @@ sudo make install
     "#0000FF">--prefix=&lt;base directory&gt;</font> option to
     install to a custom location.</p>
 
+    <br/><hr/>
+    <h1>Installed Infinite C ABI</h1>
+
+    <p>The static build installs <code>quickfix/InfiniteFrameAdapter.h</code>,
+    <code>libquickfix.a</code>, and the immutable FIX dictionaries under
+    <code>share/quickfix</code>. Configure the final installation prefix before
+    building so the adapter can load that exact dictionary directory.</p>
+
+    <p>A C11 consumer must include the installed header, statically link
+    <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime
+    libraries), and call <code>irfq_infinite_frame_adapter_query_v1</code> before
+    initializing an engine. ABI v1 callbacks are synchronous: callback request
+    pointers and output buffers are valid only for the callback invocation.
+    Connection and engine handles follow the documented open/closing/closed and
+    initialized/closing/shutdown lifecycles. Initialize every output header with
+    its structure size and ABI version; the adapter validates capacity, stages
+    the response, copies it, and publishes <code>written_length</code> last.</p>
+
     <p><b>./configure</b> options:</p>
 
     <table>

@@ -64,6 +64,16 @@ InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBa
   }
 }
 
+InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(
+    InfiniteFrameBatch limits,
+    std::int64_t initialObservedTaiNs)
+    : InfiniteCompleteFrameDispatcher(limits) {
+  if (initialObservedTaiNs <= 0) {
+    throw std::invalid_argument("Infinite initial observation must be positive");
+  }
+  m_lastObservedTaiNs = initialObservedTaiNs;
+}
+
 std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::scanDeclaredFrame() {
   if (m_scanStage == ScanStage::BeginString) {
     if (m_parser.m_buffer.empty() || (m_parser.m_buffer.size() == 1 && m_parser.m_buffer[0] == '8')) {

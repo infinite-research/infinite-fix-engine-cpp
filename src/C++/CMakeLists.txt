@@ -57,11 +57,13 @@ set(quickfix_SOURCES
 )
 
 include(CheckCSourceCompiles)
+set(_quickfix_saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")
 set(CMAKE_REQUIRED_INCLUDES ${PROJECT_SOURCE_DIR}/src/C++)
 check_c_source_compiles(
   "#include <InfiniteFrameAdapter.h>\nint main(void) { irfq_infinite_handle_v1 handle = {0, 0}; return (int)handle.object; }"
   INFINITE_FRAME_ADAPTER_HEADER_IS_C_COMPATIBLE)
-unset(CMAKE_REQUIRED_INCLUDES)
+set(CMAKE_REQUIRED_INCLUDES "${_quickfix_saved_required_includes}")
+unset(_quickfix_saved_required_includes)
 if(NOT INFINITE_FRAME_ADAPTER_HEADER_IS_C_COMPATIBLE)
   message(FATAL_ERROR "InfiniteFrameAdapter.h must compile as C")
 endif()
@@ -103,6 +105,9 @@ if(HAVE_FTIME)
 endif()
 
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+target_compile_definitions(
+  ${PROJECT_NAME}
+  PRIVATE IRFQ_INFINITE_DICTIONARY_PATH="${CMAKE_INSTALL_PREFIX}/share/quickfix")
 target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/C++)
 

@@ -123,7 +123,13 @@ Session::Session(
     m_state.reset(m_timestamper());
   }
 
-  addSession(*this);
+  if (!addSession(*this)) {
+    m_messageStoreFactory.destroy(m_state.store());
+    if (m_pLogFactory && m_state.log()) {
+      m_pLogFactory->destroy(m_state.log());
+    }
+    throw std::logic_error("Duplicate session identity");
+  }
   m_application.onCreate(m_sessionID);
   m_state.onEvent("Created session");
 }
@@ -1566,8 +1572,14 @@ bool Session::addSession(Session &s) {
 
 void Session::removeSession(Session &s) {
   Locker locker(s_mutex);
-  s_sessions.erase(s.m_sessionID);
-  s_sessionIDs.erase(s.m_sessionID);
-  s_registered.erase(s.m_sessionID);
+  const auto session = s_sessions.find(s.m_sessionID);
+  if (session != s_sessions.end() && session->second == &s) {
+    s_sessions.erase(session);
+    s_sessionIDs.erase(s.m_sessionID);
+  }
+  const auto registered = s_registered.find(s.m_sessionID);
+  if (registered != s_registered.end() && registered->second == &s) {
+    s_registered.erase(registered);
+  }
 }
 } // namespace FIX
