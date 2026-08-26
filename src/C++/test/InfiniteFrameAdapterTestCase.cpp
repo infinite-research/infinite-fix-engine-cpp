@@ -1709,8 +1709,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ancestry-cycle]") {
       irfq_infinite_connection_dispatch_v1(first.response.connection, &dispatch, bytes.data(), bytes.size())
       == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.secondNestedStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
-  CHECK(context.firstNestedStatus == IRFQ_INFINITE_STATUS_OK_V1);
-  CHECK(context.fenceCount == 1);
+  CHECK(context.firstNestedStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(context.fenceCount == 2);
   context.ancestryCycle = false;
   closeConnection(first.response.connection);
   closeConnection(second.response.connection);
