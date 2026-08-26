@@ -26,6 +26,11 @@
 #include "InfiniteCompleteFrame.h"
 
 #include "Exceptions.h"
+
+#ifdef HAVE_SSL
+#include <openssl/crypto.h>
+#endif
+
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -36,6 +41,17 @@ namespace FIX {
 namespace {
 constexpr std::size_t MAX_FRAME_BYTES = 65'536;
 constexpr std::size_t CHECKSUM_FIELD_BYTES = 7;
+
+void cleanse(char *bytes, std::size_t length) noexcept {
+#ifdef HAVE_SSL
+  OPENSSL_cleanse(bytes, length);
+#else
+  volatile char *cursor = bytes;
+  for (std::size_t index = 0; index < length; ++index) {
+    cursor[index] = 0;
+  }
+#endif
+}
 
 std::int64_t clockTaiNow() {
 #ifdef CLOCK_TAI
@@ -73,6 +89,8 @@ InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(
   }
   m_lastObservedTaiNs = initialObservedTaiNs;
 }
+
+InfiniteCompleteFrameDispatcher::~InfiniteCompleteFrameDispatcher() { clearParserBuffer(); }
 
 std::optional<InfiniteDispatchFault> InfiniteCompleteFrameDispatcher::scanDeclaredFrame() {
   if (m_scanStage == ScanStage::BeginString) {
@@ -175,11 +193,35 @@ void InfiniteCompleteFrameDispatcher::resetDeclaredFrameScan() {
   m_bodyLengthHasDigit = false;
 }
 
+std::string InfiniteCompleteFrameDispatcher::takeDeclaredFrame() {
+  const auto length = m_checksumBegin + CHECKSUM_FIELD_BYTES;
+  std::string message;
+  try {
+    message.assign(m_parser.m_buffer, 0, length);
+  } catch (...) {
+    clearParserBuffer();
+    throw;
+  }
+  cleanseParserPrefix(length);
+  m_parser.m_buffer.erase(0, length);
+  return message;
+}
+
+void InfiniteCompleteFrameDispatcher::cleanseParserPrefix(std::size_t length) noexcept {
+  cleanse(m_parser.m_buffer.data(), std::min(length, m_parser.m_buffer.size()));
+}
+
+void InfiniteCompleteFrameDispatcher::clearParserBuffer() noexcept {
+  cleanseParserPrefix(m_parser.m_buffer.size());
+  m_parser.m_buffer.clear();
+}
+
 InfiniteDispatchResult InfiniteCompleteFrameDispatcher::terminal(
     InfiniteDispatchResult result,
     InfiniteDispatchFault fault) {
   result.terminalFault = fault;
   m_terminalFault = fault;
+  clearParserBuffer();
   return result;
 }
 
@@ -212,10 +254,7 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
         if (m_scanStage != ScanStage::Ready) {
           break;
         }
-        std::string message;
-        if (!m_parser.readFixMessage(message)) {
-          return terminal(std::move(result), InfiniteDispatchFault::MalformedFrame);
-        }
+        auto message = takeDeclaredFrame();
         resetDeclaredFrameScan();
         if (message.size() > MAX_FRAME_BYTES) {
           return terminal(std::move(result), InfiniteDispatchFault::FrameTooLarge);

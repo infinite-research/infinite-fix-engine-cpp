@@ -365,6 +365,13 @@ struct PendingClassification {
   std::unique_ptr<InfiniteEffectAuthorization> authorization;
 };
 
+enum class FenceState : std::uint8_t {
+  NotStarted,
+  InProgress,
+  Acknowledged,
+  Failed,
+};
+
 struct Engine : std::enable_shared_from_this<Engine> {
   explicit Engine(const irfq_infinite_callback_table_v1 &value)
       : callbacks(value) {}
@@ -374,6 +381,7 @@ struct Engine : std::enable_shared_from_this<Engine> {
   irfq_infinite_engine_lifecycle_v1 state{IRFQ_INFINITE_ENGINE_INITIALIZED_V1};
   bool terminalFailure{false};
   std::size_t inFlight{0};
+  std::size_t lifecycleCallbacks{0};
   std::size_t pendingBootstraps{0};
   std::uint64_t connectionGenerationFloor{0};
   std::uint64_t lastConnectionGeneration{0};
@@ -491,7 +499,9 @@ struct Connection : std::enable_shared_from_this<Connection> {
   bool terminalFailure{false};
   std::size_t inFlight{0};
   std::atomic<bool> faulted{false};
-  std::atomic<bool> fenceNotified{false};
+  std::mutex fenceMutex;
+  std::condition_variable fenceCondition;
+  FenceState fenceState{FenceState::NotStarted};
   std::mutex lane;
   InfiniteCompleteFrameDispatcher dispatcher;
   NullApplication application;
@@ -630,6 +640,29 @@ private:
   bool m_reserved{false};
 };
 
+class LifecycleCallbackCall {
+public:
+  explicit LifecycleCallbackCall(std::shared_ptr<Engine> engine)
+      : m_engine(std::move(engine)) {
+    std::lock_guard<std::mutex> lock(m_engine->mutex);
+    ++m_engine->lifecycleCallbacks;
+  }
+
+  ~LifecycleCallbackCall() {
+    {
+      std::lock_guard<std::mutex> lock(m_engine->mutex);
+      --m_engine->lifecycleCallbacks;
+    }
+    m_engine->condition.notify_all();
+  }
+
+  LifecycleCallbackCall(const LifecycleCallbackCall &) = delete;
+  LifecycleCallbackCall &operator=(const LifecycleCallbackCall &) = delete;
+
+private:
+  std::shared_ptr<Engine> m_engine;
+};
+
 bool fenceConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
@@ -715,6 +748,7 @@ irfq_infinite_status_v1 invokeExternalConnectionCallback(
   if (!callback) {
     return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
   }
+  LifecycleCallbackCall lifecycleCallback(engine);
   CallbackScope scope(engine.get(), connection);
   return callback(engine->callbacks.context, externalHandle, reason);
 }
@@ -739,24 +773,57 @@ void markConnectionTerminalFailure(const std::shared_ptr<Connection> &connection
   connection->lifecycleCondition.notify_all();
 }
 
+void markEngineTerminalFailure(const std::shared_ptr<Engine> &engine) noexcept {
+  {
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    if (engine->state != IRFQ_INFINITE_ENGINE_SHUTDOWN_V1) {
+      engine->state = IRFQ_INFINITE_ENGINE_CLOSING_V1;
+      engine->terminalFailure = true;
+    }
+  }
+  engine->condition.notify_all();
+}
+
 bool fenceConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason) noexcept {
   connection->faulted.store(true, std::memory_order_release);
-  if (connection->fenceNotified.exchange(true, std::memory_order_acq_rel)) {
-    std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
-    return !connection->terminalFailure;
-  }
-  try {
-    if (invokeConnectionCallback(engine, connection, engine->callbacks.fence, reason)
-        == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1) {
-      connection->lifecycleCondition.notify_all();
+  {
+    std::unique_lock<std::mutex> lock(connection->fenceMutex);
+    if (connection->fenceState == FenceState::InProgress) {
+      if (insideCallback()) {
+        lock.unlock();
+        markConnectionTerminalFailure(connection);
+        return false;
+      }
+      connection->fenceCondition.wait(lock, [&connection]() {
+        return connection->fenceState != FenceState::InProgress;
+      });
+    }
+    if (connection->fenceState == FenceState::Acknowledged) {
       return true;
     }
+    if (connection->fenceState == FenceState::Failed) {
+      return false;
+    }
+    connection->fenceState = FenceState::InProgress;
+  }
+  bool acknowledged = false;
+  try {
+    acknowledged = invokeConnectionCallback(engine, connection, engine->callbacks.fence, reason)
+                   == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
   } catch (...) {}
-  markConnectionTerminalFailure(connection);
-  return false;
+  {
+    std::lock_guard<std::mutex> lock(connection->fenceMutex);
+    connection->fenceState = acknowledged ? FenceState::Acknowledged : FenceState::Failed;
+  }
+  connection->fenceCondition.notify_all();
+  connection->lifecycleCondition.notify_all();
+  if (!acknowledged) {
+    markConnectionTerminalFailure(connection);
+  }
+  return acknowledged;
 }
 
 bool fenceIfFaulted(
@@ -795,7 +862,11 @@ bool rejectAcceptedExternal(
     released = invokeExternalConnectionCallback(engine, externalHandle, nullptr, engine->callbacks.release, reason)
                == IRFQ_INFINITE_STATUS_CLOSED_V1;
   } catch (...) {}
-  return fenced && released;
+  const auto cleaned = fenced && released;
+  if (!cleaned) {
+    markEngineTerminalFailure(engine);
+  }
+  return cleaned;
 }
 
 void discardConnectionState(const std::shared_ptr<Connection> &connection) {
@@ -918,6 +989,11 @@ bool closeConnection(
   {
     std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
     connection->lifecycleCondition.wait(lock, [&connection]() { return connection->inFlight == 0; });
+    if (connection->terminalFailure) {
+      lock.unlock();
+      quiesceTerminalConnection(connection);
+      return false;
+    }
   }
   std::unique_lock<std::mutex> lane(connection->lane);
   return completeCloseConnection(engine, connection, reason, std::move(lane));
@@ -1037,10 +1113,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
   try {
     auto engine = findEngine(engineHandle);
     if (!engine) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_SHUTDOWN_V1, IRFQ_INFINITE_ENGINE_SHUTDOWN_V1));
+      return publishFixed(output, outputCapacity, operationResponse(IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1, 0));
     }
     if (activeCallbackContains(engine.get())) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
@@ -1082,7 +1155,13 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
     }
     {
       std::unique_lock<std::mutex> lock(engine->mutex);
-      engine->condition.wait(lock, [&engine]() { return engine->inFlight == 0; });
+      engine->condition.wait(lock, [&engine]() { return engine->inFlight == 0 && engine->lifecycleCallbacks == 0; });
+      if (engine->terminalFailure) {
+        return publishFixed(
+            output,
+            outputCapacity,
+            operationResponse(IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1, IRFQ_INFINITE_ENGINE_CLOSING_V1));
+      }
       engine->state = IRFQ_INFINITE_ENGINE_SHUTDOWN_V1;
     }
     {

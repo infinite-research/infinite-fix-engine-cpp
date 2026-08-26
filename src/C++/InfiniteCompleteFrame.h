@@ -28,6 +28,8 @@
 #include <vector>
 
 namespace FIX {
+class InfiniteCompleteFrameTestAccess;
+
 struct InfiniteCompleteFrame {
   std::string bytes;
   std::int64_t observedTaiNs;
@@ -59,6 +61,7 @@ class InfiniteCompleteFrameDispatcher {
 public:
   explicit InfiniteCompleteFrameDispatcher(InfiniteFrameBatch limits);
   InfiniteCompleteFrameDispatcher(InfiniteFrameBatch limits, std::int64_t initialObservedTaiNs);
+  ~InfiniteCompleteFrameDispatcher();
   InfiniteCompleteFrameDispatcher(const InfiniteCompleteFrameDispatcher &) = delete;
   InfiniteCompleteFrameDispatcher &operator=(const InfiniteCompleteFrameDispatcher &) = delete;
 
@@ -69,6 +72,8 @@ public:
   InfiniteDispatchResult process(const char *bytes, std::size_t length);
 
 private:
+  friend class InfiniteCompleteFrameTestAccess;
+
   enum class ScanStage : std::uint8_t {
     BeginString,
     BodyLengthPrefix,
@@ -78,6 +83,9 @@ private:
   };
 
   std::optional<InfiniteDispatchFault> scanDeclaredFrame();
+  std::string takeDeclaredFrame();
+  void cleanseParserPrefix(std::size_t length) noexcept;
+  void clearParserBuffer() noexcept;
   InfiniteDispatchResult terminal(InfiniteDispatchResult result, InfiniteDispatchFault fault);
   void resetDeclaredFrameScan();
 

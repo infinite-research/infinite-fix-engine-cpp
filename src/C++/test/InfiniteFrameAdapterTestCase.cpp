@@ -17,6 +17,7 @@
 **
 ****************************************************************************/
 
+#include "InfiniteCompleteFrame.h"
 #include "InfiniteFrameAdapter.h"
 #include "InfiniteFrameAdapterStore.h"
 
@@ -42,6 +43,29 @@
 #include <time.h>
 #include <utility>
 #include <vector>
+
+namespace FIX {
+class InfiniteCompleteFrameTestAccess {
+public:
+  static bool parserBufferContains(const InfiniteCompleteFrameDispatcher &dispatcher, const std::string &value) {
+    const auto &buffer = dispatcher.m_parser.m_buffer;
+    return buffer.find(value) != std::string::npos;
+  }
+
+  static bool parserBufferEmpty(const InfiniteCompleteFrameDispatcher &dispatcher) {
+    return dispatcher.m_parser.m_buffer.empty();
+  }
+
+  static bool parserBufferAllZero(const InfiniteCompleteFrameDispatcher &dispatcher) {
+    const auto &buffer = dispatcher.m_parser.m_buffer;
+    return std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 0; });
+  }
+
+  static void cleanseParserBuffer(InfiniteCompleteFrameDispatcher &dispatcher) {
+    dispatcher.cleanseParserPrefix(dispatcher.m_parser.m_buffer.size());
+  }
+};
+} // namespace FIX
 
 namespace {
 struct FixtureRows {
@@ -157,6 +181,9 @@ struct CallbackContext {
   bool blockRelease{false};
   bool releaseEntered{false};
   bool allowRelease{false};
+  bool blockFence{false};
+  bool fenceEntered{false};
+  bool allowFence{false};
   bool blockBootstrap{false};
   std::size_t bootstrapEntered{0};
   bool allowBootstrap{false};
@@ -447,9 +474,12 @@ irfq_infinite_status_v1 authorizeCallback(
 irfq_infinite_status_v1 fenceCallback(void *opaque, irfq_infinite_handle_v1, std::uint32_t) {
   auto &context = *static_cast<CallbackContext *>(opaque);
   {
-    std::lock_guard<std::mutex> lock(context.mutex);
+    std::unique_lock<std::mutex> lock(context.mutex);
     context.fenced = true;
     ++context.fenceCount;
+    context.fenceEntered = true;
+    context.condition.notify_all();
+    context.condition.wait(lock, [&context]() { return !context.blockFence || context.allowFence; });
   }
   context.condition.notify_all();
   if (context.fenceThrows) {
@@ -620,6 +650,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "callback_close") == "try_idle_else_fence_wake_nonblocking");
   CHECK(fixture.text("contract", "callback_contention") == "both_outer_lanes_held_through_nested_attempts");
   CHECK(fixture.text("contract", "external_fence") == "exactly_once_before_fault_return");
+  CHECK(fixture.text("contract", "fence_state") == "not_started>in_progress>acknowledged|failed");
+  CHECK(fixture.text("contract", "fence_quiescence") == "noncallback_waits>release_after_completion");
   CHECK(fixture.text("contract", "callback_argument_lifetime") == "synchronous_only");
   CHECK(fixture.text("contract", "callback_table_lifetime") == "copied_context_valid_until_quiescent_shutdown");
   CHECK(fixture.text("contract", "acquisition") == "open_only_increments_in_flight");
@@ -640,12 +672,15 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "bootstrap_acceptance") == "logged_on+connected+dictionary_valid");
   CHECK(fixture.text("contract", "dictionaries") == "approved_installed_immutable_only");
   CHECK(fixture.text("contract", "lifecycle_callback_failure") == "CLOSING+terminal_error+waiters_woken");
+  CHECK(fixture.text("contract", "bootstrap_cleanup_failure") == "engine_CLOSING+terminal_error");
   CHECK(fixture.text("contract", "bootstrap_credentials") == "callback_only>scrub_before_session");
+  CHECK(fixture.text("contract", "parser_credential_storage") == "secure_wipe_all_paths");
   CHECK(fixture.text("contract", "bootstrap_observation") == "connection_clock_baseline");
   CHECK(fixture.text("contract", "input_output_alias") == "reject_before_output_mutation");
   CHECK(fixture.text("contract", "capability_retirement") == "fresh_adapter_handles+live_external_mapping");
   CHECK(fixture.text("contract", "pending_plan_bound") == "one_per_connection");
   CHECK(fixture.text("contract", "candidate_storage") == "move_after_validation");
+  CHECK(fixture.text("contract", "engine_shutdown_identity") == "exact_live_engine_only");
   CHECK(fixture.number("constant", "abi_version") == IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1);
   CHECK(fixture.number("constant", "required_capabilities") == IRFQ_INFINITE_REQUIRED_CAPABILITIES_V1);
   CHECK(fixture.number("constant", "max_connections") == IRFQ_INFINITE_MAX_CONNECTIONS_V1);
@@ -1442,6 +1477,59 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]"
   CHECK(context.releaseCount == 1);
 }
 
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fence-quiescence]") {
+  CallbackContext context;
+  context.blockFence = true;
+  context.registrationNotRegistered = true;
+  context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "FENCEBOUND", 3500);
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto heartbeat = finishFix("35=0\00134=2\00149=FENCEBOUND\00156=VENUE\00152=20260826-08:08:09.000\001");
+  irfq_infinite_status_v1 dispatchStatus = IRFQ_INFINITE_STATUS_OK_V1;
+  std::thread fencing([&]() { dispatchStatus = dispatchFrame(bootstrapped.response.connection, heartbeat).status; });
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    context.condition.wait(lock, [&context]() { return context.fenceEntered; });
+  }
+
+  std::atomic<bool> closeReturned{false};
+  irfq_infinite_status_v1 closeStatus = IRFQ_INFINITE_STATUS_OK_V1;
+  std::thread closing([&]() {
+    closeStatus = nestedClose(bootstrapped.response.connection, UINT32_C(94));
+    closeReturned.store(true, std::memory_order_release);
+  });
+  std::atomic<bool> shutdownReturned{false};
+  irfq_infinite_status_v1 shutdownStatus = IRFQ_INFINITE_STATUS_OK_V1;
+  auto shutdown = output<irfq_infinite_operation_response_v1>();
+  std::thread shuttingDown([&]() {
+    shutdownStatus = irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown));
+    shutdownReturned.store(true, std::memory_order_release);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  CHECK_FALSE(closeReturned.load(std::memory_order_acquire));
+  CHECK_FALSE(shutdownReturned.load(std::memory_order_acquire));
+  CHECK(context.releaseCount == 0);
+
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.allowFence = true;
+  }
+  context.condition.notify_all();
+  fencing.join();
+  closing.join();
+  shuttingDown.join();
+  CHECK(
+      (dispatchStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1
+       || dispatchStatus == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1));
+  CHECK(closeStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.fenceCount == 1);
+  CHECK(context.releaseCount == 0);
+  CHECK(shutdownStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(shutdown.lifecycle == IRFQ_INFINITE_ENGINE_CLOSING_V1);
+}
+
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-capacity]") {
   CallbackContext context;
   context.blockBootstrap = true;
@@ -2115,6 +2203,112 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-session-va
     closeConnection(result.response.connection);
     shutdownEngine(initialized.engine);
   }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-cleanup-failure]") {
+  const auto exercise = [](bool releaseFailure) {
+    CallbackContext context;
+    context.bootstrapReservedNonzero = true;
+    if (releaseFailure) {
+      context.releaseThrows = true;
+    } else {
+      context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
+    }
+    const auto initialized = initializeEngine(context);
+    const auto rejected = bootstrapConnection(
+        initialized.engine,
+        releaseFailure ? "BOOTRELEASEFAIL" : "BOOTFENCEFAIL",
+        releaseFailure ? UINT64_C(11750) : UINT64_C(11740));
+    CHECK(rejected.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(context.fenceCount == 1);
+    CHECK(context.releaseCount == 1);
+
+    const auto unavailable = bootstrapConnection(
+        initialized.engine,
+        releaseFailure ? "BOOTRELEASEFAIL2" : "BOOTFENCEFAIL2",
+        releaseFailure ? UINT64_C(11770) : UINT64_C(11760));
+    CHECK(unavailable.status == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
+
+    auto shutdown = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(shutdown.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(shutdown.lifecycle == IRFQ_INFINITE_ENGINE_CLOSING_V1);
+  };
+  SECTION("failed fence acknowledgement") { exercise(false); }
+  SECTION("throwing release callback") { exercise(true); }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][parser-credential-wipe]") {
+  const std::string credential = "adapter-parser-password";
+  const auto body = "35=A\001553=adapter-user\001554=" + credential + "\001";
+  const auto retained = "8=FIX.4.2\0019=" + std::to_string(body.size()) + "\001" + body;
+
+  SECTION("the private wipe primitive cleanses the actual parser bytes") {
+    FIX::InfiniteCompleteFrameDispatcher dispatcher({1, IRFQ_INFINITE_MAX_FRAME_BYTES_V1});
+    const auto partial = dispatcher.process(retained.data(), retained.size(), []() { return INT64_C(1); });
+    REQUIRE_FALSE(partial.terminalFault);
+    REQUIRE(FIX::InfiniteCompleteFrameTestAccess::parserBufferContains(dispatcher, credential));
+    FIX::InfiniteCompleteFrameTestAccess::cleanseParserBuffer(dispatcher);
+    CHECK(FIX::InfiniteCompleteFrameTestAccess::parserBufferAllZero(dispatcher));
+  }
+
+  SECTION("malformed retained bytes are erased") {
+    FIX::InfiniteCompleteFrameDispatcher dispatcher({1, IRFQ_INFINITE_MAX_FRAME_BYTES_V1});
+    const auto partial = dispatcher.process(retained.data(), retained.size(), []() { return INT64_C(1); });
+    REQUIRE_FALSE(partial.terminalFault);
+    REQUIRE(FIX::InfiniteCompleteFrameTestAccess::parserBufferContains(dispatcher, credential));
+    const std::string malformedChecksum = "XX=";
+    const auto malformed
+        = dispatcher.process(malformedChecksum.data(), malformedChecksum.size(), []() { return INT64_C(2); });
+    REQUIRE(malformed.terminalFault == FIX::InfiniteDispatchFault::MalformedFrame);
+    CHECK(FIX::InfiniteCompleteFrameTestAccess::parserBufferEmpty(dispatcher));
+  }
+
+  SECTION("consumed and exception paths erase parser storage") {
+    const auto frame = finishFix(
+        "35=A\00134=1\00149=PARSERWIPE\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001"
+        "553=adapter-user\001554="
+        + credential + "\001");
+    FIX::InfiniteCompleteFrameDispatcher consumed({1, IRFQ_INFINITE_MAX_FRAME_BYTES_V1});
+    const auto parsed = consumed.process(frame.data(), frame.size(), []() { return INT64_C(1); });
+    REQUIRE(parsed.frames.size() == 1);
+    CHECK(FIX::InfiniteCompleteFrameTestAccess::parserBufferEmpty(consumed));
+
+    FIX::InfiniteCompleteFrameDispatcher exceptional({1, IRFQ_INFINITE_MAX_FRAME_BYTES_V1});
+    const auto failed = exceptional.process(frame.data(), frame.size(), []() -> std::int64_t {
+      throw std::runtime_error("observation unavailable");
+    });
+    REQUIRE(failed.terminalFault == FIX::InfiniteDispatchFault::InvalidObservation);
+    CHECK(FIX::InfiniteCompleteFrameTestAccess::parserBufferEmpty(exceptional));
+  }
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][engine-shutdown-identity]") {
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "SHUTDOWNIDENTITY", UINT64_C(11780));
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto expectNotRegistered = [](irfq_infinite_handle_v1 handle) {
+    auto response = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_engine_shutdown_v1(handle, &response, sizeof(response))
+        == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+    CHECK(response.header.status == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1);
+    CHECK(response.lifecycle == 0);
+  };
+  expectNotRegistered(bootstrapped.response.connection);
+  expectNotRegistered({initialized.engine.object, initialized.engine.generation + UINT64_C(100)});
+  expectNotRegistered({UINT64_C(0x88776655), UINT64_C(0x44332211)});
+
+  closeConnection(bootstrapped.response.connection);
+  auto shutdown = output<irfq_infinite_operation_response_v1>();
+  REQUIRE(
+      irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown))
+      == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
+  expectNotRegistered(initialized.engine);
 }
 
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle-callback-failure]") {
