@@ -91,25 +91,7 @@ public:
 
   static bool fenced(const Session &session) { return session.m_infiniteSessionFenced; }
 
-  static void cleanseCredentials(Message &message) {
-    Session::cleanseInfiniteMessageCredentials(message);
-    removeCredentials(message);
-    removeCredentials(message.getHeader());
-    removeCredentials(message.getTrailer());
-  }
-
-private:
-  static void removeCredentials(FieldMap &fields) {
-    fields.removeField(FIELD::Username);
-    fields.removeField(FIELD::Password);
-    for (const auto &groupSet : fields.groups()) {
-      for (auto *group : groupSet.second) {
-        if (group) {
-          removeCredentials(*group);
-        }
-      }
-    }
-  }
+  static void cleanseCredentials(Message &message) { Session::cleanseInfiniteMessageCredentials(message); }
 };
 } // namespace FIX
 
@@ -279,6 +261,24 @@ void secureErase(std::string &bytes) noexcept {
   }
 #endif
   bytes.clear();
+}
+
+void removeCredentials(FieldMap &fields) {
+  fields.removeField(FIELD::Username);
+  fields.removeField(FIELD::Password);
+  for (const auto &groupSet : fields.groups()) {
+    for (auto *group : groupSet.second) {
+      if (group) {
+        removeCredentials(*group);
+      }
+    }
+  }
+}
+
+void removeCredentials(Message &message) {
+  removeCredentials(static_cast<FieldMap &>(message));
+  removeCredentials(message.getHeader());
+  removeCredentials(message.getTrailer());
 }
 
 class SensitiveFrameGuard {
@@ -1215,6 +1215,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     try {
       Message logon(dispatch.frames.front().bytes, true);
       InfiniteFrameAdapterAccess::cleanseCredentials(logon);
+      removeCredentials(logon);
       connection = std::make_shared<Connection>(engine, callbackResponse.connection, request->observed_tai_ns);
       connection->initializeSession(logon);
       irfq_infinite_status_v1 registrationStatus = IRFQ_INFINITE_STATUS_OK_V1;
