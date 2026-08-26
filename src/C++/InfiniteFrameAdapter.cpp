@@ -568,6 +568,68 @@ void rejectAcceptedExternal(
   } catch (...) {}
 }
 
+void completeCloseConnection(
+    const std::shared_ptr<Engine> &engine,
+    const std::shared_ptr<Connection> &connection,
+    std::uint32_t reason,
+    std::unique_lock<std::mutex> lane) {
+  connection->classifications.clear();
+  connection->candidates.clear();
+  connection->session.reset();
+  lane.unlock();
+  {
+    std::lock_guard<std::mutex> lock(registryMutex);
+    connections.erase(connection->handle.object);
+  }
+  releaseConnection(engine, connection, reason);
+  {
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->connections.erase(connection->handle.object);
+  }
+  {
+    std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
+    connection->state = IRFQ_INFINITE_CONNECTION_CLOSED_V1;
+  }
+  connection->lifecycleCondition.notify_all();
+}
+
+bool tryCloseConnectionFromCallback(
+    const std::shared_ptr<Engine> &engine,
+    const std::shared_ptr<Connection> &connection,
+    std::uint32_t reason) {
+  std::unique_lock<std::mutex> lifecycle(connection->lifecycleMutex, std::try_to_lock);
+  if (!lifecycle.owns_lock()) {
+    connection->faulted.store(true, std::memory_order_release);
+    fenceConnection(engine, connection, reason);
+    connection->lifecycleCondition.notify_all();
+    return false;
+  }
+  if (connection->state == IRFQ_INFINITE_CONNECTION_CLOSED_V1) {
+    return true;
+  }
+  if (connection->state != IRFQ_INFINITE_CONNECTION_OPEN_V1 || connection->inFlight != 0) {
+    connection->faulted.store(true, std::memory_order_release);
+    lifecycle.unlock();
+    fenceConnection(engine, connection, reason);
+    connection->lifecycleCondition.notify_all();
+    return false;
+  }
+  std::unique_lock<std::mutex> lane(connection->lane, std::try_to_lock);
+  if (!lane.owns_lock()) {
+    connection->faulted.store(true, std::memory_order_release);
+    lifecycle.unlock();
+    fenceConnection(engine, connection, reason);
+    connection->lifecycleCondition.notify_all();
+    return false;
+  }
+  connection->state = IRFQ_INFINITE_CONNECTION_CLOSING_V1;
+  connection->faulted.store(true, std::memory_order_release);
+  lifecycle.unlock();
+  fenceConnection(engine, connection, reason);
+  completeCloseConnection(engine, connection, reason, std::move(lane));
+  return true;
+}
+
 void closeConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
@@ -593,26 +655,8 @@ void closeConnection(
     std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
     connection->lifecycleCondition.wait(lock, [&connection]() { return connection->inFlight == 0; });
   }
-  {
-    std::lock_guard<std::mutex> lane(connection->lane);
-    connection->classifications.clear();
-    connection->candidates.clear();
-    connection->session.reset();
-  }
-  {
-    std::lock_guard<std::mutex> lock(registryMutex);
-    connections.erase(connection->handle.object);
-  }
-  releaseConnection(engine, connection, reason);
-  {
-    std::lock_guard<std::mutex> lock(engine->mutex);
-    engine->connections.erase(connection->handle.object);
-  }
-  {
-    std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
-    connection->state = IRFQ_INFINITE_CONNECTION_CLOSED_V1;
-  }
-  connection->lifecycleCondition.notify_all();
+  std::unique_lock<std::mutex> lane(connection->lane);
+  completeCloseConnection(engine, connection, reason, std::move(lane));
 }
 
 bool classificationConsumes(const InfiniteSessionClassification &classification) {
@@ -1469,6 +1513,15 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_close_v1(
     auto engine = connection->engine.lock();
     if (!engine) {
       return IRFQ_INFINITE_STATUS_CLOSED_V1;
+    }
+    if (insideCallback()) {
+      if (!tryCloseConnectionFromCallback(engine, connection, request->reason)) {
+        return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      }
+      return publishFixed(
+          output,
+          outputCapacity,
+          operationResponse(IRFQ_INFINITE_STATUS_CLOSED_V1, IRFQ_INFINITE_CONNECTION_CLOSED_V1));
     }
     closeConnection(engine, connection, request->reason);
     return publishFixed(

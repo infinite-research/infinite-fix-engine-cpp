@@ -1492,6 +1492,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ordinal-wrap]") {
       == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
   CHECK(response->header.written_length == 0);
+  CHECK(response->result_count == 0);
   CHECK(context.registeredFrames.size() == 2);
   CHECK(context.fenceCount == 1);
   const irfq_infinite_head_request_v1 head{
@@ -1795,6 +1796,11 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accountin
     REQUIRE(store.set(1, first));
     REQUIRE(store.set(2, second));
     CHECK_THROWS(store.set(1, std::string(originalSmall + 1, '\x33')));
+    std::vector<std::string> beforeShrink;
+    store.get(1, 2, beforeShrink);
+    REQUIRE(beforeShrink.size() == 2);
+    CHECK(beforeShrink[0] == first);
+    CHECK(beforeShrink[1] == second);
 
     constexpr std::size_t replacementSmall = 512;
     const std::string shrunk(replacementSmall, '\x44');
