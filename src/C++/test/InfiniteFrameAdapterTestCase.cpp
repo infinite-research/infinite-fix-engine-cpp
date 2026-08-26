@@ -18,6 +18,7 @@
 ****************************************************************************/
 
 #include "InfiniteFrameAdapter.h"
+#include "InfiniteFrameAdapterStore.h"
 
 #include "catch_amalgamated.hpp"
 
@@ -31,6 +32,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -164,9 +166,17 @@ struct CallbackContext {
   bool callCrossConnection{false};
   bool ancestryCycle{false};
   bool concurrentCrossCalls{false};
+  bool concurrentCrossCloses{false};
   std::size_t concurrentCallbacksEntered{0};
+  std::size_t concurrentNestedCompleted{0};
   irfq_infinite_status_v1 firstNestedStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 secondNestedStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 firstCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 secondCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  bool crossCloseOnRelease{false};
+  std::size_t releaseCrossCallbacksEntered{0};
+  irfq_infinite_status_v1 firstReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 secondReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   bool omitRegistrationResult{false};
   bool gapRegistrationOrdinal{false};
   bool bootstrapReservedNonzero{false};
@@ -194,6 +204,20 @@ irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection, const
   auto nestedResponse = dispatchOutput();
   return irfq_infinite_connection_dispatch_v1(connection, &nestedRequest, nestedResponse.data(), nestedResponse.size());
 }
+
+irfq_infinite_status_v1 nestedClose(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
+  const irfq_infinite_close_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, reason, {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  return irfq_infinite_connection_close_v1(connection, &request, &response, sizeof(response));
+}
+
+thread_local std::size_t registrationCallbackDepth{0};
+
+class RegistrationCallbackScope {
+public:
+  RegistrationCallbackScope() { ++registrationCallbackDepth; }
+  ~RegistrationCallbackScope() { --registrationCallbackDepth; }
+};
 
 template <typename T> irfq_infinite_status_v1 publishFixed(void *outputBuffer, std::uint64_t capacity, T response) {
   if (outputBuffer == nullptr || capacity < sizeof(T)) {
@@ -243,6 +267,7 @@ irfq_infinite_status_v1 registerCallback(
     void *outputBuffer,
     std::uint64_t capacity) {
   auto &context = *static_cast<CallbackContext *>(opaque);
+  RegistrationCallbackScope callbackScope;
   if (context.reenterSameHandle) {
     context.sameHandleReentryStatus = nestedDispatch(context.adapterConnection);
   }
@@ -259,7 +284,7 @@ irfq_infinite_status_v1 registerCallback(
       context.secondNestedStatus = status;
     }
   }
-  if (context.concurrentCrossCalls) {
+  if (context.concurrentCrossCalls && registrationCallbackDepth == 1) {
     const auto first = request->connection.object == UINT64_C(7);
     {
       std::unique_lock<std::mutex> lock(context.mutex);
@@ -269,11 +294,38 @@ irfq_infinite_status_v1 registerCallback(
     }
     const auto status = first ? nestedDispatch(context.secondAdapterConnection, context.secondNestedFrame)
                               : nestedDispatch(context.firstAdapterConnection, context.firstNestedFrame);
-    std::lock_guard<std::mutex> lock(context.mutex);
-    if (first) {
-      context.firstNestedStatus = status;
-    } else {
-      context.secondNestedStatus = status;
+    {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      if (first) {
+        context.firstNestedStatus = status;
+      } else {
+        context.secondNestedStatus = status;
+      }
+      ++context.concurrentNestedCompleted;
+      context.condition.notify_all();
+      context.condition.wait(lock, [&context]() { return context.concurrentNestedCompleted == 2; });
+    }
+  }
+  if (context.concurrentCrossCloses && registrationCallbackDepth == 1) {
+    const auto first = request->connection.object == UINT64_C(7);
+    {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      ++context.concurrentCallbacksEntered;
+      context.condition.notify_all();
+      context.condition.wait(lock, [&context]() { return context.concurrentCallbacksEntered == 2; });
+    }
+    const auto status
+        = nestedClose(first ? context.secondAdapterConnection : context.firstAdapterConnection, first ? 41 : 42);
+    {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      if (first) {
+        context.firstCloseStatus = status;
+      } else {
+        context.secondCloseStatus = status;
+      }
+      ++context.concurrentNestedCompleted;
+      context.condition.notify_all();
+      context.condition.wait(lock, [&context]() { return context.concurrentNestedCompleted == 2; });
     }
   }
   const auto responseBytes = sizeof(irfq_infinite_dispatch_response_v1)
@@ -370,8 +422,9 @@ irfq_infinite_status_v1 fenceCallback(void *opaque, irfq_infinite_handle_v1, std
   return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
 }
 
-irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1, std::uint32_t) {
+irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1 externalConnection, std::uint32_t) {
   auto &context = *static_cast<CallbackContext *>(opaque);
+  const auto first = externalConnection.object == UINT64_C(7);
   {
     std::unique_lock<std::mutex> lock(context.mutex);
     context.released = true;
@@ -379,6 +432,22 @@ irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1, s
     context.releaseEntered = true;
     context.condition.notify_all();
     context.condition.wait(lock, [&context]() { return !context.blockRelease || context.allowRelease; });
+  }
+  if (context.crossCloseOnRelease) {
+    {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      ++context.releaseCrossCallbacksEntered;
+      context.condition.notify_all();
+      context.condition.wait(lock, [&context]() { return context.releaseCrossCallbacksEntered == 2; });
+    }
+    const auto status
+        = nestedClose(first ? context.secondAdapterConnection : context.firstAdapterConnection, first ? 51 : 52);
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (first) {
+      context.firstReleaseCloseStatus = status;
+    } else {
+      context.secondReleaseCloseStatus = status;
+    }
   }
   return IRFQ_INFINITE_STATUS_CLOSED_V1;
 }
@@ -431,11 +500,7 @@ BootstrapResult bootstrapConnection(irfq_infinite_handle_v1 engine, const std::s
   return {status, response};
 }
 
-void closeConnection(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
-  const irfq_infinite_close_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, reason, {}};
-  auto response = output<irfq_infinite_operation_response_v1>();
-  irfq_infinite_connection_close_v1(connection, &request, &response, sizeof(response));
-}
+void closeConnection(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) { nestedClose(connection, reason); }
 
 void shutdownEngine(irfq_infinite_handle_v1 engine) {
   auto response = output<irfq_infinite_operation_response_v1>();
@@ -452,6 +517,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "cross_connection_progress") == "concurrent");
   CHECK(fixture.text("contract", "callback_reentry") == "rejected_same_handle");
   CHECK(fixture.text("contract", "callback_ancestry") == "complete_nonblocking");
+  CHECK(fixture.text("contract", "callback_close") == "try_idle_else_fence_wake_nonblocking");
+  CHECK(fixture.text("contract", "callback_contention") == "both_outer_lanes_held_through_nested_attempts");
   CHECK(fixture.text("contract", "external_fence") == "exactly_once_before_fault_return");
   CHECK(fixture.text("contract", "callback_argument_lifetime") == "synchronous_only");
   CHECK(fixture.text("contract", "callback_table_lifetime") == "copied_context_valid_until_quiescent_shutdown");
@@ -463,6 +530,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "bootstrap_capacity") == "installed_plus_pending_le_64");
   CHECK(fixture.text("contract", "callback_reserved") == "zero_required");
   CHECK(fixture.text("contract", "session_store_bound") == "fence_before_exceeding");
+  CHECK(
+      fixture.text("contract", "session_store_semantics") == "exact_bytes>replacement_delta>reset_reuse>retained_get");
   CHECK(fixture.text("contract", "output_publication") == "zero_written>validate>stage>copy>publish_written");
   CHECK(fixture.number("constant", "abi_version") == IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1);
   CHECK(fixture.number("constant", "required_capabilities") == IRFQ_INFINITE_REQUIRED_CAPABILITIES_V1);
@@ -1402,6 +1471,43 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ordinal-gap]") {
 #endif
 }
 
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ordinal-wrap]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  context.nextOrdinal = std::numeric_limits<std::uint64_t>::max();
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "ORDINALWRAP", 6050);
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto first = finishFix("35=0\00134=2\00149=ORDINALWRAP\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto second = finishFix("35=0\00134=3\00149=ORDINALWRAP\00156=VENUE\00152=20260826-08:08:10.000\001");
+  const auto batch = first + second;
+  const irfq_infinite_dispatch_request_v1 dispatch{
+      sizeof(dispatch),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {reinterpret_cast<const std::uint8_t *>(batch.data()), batch.size()},
+      {}};
+  auto bytes = dispatchOutput();
+  CHECK(
+      irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
+      == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
+  CHECK(response->header.written_length == 0);
+  CHECK(context.registeredFrames.size() == 2);
+  CHECK(context.fenceCount == 1);
+  const irfq_infinite_head_request_v1 head{
+      sizeof(head),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {UINT64_C(100), UINT64_C(1)},
+      {}};
+  auto waited = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited))
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  closeConnection(bootstrapped.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry-fence]") {
 #ifdef CLOCK_TAI
   const auto exercise = [](bool duringWait) {
@@ -1537,6 +1643,68 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-contention]
 #endif
 }
 
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-cycle]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto first = bootstrapConnection(initialized.engine, "CLOSECYCLEA", 9200);
+  const auto second = bootstrapConnection(initialized.engine, "CLOSECYCLEB", 9300);
+  REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
+  context.firstAdapterConnection = first.response.connection;
+  context.secondAdapterConnection = second.response.connection;
+  context.firstNestedFrame = finishFix("35=0\00134=2\00149=CLOSECYCLEA\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.secondNestedFrame = finishFix("35=0\00134=2\00149=CLOSECYCLEB\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.concurrentCrossCloses = true;
+  std::array<irfq_infinite_status_v1, 2> statuses{};
+  const auto run = [&](std::size_t index, irfq_infinite_handle_v1 connection, const std::string &frame) {
+    const irfq_infinite_dispatch_request_v1 dispatch{
+        sizeof(dispatch),
+        IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+        {reinterpret_cast<const std::uint8_t *>(frame.data()), frame.size()},
+        {}};
+    auto bytes = dispatchOutput();
+    statuses[index] = irfq_infinite_connection_dispatch_v1(connection, &dispatch, bytes.data(), bytes.size());
+  };
+  std::thread firstDispatch(run, 0, first.response.connection, std::cref(context.firstNestedFrame));
+  std::thread secondDispatch(run, 1, second.response.connection, std::cref(context.secondNestedFrame));
+  firstDispatch.join();
+  secondDispatch.join();
+  CHECK(context.firstCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(context.secondCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(context.concurrentNestedCompleted == 2);
+  CHECK((statuses[0] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK((statuses[1] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK((statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK(context.fenceCount == 2);
+  context.concurrentCrossCloses = false;
+  closeConnection(first.response.connection);
+  closeConnection(second.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-close-cycle]") {
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto first = bootstrapConnection(initialized.engine, "RELEASECYCLEA", 9400);
+  const auto second = bootstrapConnection(initialized.engine, "RELEASECYCLEB", 9500);
+  REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
+  context.firstAdapterConnection = first.response.connection;
+  context.secondAdapterConnection = second.response.connection;
+  context.crossCloseOnRelease = true;
+  std::thread firstClose([&]() { closeConnection(first.response.connection, 61); });
+  std::thread secondClose([&]() { closeConnection(second.response.connection, 62); });
+  firstClose.join();
+  secondClose.join();
+  CHECK(context.releaseCrossCallbacksEntered == 2);
+  CHECK(context.firstReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  CHECK(context.secondReleaseCloseStatus == IRFQ_INFINITE_STATUS_CLOSED_V1);
+  CHECK(context.releaseCount == 2);
+  shutdownEngine(initialized.engine);
+}
+
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-bound]") {
 #ifdef CLOCK_TAI
   CallbackContext context;
@@ -1601,4 +1769,53 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-bound]") {
   closeConnection(bootstrapped.response.connection);
   shutdownEngine(initialized.engine);
 #endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accounting]") {
+  using FIX::INFINITE_MAX_PLANNED_BYTES;
+  using FIX::infinite_frame_adapter_detail::BoundedMemoryStore;
+  const auto now = FIX::UtcTimeStamp::now();
+  BoundedMemoryStore store(now);
+
+  SECTION("exact byte bound retains exact bytes for resend reads and rejects one over") {
+    const std::string exact(INFINITE_MAX_PLANNED_BYTES, '\x5a');
+    REQUIRE(store.set(1, exact));
+    CHECK_THROWS(store.set(2, "x"));
+    std::vector<std::string> retained;
+    store.get(1, 2, retained);
+    REQUIRE(retained.size() == 1);
+    CHECK(retained.front().size() == INFINITE_MAX_PLANNED_BYTES);
+    CHECK(retained.front() == exact);
+  }
+
+  SECTION("replacement growth and shrink use byte deltas") {
+    constexpr std::size_t originalSmall = 1024;
+    const std::string first(originalSmall, '\x11');
+    const std::string second(INFINITE_MAX_PLANNED_BYTES - originalSmall, '\x22');
+    REQUIRE(store.set(1, first));
+    REQUIRE(store.set(2, second));
+    CHECK_THROWS(store.set(1, std::string(originalSmall + 1, '\x33')));
+
+    constexpr std::size_t replacementSmall = 512;
+    const std::string shrunk(replacementSmall, '\x44');
+    const std::string expanded(INFINITE_MAX_PLANNED_BYTES - replacementSmall, '\x55');
+    REQUIRE(store.set(1, shrunk));
+    REQUIRE(store.set(2, expanded));
+    std::vector<std::string> retained;
+    store.get(1, 2, retained);
+    REQUIRE(retained.size() == 2);
+    CHECK(retained[0] == shrunk);
+    CHECK(retained[1] == expanded);
+  }
+
+  SECTION("reset clears accounting and permits exact-bound reuse") {
+    REQUIRE(store.set(1, std::string(INFINITE_MAX_PLANNED_BYTES, '\x66')));
+    store.reset(now);
+    const std::string reused(INFINITE_MAX_PLANNED_BYTES, '\x77');
+    REQUIRE(store.set(1, reused));
+    std::vector<std::string> retained;
+    store.get(1, 2, retained);
+    REQUIRE(retained.size() == 1);
+    CHECK(retained.front() == reused);
+  }
 }
