@@ -123,13 +123,7 @@ Session::Session(
     m_state.reset(m_timestamper());
   }
 
-  if (!addSession(*this)) {
-    m_messageStoreFactory.destroy(m_state.store());
-    if (m_pLogFactory && m_state.log()) {
-      m_pLogFactory->destroy(m_state.log());
-    }
-    throw std::logic_error("Duplicate session identity");
-  }
+  addSession(*this);
   m_application.onCreate(m_sessionID);
   m_state.onEvent("Created session");
 }

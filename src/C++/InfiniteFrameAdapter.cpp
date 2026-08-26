@@ -420,6 +420,9 @@ struct Connection : std::enable_shared_from_this<Connection> {
         sessionTime,
         0,
         nullptr);
+    if (Session::lookupSession(sessionId) != session.get()) {
+      throw std::logic_error("Duplicate Infinite session identity");
+    }
     session->setCheckLatency(false);
     session->setResponder(&responder);
     session->next(logon, UtcTimeStamp::now());
@@ -795,14 +798,27 @@ bool rejectAcceptedExternal(
   return fenced && released;
 }
 
+void discardConnectionState(const std::shared_ptr<Connection> &connection) {
+  connection->classifications.clear();
+  connection->candidates.clear();
+  connection->session.reset();
+}
+
+void quiesceTerminalConnection(const std::shared_ptr<Connection> &connection) {
+  {
+    std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
+    connection->lifecycleCondition.wait(lock, [&connection]() { return connection->inFlight == 0; });
+  }
+  std::unique_lock<std::mutex> lane(connection->lane);
+  discardConnectionState(connection);
+}
+
 bool completeCloseConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason,
     std::unique_lock<std::mutex> lane) {
-  connection->classifications.clear();
-  connection->candidates.clear();
-  connection->session.reset();
+  discardConnectionState(connection);
   lane.unlock();
   if (!releaseConnection(engine, connection, reason)) {
     markConnectionTerminalFailure(connection);
@@ -860,6 +876,7 @@ bool tryCloseConnectionFromCallback(
   connection->faulted.store(true, std::memory_order_release);
   lifecycle.unlock();
   if (!fenceConnection(engine, connection, reason)) {
+    discardConnectionState(connection);
     return false;
   }
   return completeCloseConnection(engine, connection, reason, std::move(lane));
@@ -869,6 +886,7 @@ bool closeConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason) {
+  bool terminalFailure = false;
   {
     std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
     if (connection->state == IRFQ_INFINITE_CONNECTION_CLOSED_V1) {
@@ -878,13 +896,22 @@ bool closeConnection(
       connection->lifecycleCondition.wait(lock, [&connection]() {
         return connection->state == IRFQ_INFINITE_CONNECTION_CLOSED_V1 || connection->terminalFailure;
       });
-      return connection->state == IRFQ_INFINITE_CONNECTION_CLOSED_V1;
+      if (connection->state == IRFQ_INFINITE_CONNECTION_CLOSED_V1) {
+        return true;
+      }
+      terminalFailure = true;
+    } else {
+      connection->state = IRFQ_INFINITE_CONNECTION_CLOSING_V1;
+      connection->faulted.store(true, std::memory_order_release);
     }
-    connection->state = IRFQ_INFINITE_CONNECTION_CLOSING_V1;
-    connection->faulted.store(true, std::memory_order_release);
+  }
+  if (terminalFailure) {
+    quiesceTerminalConnection(connection);
+    return false;
   }
 
   if (!fenceConnection(engine, connection, reason)) {
+    quiesceTerminalConnection(connection);
     return false;
   }
 

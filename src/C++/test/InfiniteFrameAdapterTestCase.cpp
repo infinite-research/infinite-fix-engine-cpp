@@ -2158,6 +2158,16 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle-callback-f
         irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown))
         == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
     CHECK(shutdown.lifecycle == IRFQ_INFINITE_ENGINE_CLOSING_V1);
+
+    CallbackContext replacementContext;
+    const auto replacementEngine = initializeEngine(replacementContext);
+    const auto replacement = bootstrapConnection(
+        replacementEngine.engine,
+        releaseFailure ? "RELEASEFAILURE" : "FENCEFAILURE",
+        UINT64_C(11850));
+    REQUIRE(replacement.status == IRFQ_INFINITE_STATUS_OK_V1);
+    closeConnection(replacement.response.connection);
+    shutdownEngine(replacementEngine.engine);
   };
   SECTION("wrong fence acknowledgement") { exercise(false); }
   SECTION("throwing release callback") { exercise(true); }
