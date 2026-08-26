@@ -144,6 +144,7 @@ struct CallbackContext {
   bool reenterSameHandle{false};
   bool callCrossConnection{false};
   bool omitRegistrationResult{false};
+  bool throwAfterBootstrapAccept{false};
 };
 
 template <typename T> irfq_infinite_status_v1 publishFixed(void *outputBuffer, std::uint64_t capacity, T response) {
@@ -172,7 +173,11 @@ irfq_infinite_status_v1 bootstrapCallback(
   response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
   response.connection = {context.nextConnection++, UINT64_C(9)};
   response.outcome = IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1;
-  return publishFixed(outputBuffer, capacity, response);
+  const auto status = publishFixed(outputBuffer, capacity, response);
+  if (context.throwAfterBootstrapAccept) {
+    throw std::runtime_error("bootstrap callback failure after acceptance");
+  }
+  return status;
 }
 
 irfq_infinite_status_v1 registerCallback(
@@ -660,6 +665,18 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle]") {
       {reinterpret_cast<const std::uint8_t *>(logon.data()), logon.size()},
       1,
       {UINT64_C(10), UINT64_C(20)}};
+  context.throwAfterBootstrapAccept = true;
+  auto failedBootstrap = output<irfq_infinite_bootstrap_response_v1>();
+  CHECK(
+      irfq_infinite_connection_bootstrap_v1(initialized.engine, &bootstrap, &failedBootstrap, sizeof(failedBootstrap))
+      == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(failedBootstrap.header.written_length == 0);
+  CHECK(context.fenced);
+  CHECK(context.released);
+  context.throwAfterBootstrapAccept = false;
+  context.fenced = false;
+  context.released = false;
+
   auto bootstrapped = output<irfq_infinite_bootstrap_response_v1>();
   REQUIRE(
       irfq_infinite_connection_bootstrap_v1(initialized.engine, &bootstrap, &bootstrapped, sizeof(bootstrapped))
