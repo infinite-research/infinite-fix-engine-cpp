@@ -37,6 +37,7 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpMessageTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteSessionClassificationTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
@@ -68,7 +69,8 @@ if (QUICKFIX_TESTS)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
   target_compile_definitions(ut PRIVATE
-    INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}")
+    INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
+    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${PROJECT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v1.tsv")
   
   target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
     ${PROJECT_SOURCE_DIR}/src/C++)
@@ -78,6 +80,10 @@ if (QUICKFIX_TESTS)
   add_test(
     NAME infinite_complete_frame_dispatcher
     COMMAND ut "InfiniteCompleteFrameDispatcherTests"
+               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  add_test(
+    NAME infinite_frame_adapter
+    COMMAND ut "InfiniteFrameAdapterTests"
                --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
   add_test(
     NAME quickfix_unit

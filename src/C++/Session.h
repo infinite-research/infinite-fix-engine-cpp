@@ -49,6 +49,7 @@ struct InfiniteActionPlan;
 class InfiniteAtHeadBinding;
 class InfiniteEffectAuthorization;
 struct InfiniteExpectedSessionState;
+class InfiniteFrameAdapterAccess;
 class InfiniteSessionClassification;
 class InfiniteSessionClassificationTestAccess;
 enum class InfiniteSessionActionKind : std::uint8_t;
@@ -352,6 +353,7 @@ public:
   const MessageStore *getStore() { return &m_state; }
 
 private:
+  friend class InfiniteFrameAdapterAccess;
   friend class InfiniteSessionClassificationTestAccess;
   typedef std::map<SessionID, Session *> Sessions;
   typedef std::set<SessionID> SessionIDs;

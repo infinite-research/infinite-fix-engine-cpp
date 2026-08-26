@@ -13,6 +13,7 @@ libquickfix_la_SOURCES = \
 	SessionFactory.cpp \
 	InfiniteCompleteFrame.cpp \
 	InfiniteCompleteFrame.h \
+	InfiniteFrameAdapter.h \
 	InfiniteSessionClassification.cpp \
 	InfiniteSessionClassification.h \
 	Parser.cpp \
@@ -185,7 +186,7 @@ install-exec-local: *.h
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp2
 	mkdir $(DESTDIR)$(pkgincludedir)/fixt11
 	for header in *.h; do \
-		case $$header in Infinite*.h) ;; *) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; esac; \
+		case $$header in InfiniteFrameAdapter.h) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; Infinite*.h) ;; *) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; esac; \
 	done
 	cp fix40/*.h $(DESTDIR)$(pkgincludedir)/fix40
 	cp fix41/*.h $(DESTDIR)$(pkgincludedir)/fix41

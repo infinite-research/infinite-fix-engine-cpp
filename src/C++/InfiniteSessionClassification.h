@@ -34,6 +34,7 @@
 #include <vector>
 
 namespace FIX {
+class InfiniteFrameAdapterAccess;
 class InfiniteSessionClassificationTestAccess;
 class Session;
 
@@ -223,6 +224,7 @@ public:
   const std::array<std::uint8_t, 32> &value() const { return m_value; }
 
 private:
+  friend class InfiniteFrameAdapterAccess;
   friend class InfiniteSessionClassificationTestAccess;
   explicit InfiniteAtHeadBinding(std::array<std::uint8_t, 32> value)
       : m_value(std::move(value)) {}
@@ -238,6 +240,7 @@ public:
   InfiniteEffectAuthorization &operator=(InfiniteEffectAuthorization &&) = default;
 
 private:
+  friend class InfiniteFrameAdapterAccess;
   friend class Session;
   friend class InfiniteSessionClassificationTestAccess;
   InfiniteEffectAuthorization(
@@ -264,6 +267,7 @@ public:
   const Message &message() const { return m_message; }
 
 private:
+  friend class InfiniteFrameAdapterAccess;
   friend class Session;
   friend class InfiniteSessionClassificationTestAccess;
   InfiniteSessionClassification(

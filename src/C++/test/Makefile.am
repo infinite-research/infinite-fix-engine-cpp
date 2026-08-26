@@ -1,6 +1,6 @@
 noinst_PROGRAMS = ut
 
-EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake
+EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake $(abs_top_srcdir)/test/fixtures/infinite-frame-adapter-abi.v1.tsv
 
 ut_LDADD = ../libquickfix.la
 
@@ -23,6 +23,7 @@ ut_SOURCES = \
 	HttpMessageTestCase.cpp \
 	HttpParserTestCase.cpp \
 	InfiniteCompleteFrameTestCase.cpp \
+	InfiniteFrameAdapterTestCase.cpp \
 	InfiniteSessionClassificationTestCase.cpp \
 	MemoryStoreTestCase.cpp \
 	MessageSortersTestCase.cpp \
@@ -55,6 +56,7 @@ ut_SOURCES = \
 	
 AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	'-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"' \
+	'-DINFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/infinite-frame-adapter-abi.v1.tsv"' \
 	-I..
 
 check-local:

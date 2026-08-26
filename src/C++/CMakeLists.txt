@@ -55,6 +55,16 @@ set(quickfix_SOURCES
   Utility.cpp
 )
 
+include(CheckCSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${PROJECT_SOURCE_DIR}/src/C++)
+check_c_source_compiles(
+  "#include <InfiniteFrameAdapter.h>\nint main(void) { irfq_infinite_handle_v1 handle = {0, 0}; return (int)handle.object; }"
+  INFINITE_FRAME_ADAPTER_HEADER_IS_C_COMPATIBLE)
+unset(CMAKE_REQUIRED_INCLUDES)
+if(NOT INFINITE_FRAME_ADAPTER_HEADER_IS_C_COMPATIBLE)
+  message(FATAL_ERROR "InfiniteFrameAdapter.h must compile as C")
+endif()
+
 if (WIN32)
   list(APPEND quickfix_SOURCES SocketMonitor_WIN32.cpp)
 else()
@@ -119,3 +129,4 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
         PATTERN double-conversion EXCLUDE
         PATTERN "Infinite*.h" EXCLUDE
         PATTERN test EXCLUDE)
+install(FILES ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h DESTINATION include/quickfix)
