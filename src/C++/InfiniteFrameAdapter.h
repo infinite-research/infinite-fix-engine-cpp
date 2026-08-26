@@ -42,6 +42,7 @@ extern "C" {
 #define IRFQ_INFINITE_MAX_FRAME_BYTES_V1 UINT64_C(65536)
 #define IRFQ_INFINITE_MAX_BATCH_BYTES_V1 UINT64_C(15663104)
 #define IRFQ_INFINITE_MAX_FAILURE_BYTES_V1 UINT32_C(1024)
+#define IRFQ_INFINITE_DISPATCH_OUTPUT_CAPACITY_V1 UINT64_C(7680)
 
 typedef uint32_t irfq_infinite_status_v1;
 #define IRFQ_INFINITE_STATUS_OK_V1 UINT32_C(0)
@@ -222,8 +223,8 @@ typedef struct irfq_infinite_classification_callback_request_v1 {
   irfq_infinite_handle_v1 token;
   irfq_infinite_handle_v1 classification;
   uint64_t session_revision;
-  int64_t sender_sequence;
-  int64_t target_sequence;
+  uint64_t sender_sequence;
+  uint64_t target_sequence;
   irfq_infinite_action_v1 action;
   irfq_infinite_sequence_disposition_v1 sequence_disposition;
   uint32_t operation_count;
@@ -244,8 +245,8 @@ typedef struct irfq_infinite_classification_response_v1 {
   irfq_infinite_handle_v1 classification;
   irfq_infinite_handle_v1 authorization;
   uint64_t session_revision;
-  int64_t sender_sequence;
-  int64_t target_sequence;
+  uint64_t sender_sequence;
+  uint64_t target_sequence;
   irfq_infinite_action_v1 action;
   irfq_infinite_sequence_disposition_v1 sequence_disposition;
   irfq_infinite_status_v1 outcome;
@@ -306,7 +307,9 @@ struct irfq_infinite_callback_table_v1 {
  * The engine lifecycle is INITIALIZED -> CLOSING -> SHUTDOWN. A connection is
  * OPEN -> CLOSING -> CLOSED. Dispatch/classify/apply are serialized for one
  * connection; different connections may progress concurrently. Callbacks are
- * synchronous, may not re-enter the same handle, and may retain no pointer.
+ * synchronous, may not re-enter the same handle, and may retain no argument
+ * pointer. The callback table is copied at initialization; its caller-owned
+ * context must remain valid until quiescent engine shutdown.
  * Close and shutdown stop acquisition, fence and wake waiters, drain callbacks
  * and in-flight calls, invalidate the generation, then release storage. Close
  * is idempotent while its engine handle remains live.
@@ -316,7 +319,9 @@ struct irfq_infinite_callback_table_v1 {
  * the adapter zeros `written_length`, validates all remaining inputs and
  * capacity, stages the complete result, copies it once, and publishes length
  * last. Reserved input bytes must be zero. No borrowed pointer survives its
- * synchronous call.
+ * synchronous call. Dispatch output capacity is exactly bounded by
+ * `IRFQ_INFINITE_DISPATCH_OUTPUT_CAPACITY_V1`; callers must provide at least
+ * that capacity even when a particular call publishes fewer bytes.
  */
 irfq_infinite_status_v1 irfq_infinite_frame_adapter_query_v1(irfq_infinite_abi_info_v1 *info) IRFQ_INFINITE_NOEXCEPT;
 

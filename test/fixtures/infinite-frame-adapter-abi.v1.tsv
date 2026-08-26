@@ -5,7 +5,12 @@ contract	connection_lifecycle	OPEN>CLOSING>CLOSED
 contract	connection_lane	serialized_dispatch_classify_apply
 contract	cross_connection_progress	concurrent
 contract	callback_reentry	rejected_same_handle
-contract	callback_lifetime	synchronous_only
+contract	callback_argument_lifetime	synchronous_only
+contract	callback_table_lifetime	copied_context_valid_until_quiescent_shutdown
+contract	acquisition	open_only_increments_in_flight
+contract	close_shutdown	stop_acquisition>fence_wake>drain>invalidate>release
+contract	release	idempotent
+contract	output_publication	zero_written>validate>stage>copy>publish_written
 constant	abi_version	65536
 constant	required_capabilities	63
 constant	max_connections	64
@@ -13,6 +18,7 @@ constant	max_batch_frames	239
 constant	max_frame_bytes	65536
 constant	max_batch_bytes	15663104
 constant	max_failure_bytes	1024
+constant	dispatch_output_capacity	7680
 status	OK	0
 status	INVALID_ARGUMENT	1
 status	ABI_MISMATCH	2
@@ -199,7 +205,7 @@ offset	irfq_infinite_apply_request_v1.classification	8
 offset	irfq_infinite_apply_request_v1.authorization	24
 offset	irfq_infinite_apply_request_v1.reserved	40
 size	irfq_infinite_close_request_v1	32
-align	irfq_infinite_close_request_v1	8
+align	irfq_infinite_close_request_v1	4
 offset	irfq_infinite_close_request_v1.structure_size	0
 offset	irfq_infinite_close_request_v1.abi_version	4
 offset	irfq_infinite_close_request_v1.reason	8

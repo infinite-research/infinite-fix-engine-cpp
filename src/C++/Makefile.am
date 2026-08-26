@@ -13,6 +13,7 @@ libquickfix_la_SOURCES = \
 	SessionFactory.cpp \
 	InfiniteCompleteFrame.cpp \
 	InfiniteCompleteFrame.h \
+	InfiniteFrameAdapter.cpp \
 	InfiniteFrameAdapter.h \
 	InfiniteSessionClassification.cpp \
 	InfiniteSessionClassification.h \

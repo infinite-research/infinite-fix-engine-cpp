@@ -30,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <time.h>
 #include <vector>
 
 #include "catch_amalgamated.hpp"
@@ -473,6 +474,21 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
 
     CHECK(result.frames.empty());
     CHECK(result.terminalFault == InfiniteDispatchFault::InvalidObservation);
+  }
+
+  SECTION("the production observation path samples CLOCK_TAI at each extraction") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES * 2});
+    const auto message = makeMessageOfSize(128);
+    const auto result = dispatcher.process((message + message).data(), message.size() * 2);
+#ifdef CLOCK_TAI
+    REQUIRE(result.frames.size() == 2);
+    CHECK(result.frames[0].observedTaiNs > 0);
+    CHECK(result.frames[1].observedTaiNs >= result.frames[0].observedTaiNs);
+    CHECK_FALSE(result.terminalFault.has_value());
+#else
+    CHECK(result.frames.empty());
+    CHECK(result.terminalFault == InfiniteDispatchFault::InvalidObservation);
+#endif
   }
 
   SECTION("batch frame and byte limits reject the complete read") {

@@ -29,12 +29,27 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <time.h>
 #include <utility>
 
 namespace FIX {
 namespace {
 constexpr std::size_t MAX_FRAME_BYTES = 65'536;
 constexpr std::size_t CHECKSUM_FIELD_BYTES = 7;
+
+std::int64_t clockTaiNow() {
+#ifdef CLOCK_TAI
+  timespec value{};
+  if (clock_gettime(CLOCK_TAI, &value) != 0 || value.tv_sec <= 0 || value.tv_nsec < 0 || value.tv_nsec >= 1'000'000'000
+      || static_cast<std::uint64_t>(value.tv_sec)
+             > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / UINT64_C(1000000000)) {
+    throw std::runtime_error("CLOCK_TAI unavailable");
+  }
+  return static_cast<std::int64_t>(value.tv_sec) * INT64_C(1000000000) + value.tv_nsec;
+#else
+  throw std::runtime_error("CLOCK_TAI unavailable");
+#endif
+}
 } // namespace
 
 InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBatch limits)
@@ -216,5 +231,9 @@ InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(
     }
   }
   return result;
+}
+
+InfiniteDispatchResult InfiniteCompleteFrameDispatcher::process(const char *bytes, std::size_t length) {
+  return process(bytes, length, clockTaiNow);
 }
 } // namespace FIX
