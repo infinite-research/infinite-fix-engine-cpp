@@ -289,9 +289,7 @@ private:
 
 class BoundedMemoryStoreFactory : public MessageStoreFactory {
 public:
-  MessageStore *create(const UtcTimeStamp &now, const SessionID &) override {
-    return new BoundedMemoryStore(now);
-  }
+  MessageStore *create(const UtcTimeStamp &now, const SessionID &) override { return new BoundedMemoryStore(now); }
 
   void destroy(MessageStore *store) override { delete store; }
 };
@@ -1105,10 +1103,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     std::set<irfq_infinite_handle_v1, HandleLess> batchTokens;
     auto previousOrdinal = connection->lastRegisteredOrdinal;
     for (std::size_t index = 0; index < descriptors.size(); ++index) {
-      const auto invalidOrdinal
-          = index == 0 ? results[index].ordinal <= previousOrdinal
-                       : previousOrdinal == std::numeric_limits<std::uint64_t>::max()
-                             || results[index].ordinal != previousOrdinal + 1;
+      const auto invalidOrdinal = index == 0 ? results[index].ordinal <= previousOrdinal
+                                             : previousOrdinal == std::numeric_limits<std::uint64_t>::max()
+                                                   || results[index].ordinal != previousOrdinal + 1;
       if (invalidOrdinal || !validHandle(results[index].token)
           || results[index].observed_tai_ns != descriptors[index].observed_tai_ns
           || !batchTokens.insert(results[index].token).second

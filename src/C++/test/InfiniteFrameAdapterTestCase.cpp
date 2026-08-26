@@ -182,11 +182,7 @@ irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection) {
       {nullptr, 0},
       {}};
   auto nestedResponse = dispatchOutput();
-  return irfq_infinite_connection_dispatch_v1(
-      connection,
-      &nestedRequest,
-      nestedResponse.data(),
-      nestedResponse.size());
+  return irfq_infinite_connection_dispatch_v1(connection, &nestedRequest, nestedResponse.data(), nestedResponse.size());
 }
 
 irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection, const std::string &frame) {
@@ -196,11 +192,7 @@ irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection, const
       {reinterpret_cast<const std::uint8_t *>(frame.data()), frame.size()},
       {}};
   auto nestedResponse = dispatchOutput();
-  return irfq_infinite_connection_dispatch_v1(
-      connection,
-      &nestedRequest,
-      nestedResponse.data(),
-      nestedResponse.size());
+  return irfq_infinite_connection_dispatch_v1(connection, &nestedRequest, nestedResponse.data(), nestedResponse.size());
 }
 
 template <typename T> irfq_infinite_status_v1 publishFixed(void *outputBuffer, std::uint64_t capacity, T response) {
@@ -425,10 +417,7 @@ struct BootstrapResult {
   irfq_infinite_bootstrap_response_v1 response;
 };
 
-BootstrapResult bootstrapConnection(
-    irfq_infinite_handle_v1 engine,
-    const std::string &sender,
-    std::uint64_t nonce) {
+BootstrapResult bootstrapConnection(irfq_infinite_handle_v1 engine, const std::string &sender, std::uint64_t nonce) {
   const auto logon
       = finishFix("35=A\00134=1\00149=" + sender + "\00156=VENUE\00152=20260826-08:08:08.000\00198=0\001108=30\001");
   const irfq_infinite_bootstrap_request_v1 request{
@@ -443,11 +432,7 @@ BootstrapResult bootstrapConnection(
 }
 
 void closeConnection(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
-  const irfq_infinite_close_request_v1 request{
-      sizeof(request),
-      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
-      reason,
-      {}};
+  const irfq_infinite_close_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, reason, {}};
   auto response = output<irfq_infinite_operation_response_v1>();
   irfq_infinite_connection_close_v1(connection, &request, &response, sizeof(response));
 }
@@ -474,8 +459,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "close_shutdown") == "stop_acquisition>fence_wake>drain>invalidate>release");
   CHECK(fixture.text("contract", "release_quiescence") == "release_complete_before_shutdown");
   CHECK(fixture.text("contract", "release") == "idempotent");
-  CHECK(
-      fixture.text("contract", "registration_ordinals") == "first_increasing_then_checked_successors");
+  CHECK(fixture.text("contract", "registration_ordinals") == "first_increasing_then_checked_successors");
   CHECK(fixture.text("contract", "bootstrap_capacity") == "installed_plus_pending_le_64");
   CHECK(fixture.text("contract", "callback_reserved") == "zero_required");
   CHECK(fixture.text("contract", "session_store_bound") == "fence_before_exceeding");
@@ -1352,8 +1336,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-reserved]")
     const auto initialized = initializeEngine(context);
     const auto bootstrapped = bootstrapConnection(initialized.engine, "RESERVEDCALLBACK", 5100);
     REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
-    const auto heartbeat
-        = finishFix("35=0\00134=2\00149=RESERVEDCALLBACK\00156=VENUE\00152=20260826-08:08:09.000\001");
+    const auto heartbeat = finishFix("35=0\00134=2\00149=RESERVEDCALLBACK\00156=VENUE\00152=20260826-08:08:09.000\001");
     const irfq_infinite_dispatch_request_v1 dispatch{
         sizeof(dispatch),
         IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
@@ -1361,15 +1344,11 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-reserved]")
         {}};
     auto bytes = dispatchOutput();
     REQUIRE(
-        irfq_infinite_connection_dispatch_v1(
-            bootstrapped.response.connection,
-            &dispatch,
-            bytes.data(),
-            bytes.size())
+        irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
         == IRFQ_INFINITE_STATUS_OK_V1);
     const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
-    const auto *registration = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(
-        bytes.data() + sizeof(*response));
+    const auto *registration
+        = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
     const irfq_infinite_head_request_v1 head{
         sizeof(head),
         IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
@@ -1377,11 +1356,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-reserved]")
         {}};
     context.waitReservedNonzero = corruptWait;
     auto waited = output<irfq_infinite_operation_response_v1>();
-    const auto waitStatus = irfq_infinite_connection_wait_head_v1(
-        bootstrapped.response.connection,
-        &head,
-        &waited,
-        sizeof(waited));
+    const auto waitStatus
+        = irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited));
     if (corruptWait) {
       CHECK(waitStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
     } else {
@@ -1389,11 +1365,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-reserved]")
       context.authorizeReservedNonzero = corruptAuthorize;
       auto classified = output<irfq_infinite_classification_response_v1>();
       CHECK(
-          irfq_infinite_connection_classify_v1(
-              bootstrapped.response.connection,
-              &head,
-              &classified,
-              sizeof(classified))
+          irfq_infinite_connection_classify_v1(bootstrapped.response.connection, &head, &classified, sizeof(classified))
           == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
     }
     CHECK(context.fenceCount == 1);
@@ -1422,11 +1394,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ordinal-gap]") {
       {}};
   auto bytes = dispatchOutput();
   CHECK(
-      irfq_infinite_connection_dispatch_v1(
-          bootstrapped.response.connection,
-          &dispatch,
-          bytes.data(),
-          bytes.size())
+      irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
       == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   CHECK(context.fenceCount == 1);
   closeConnection(bootstrapped.response.connection);
@@ -1452,15 +1420,11 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry-fence]") {
         {}};
     auto bytes = dispatchOutput();
     REQUIRE(
-        irfq_infinite_connection_dispatch_v1(
-            bootstrapped.response.connection,
-            &dispatch,
-            bytes.data(),
-            bytes.size())
+        irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
         == IRFQ_INFINITE_STATUS_OK_V1);
     const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
-    const auto *registration = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(
-        bytes.data() + sizeof(*response));
+    const auto *registration
+        = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
     const irfq_infinite_head_request_v1 head{
         sizeof(head),
         IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
@@ -1474,11 +1438,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry-fence]") {
       fenceWake.store(true, std::memory_order_release);
     });
     auto waited = output<irfq_infinite_operation_response_v1>();
-    const auto waitStatus = irfq_infinite_connection_wait_head_v1(
-        bootstrapped.response.connection,
-        &head,
-        &waited,
-        sizeof(waited));
+    const auto waitStatus
+        = irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited));
     if (duringWait) {
       CHECK(waitStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
       CHECK(context.waitReentryStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
@@ -1487,11 +1448,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry-fence]") {
       context.reenterAuthorize = true;
       auto classified = output<irfq_infinite_classification_response_v1>();
       CHECK(
-          irfq_infinite_connection_classify_v1(
-              bootstrapped.response.connection,
-              &head,
-              &classified,
-              sizeof(classified))
+          irfq_infinite_connection_classify_v1(bootstrapped.response.connection, &head, &classified, sizeof(classified))
           == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
       CHECK(context.authorizeReentryStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
     }
@@ -1518,10 +1475,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ancestry-cycle]") {
   REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
   context.firstAdapterConnection = first.response.connection;
   context.secondAdapterConnection = second.response.connection;
-  context.firstNestedFrame
-      = finishFix("35=0\00134=2\00149=CYCLEA\00156=VENUE\00152=20260826-08:08:09.000\001");
-  context.secondNestedFrame
-      = finishFix("35=0\00134=2\00149=CYCLEB\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.firstNestedFrame = finishFix("35=0\00134=2\00149=CYCLEA\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.secondNestedFrame = finishFix("35=0\00134=2\00149=CYCLEB\00156=VENUE\00152=20260826-08:08:09.000\001");
   context.ancestryCycle = true;
   const irfq_infinite_dispatch_request_v1 dispatch{
       sizeof(dispatch),
@@ -1530,11 +1485,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ancestry-cycle]") {
       {}};
   auto bytes = dispatchOutput();
   CHECK(
-      irfq_infinite_connection_dispatch_v1(
-          first.response.connection,
-          &dispatch,
-          bytes.data(),
-          bytes.size())
+      irfq_infinite_connection_dispatch_v1(first.response.connection, &dispatch, bytes.data(), bytes.size())
       == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.secondNestedStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.firstNestedStatus == IRFQ_INFINITE_STATUS_OK_V1);
@@ -1556,10 +1507,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-contention]
   REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
   context.firstAdapterConnection = first.response.connection;
   context.secondAdapterConnection = second.response.connection;
-  context.firstNestedFrame
-      = finishFix("35=0\00134=2\00149=CONTENDERA\00156=VENUE\00152=20260826-08:08:09.000\001");
-  context.secondNestedFrame
-      = finishFix("35=0\00134=2\00149=CONTENDERB\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.firstNestedFrame = finishFix("35=0\00134=2\00149=CONTENDERA\00156=VENUE\00152=20260826-08:08:09.000\001");
+  context.secondNestedFrame = finishFix("35=0\00134=2\00149=CONTENDERB\00156=VENUE\00152=20260826-08:08:09.000\001");
   context.concurrentCrossCalls = true;
   std::array<irfq_infinite_status_v1, 2> statuses{};
   const auto run = [&](std::size_t index, irfq_infinite_handle_v1 connection, const std::string &frame) {
@@ -1569,20 +1518,15 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-contention]
         {reinterpret_cast<const std::uint8_t *>(frame.data()), frame.size()},
         {}};
     auto bytes = dispatchOutput();
-    statuses[index]
-        = irfq_infinite_connection_dispatch_v1(connection, &dispatch, bytes.data(), bytes.size());
+    statuses[index] = irfq_infinite_connection_dispatch_v1(connection, &dispatch, bytes.data(), bytes.size());
   };
   std::thread firstDispatch(run, 0, first.response.connection, std::cref(context.firstNestedFrame));
   std::thread secondDispatch(run, 1, second.response.connection, std::cref(context.secondNestedFrame));
   firstDispatch.join();
   secondDispatch.join();
-  CHECK(
-      (statuses[0] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
-  CHECK(
-      (statuses[1] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
-  CHECK(
-      (statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
-       || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK((statuses[0] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK((statuses[1] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
+  CHECK((statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
   CHECK(context.firstNestedStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.secondNestedStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.fenceCount == 2);
@@ -1610,28 +1554,22 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-bound]") {
         {reinterpret_cast<const std::uint8_t *>(message.data()), message.size()},
         {}};
     auto bytes = dispatchOutput();
-    const auto dispatchStatus = irfq_infinite_connection_dispatch_v1(
-        bootstrapped.response.connection,
-        &dispatch,
-        bytes.data(),
-        bytes.size());
+    const auto dispatchStatus
+        = irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size());
     if (dispatchStatus != IRFQ_INFINITE_STATUS_OK_V1) {
       return dispatchStatus;
     }
     const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
-    const auto *registration = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(
-        bytes.data() + sizeof(*response));
+    const auto *registration
+        = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
     const irfq_infinite_head_request_v1 head{
         sizeof(head),
         IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
         registration->token,
         {}};
     auto waited = output<irfq_infinite_operation_response_v1>();
-    const auto waitStatus = irfq_infinite_connection_wait_head_v1(
-        bootstrapped.response.connection,
-        &head,
-        &waited,
-        sizeof(waited));
+    const auto waitStatus
+        = irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited));
     if (waitStatus != IRFQ_INFINITE_STATUS_AT_HEAD_V1) {
       return waitStatus;
     }
@@ -1651,11 +1589,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-bound]") {
         classified.authorization,
         {}};
     auto applied = output<irfq_infinite_operation_response_v1>();
-    return irfq_infinite_connection_apply_v1(
-        bootstrapped.response.connection,
-        &apply,
-        &applied,
-        sizeof(applied));
+    return irfq_infinite_connection_apply_v1(bootstrapped.response.connection, &apply, &applied, sizeof(applied));
   };
 
   for (std::uint64_t sequence = 2; sequence <= 256; ++sequence) {
