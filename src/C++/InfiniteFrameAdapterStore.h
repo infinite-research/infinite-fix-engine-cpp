@@ -31,6 +31,7 @@
 
 namespace FIX {
 namespace infinite_frame_adapter_detail {
+namespace {
 class BoundedMemoryStore : public MessageStore {
 public:
   explicit BoundedMemoryStore(const UtcTimeStamp &now)
@@ -84,5 +85,6 @@ public:
 
   void destroy(MessageStore *store) override { delete store; }
 };
+} // namespace
 } // namespace infinite_frame_adapter_detail
 } // namespace FIX
