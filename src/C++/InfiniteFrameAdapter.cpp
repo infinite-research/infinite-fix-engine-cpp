@@ -207,26 +207,30 @@ bool validCallbackResponse(
 struct Engine;
 struct Connection;
 
-thread_local const Engine *activeCallbackEngine = nullptr;
-thread_local const Connection *activeCallbackConnection = nullptr;
+using ActiveCallback = std::pair<const Engine *, const Connection *>;
+thread_local std::vector<ActiveCallback> activeCallbacks;
+
+bool activeCallbackContains(const Engine *engine) {
+  return std::any_of(activeCallbacks.begin(), activeCallbacks.end(), [engine](const ActiveCallback &callback) {
+    return callback.first == engine;
+  });
+}
+
+bool activeCallbackContains(const Connection *connection) {
+  return std::any_of(activeCallbacks.begin(), activeCallbacks.end(), [connection](const ActiveCallback &callback) {
+    return callback.second == connection;
+  });
+}
+
+bool insideCallback() { return !activeCallbacks.empty(); }
 
 class CallbackScope {
 public:
-  CallbackScope(const Engine *engine, const Connection *connection)
-      : m_previousEngine(activeCallbackEngine),
-        m_previousConnection(activeCallbackConnection) {
-    activeCallbackEngine = engine;
-    activeCallbackConnection = connection;
+  CallbackScope(const Engine *engine, const Connection *connection) {
+    activeCallbacks.emplace_back(engine, connection);
   }
 
-  ~CallbackScope() {
-    activeCallbackEngine = m_previousEngine;
-    activeCallbackConnection = m_previousConnection;
-  }
-
-private:
-  const Engine *m_previousEngine;
-  const Connection *m_previousConnection;
+  ~CallbackScope() { activeCallbacks.pop_back(); }
 };
 
 struct AdapterResponder : Responder {
@@ -234,6 +238,62 @@ struct AdapterResponder : Responder {
   void disconnect() override { disconnected = true; }
 
   bool disconnected{false};
+};
+
+class BoundedMemoryStore : public MessageStore {
+public:
+  explicit BoundedMemoryStore(const UtcTimeStamp &now)
+      : m_store(now) {}
+
+  bool set(SEQNUM sequence, const std::string &message) EXCEPT(IOException) override {
+    const auto found = m_messageSizes.find(sequence);
+    const auto previousSize = found == m_messageSizes.end() ? std::size_t{0} : found->second;
+    const auto retainedBytes = m_storedBytes - previousSize;
+    if ((found == m_messageSizes.end() && m_messageSizes.size() >= INFINITE_MAX_PLANNED_MESSAGES)
+        || message.size() > INFINITE_MAX_PLANNED_BYTES - retainedBytes) {
+      throw IOException("Infinite adapter message store bound exceeded");
+    }
+    if (!m_store.set(sequence, message)) {
+      return false;
+    }
+    m_messageSizes[sequence] = message.size();
+    m_storedBytes = retainedBytes + message.size();
+    return true;
+  }
+
+  void get(SEQNUM begin, SEQNUM end, std::vector<std::string> &messages) const EXCEPT(IOException) override {
+    m_store.get(begin, end, messages);
+  }
+
+  SEQNUM getNextSenderMsgSeqNum() const EXCEPT(IOException) override { return m_store.getNextSenderMsgSeqNum(); }
+  SEQNUM getNextTargetMsgSeqNum() const EXCEPT(IOException) override { return m_store.getNextTargetMsgSeqNum(); }
+  void setNextSenderMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_store.setNextSenderMsgSeqNum(value); }
+  void setNextTargetMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_store.setNextTargetMsgSeqNum(value); }
+  void incrNextSenderMsgSeqNum() EXCEPT(IOException) override { m_store.incrNextSenderMsgSeqNum(); }
+  void incrNextTargetMsgSeqNum() EXCEPT(IOException) override { m_store.incrNextTargetMsgSeqNum(); }
+  UtcTimeStamp getCreationTime() const EXCEPT(IOException) override { return m_store.getCreationTime(); }
+
+  void reset(const UtcTimeStamp &now) EXCEPT(IOException) override {
+    m_store.reset(now);
+    m_messageSizes.clear();
+    m_storedBytes = 0;
+  }
+
+  void refresh() EXCEPT(IOException) override { m_store.refresh(); }
+
+private:
+  MemoryStore m_store;
+  std::map<SEQNUM, std::size_t> m_messageSizes;
+  std::size_t m_storedBytes{0};
+};
+
+class BoundedMemoryStoreFactory : public MessageStoreFactory {
+public:
+  MessageStore *create(const UtcTimeStamp &now, const SessionID &) override {
+    return new BoundedMemoryStore(now);
+  }
+
+  void destroy(MessageStore *store) override { delete store; }
 };
 
 struct Candidate {
@@ -258,6 +318,7 @@ struct Engine : std::enable_shared_from_this<Engine> {
   std::condition_variable condition;
   irfq_infinite_engine_lifecycle_v1 state{IRFQ_INFINITE_ENGINE_INITIALIZED_V1};
   std::size_t inFlight{0};
+  std::size_t pendingBootstraps{0};
   irfq_infinite_handle_v1 handle{};
   irfq_infinite_callback_table_v1 callbacks{};
   std::map<std::uint64_t, std::shared_ptr<Connection>> connections;
@@ -305,10 +366,11 @@ struct Connection : std::enable_shared_from_this<Connection> {
   irfq_infinite_connection_lifecycle_v1 state{IRFQ_INFINITE_CONNECTION_OPEN_V1};
   std::size_t inFlight{0};
   std::atomic<bool> faulted{false};
+  std::atomic<bool> fenceNotified{false};
   std::mutex lane;
   InfiniteCompleteFrameDispatcher dispatcher;
   NullApplication application;
-  MemoryStoreFactory storeFactory;
+  BoundedMemoryStoreFactory storeFactory;
   AdapterResponder responder;
   DataDictionaryProvider dictionaries;
   TimeRange sessionTime;
@@ -384,6 +446,46 @@ private:
   bool m_acquired{false};
 };
 
+class BootstrapReservation {
+public:
+  explicit BootstrapReservation(std::shared_ptr<Engine> engine)
+      : m_engine(std::move(engine)) {
+    std::lock_guard<std::mutex> lock(m_engine->mutex);
+    if (m_engine->state == IRFQ_INFINITE_ENGINE_INITIALIZED_V1
+        && m_engine->connections.size() + m_engine->pendingBootstraps < IRFQ_INFINITE_MAX_CONNECTIONS_V1) {
+      ++m_engine->pendingBootstraps;
+      m_reserved = true;
+    }
+  }
+
+  ~BootstrapReservation() { release(); }
+  BootstrapReservation(const BootstrapReservation &) = delete;
+  BootstrapReservation &operator=(const BootstrapReservation &) = delete;
+
+  bool reserved() const { return m_reserved; }
+
+  void completeWhileLocked() {
+    --m_engine->pendingBootstraps;
+    m_reserved = false;
+  }
+
+private:
+  void release() {
+    if (!m_reserved) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(m_engine->mutex);
+      --m_engine->pendingBootstraps;
+      m_reserved = false;
+    }
+    m_engine->condition.notify_all();
+  }
+
+  std::shared_ptr<Engine> m_engine;
+  bool m_reserved{false};
+};
+
 class ConnectionCall {
 public:
   explicit ConnectionCall(std::shared_ptr<Connection> connection)
@@ -392,20 +494,36 @@ public:
     if (!m_connection || !m_engine.acquired()) {
       return;
     }
-    if (activeCallbackConnection == m_connection.get()) {
+    if (activeCallbackContains(m_connection.get())) {
       m_connection->faulted.store(true, std::memory_order_release);
       return;
     }
-    std::lock_guard<std::mutex> lock(m_connection->lifecycleMutex);
-    if (m_connection->state == IRFQ_INFINITE_CONNECTION_OPEN_V1) {
+    {
+      std::lock_guard<std::mutex> lock(m_connection->lifecycleMutex);
+      if (m_connection->state != IRFQ_INFINITE_CONNECTION_OPEN_V1) {
+        return;
+      }
       ++m_connection->inFlight;
-      m_acquired = true;
+      m_counted = true;
     }
+    if (insideCallback()) {
+      m_lane = std::unique_lock<std::mutex>(m_connection->lane, std::try_to_lock);
+      if (!m_lane.owns_lock()) {
+        m_connection->faulted.store(true, std::memory_order_release);
+        return;
+      }
+    } else {
+      m_lane = std::unique_lock<std::mutex>(m_connection->lane);
+    }
+    m_acquired = true;
   }
 
   ~ConnectionCall() {
-    if (!m_acquired) {
+    if (!m_counted) {
       return;
+    }
+    if (m_lane.owns_lock()) {
+      m_lane.unlock();
     }
     {
       std::lock_guard<std::mutex> lock(m_connection->lifecycleMutex);
@@ -421,6 +539,8 @@ public:
 private:
   std::shared_ptr<Connection> m_connection;
   EngineCall m_engine;
+  std::unique_lock<std::mutex> m_lane;
+  bool m_counted{false};
   bool m_acquired{false};
 };
 
@@ -462,9 +582,23 @@ void fenceConnection(
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason) noexcept {
   connection->faulted.store(true, std::memory_order_release);
+  if (connection->fenceNotified.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
   try {
     invokeConnectionCallback(engine, connection, engine->callbacks.fence, reason);
   } catch (...) {}
+}
+
+bool fenceIfFaulted(
+    const std::shared_ptr<Engine> &engine,
+    const std::shared_ptr<Connection> &connection,
+    std::uint32_t reason = 0) noexcept {
+  if (!connection->faulted.load(std::memory_order_acquire)) {
+    return false;
+  }
+  fenceConnection(engine, connection, reason);
+  return true;
 }
 
 void releaseConnection(
@@ -520,14 +654,14 @@ void closeConnection(
     connection->session.reset();
   }
   {
-    std::lock_guard<std::mutex> lock(engine->mutex);
-    engine->connections.erase(connection->handle.object);
-  }
-  {
     std::lock_guard<std::mutex> lock(registryMutex);
     connections.erase(connection->handle.object);
   }
   releaseConnection(engine, connection, reason);
+  {
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    engine->connections.erase(connection->handle.object);
+  }
   {
     std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
     connection->state = IRFQ_INFINITE_CONNECTION_CLOSED_V1;
@@ -646,7 +780,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
           outputCapacity,
           operationResponse(IRFQ_INFINITE_STATUS_SHUTDOWN_V1, IRFQ_INFINITE_ENGINE_SHUTDOWN_V1));
     }
-    if (activeCallbackEngine == engine.get()) {
+    if (activeCallbackContains(engine.get())) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     std::vector<std::shared_ptr<Connection>> snapshot;
@@ -698,7 +832,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
   }
   try {
     auto engine = findEngine(engineHandle);
-    if (engine && activeCallbackEngine == engine.get()) {
+    if (engine && activeCallbackContains(engine.get())) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     EngineCall call(engine);
@@ -713,15 +847,6 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
           output,
           outputCapacity,
           bootstrapResponse(IRFQ_INFINITE_STATUS_NOT_READY_V1, IRFQ_INFINITE_BOOTSTRAP_REJECTED_V1));
-    }
-    {
-      std::lock_guard<std::mutex> lock(engine->mutex);
-      if (engine->connections.size() >= IRFQ_INFINITE_MAX_CONNECTIONS_V1) {
-        return publishFixed(
-            output,
-            outputCapacity,
-            bootstrapResponse(IRFQ_INFINITE_STATUS_NOT_READY_V1, IRFQ_INFINITE_BOOTSTRAP_REJECTED_V1));
-      }
     }
     if (!validHandle(request->transport_nonce) || request->observed_tai_ns <= 0 || request->frame.length == 0
         || request->frame.length > IRFQ_INFINITE_MAX_FRAME_BYTES_V1 || request->frame.data == nullptr) {
@@ -748,6 +873,14 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
 
+    BootstrapReservation reservation(engine);
+    if (!reservation.reserved()) {
+      return publishFixed(
+          output,
+          outputCapacity,
+          bootstrapResponse(IRFQ_INFINITE_STATUS_NOT_READY_V1, IRFQ_INFINITE_BOOTSTRAP_REJECTED_V1));
+    }
+
     AlignedBytes callbackBytes(sizeof(irfq_infinite_bootstrap_response_v1));
     auto &callbackResponse = initializeCallbackOutput<irfq_infinite_bootstrap_response_v1>(callbackBytes);
     irfq_infinite_status_v1 returned;
@@ -766,7 +899,8 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
           : callbackResponse.outcome == IRFQ_INFINITE_BOOTSTRAP_REJECTED_V1 ? IRFQ_INFINITE_STATUS_NOT_READY_V1
           : callbackResponse.outcome == IRFQ_INFINITE_BOOTSTRAP_FENCED_V1   ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
                                                                             : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
-    if (!validCallbackResponse(callbackResponse, returned) || returned != expectedCallbackStatus
+    if (!validCallbackResponse(callbackResponse, returned) || !allZero(callbackResponse.reserved)
+        || returned != expectedCallbackStatus
         || (callbackResponse.outcome != IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1
             && callbackResponse.outcome != IRFQ_INFINITE_BOOTSTRAP_REJECTED_V1
             && callbackResponse.outcome != IRFQ_INFINITE_BOOTSTRAP_FENCED_V1)) {
@@ -799,8 +933,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
       irfq_infinite_status_v1 registrationStatus = IRFQ_INFINITE_STATUS_OK_V1;
       {
         std::lock_guard<std::mutex> lock(engine->mutex);
-        if (engine->state != IRFQ_INFINITE_ENGINE_INITIALIZED_V1
-            || engine->connections.size() >= IRFQ_INFINITE_MAX_CONNECTIONS_V1) {
+        if (engine->state != IRFQ_INFINITE_ENGINE_INITIALIZED_V1) {
           registrationStatus = IRFQ_INFINITE_STATUS_NOT_READY_V1;
         } else {
           for (const auto &entry : engine->connections) {
@@ -813,6 +946,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
             engine->connections.emplace(connection->handle.object, connection);
             std::lock_guard<std::mutex> registryLock(registryMutex);
             connections.emplace(connection->handle.object, connection);
+            reservation.completeWhileLocked();
           }
         }
       }
@@ -872,8 +1006,11 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
     auto engine = connection->engine.lock();
-    std::lock_guard<std::mutex> lane(connection->lane);
-    if (!engine || connection->faulted.load(std::memory_order_acquire) || !connection->session) {
+    if (!engine) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    }
+    if (fenceIfFaulted(engine, connection) || !connection->session) {
+      fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     if (!connection->candidates.empty() || !connection->classifications.empty()) {
@@ -894,6 +1031,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     response.fault = dispatchFault(dispatched.terminalFault);
 
     if (dispatched.frames.empty()) {
+      if (fenceIfFaulted(engine, connection)) {
+        return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      }
       response.header.status
           = dispatched.terminalFault ? IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1 : IRFQ_INFINITE_STATUS_OK_V1;
       if (dispatched.terminalFault) {
@@ -907,6 +1047,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     for (const auto &frame : dispatched.frames) {
       descriptors.push_back(
           {reinterpret_cast<const std::uint8_t *>(frame.bytes.data()), frame.bytes.size(), frame.observedTaiNs});
+    }
+    if (fenceIfFaulted(engine, connection)) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     const auto callbackLength = sizeof(irfq_infinite_dispatch_response_v1)
                                 + descriptors.size() * sizeof(irfq_infinite_registration_result_v1);
@@ -930,6 +1073,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     } catch (...) {
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    }
+    if (fenceIfFaulted(engine, connection)) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     if (!validCallbackResponse(callbackResponse, returned, callbackLength)
         || !validCallbackHeader(callbackResponse.header)
@@ -959,7 +1105,11 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     std::set<irfq_infinite_handle_v1, HandleLess> batchTokens;
     auto previousOrdinal = connection->lastRegisteredOrdinal;
     for (std::size_t index = 0; index < descriptors.size(); ++index) {
-      if (results[index].ordinal <= previousOrdinal || !validHandle(results[index].token)
+      const auto invalidOrdinal
+          = index == 0 ? results[index].ordinal <= previousOrdinal
+                       : previousOrdinal == std::numeric_limits<std::uint64_t>::max()
+                             || results[index].ordinal != previousOrdinal + 1;
+      if (invalidOrdinal || !validHandle(results[index].token)
           || results[index].observed_tai_ns != descriptors[index].observed_tai_ns
           || !batchTokens.insert(results[index].token).second
           || connection->candidates.count(results[index].token) != 0) {
@@ -967,6 +1117,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
         return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
       previousOrdinal = results[index].ordinal;
+    }
+    if (fenceIfFaulted(engine, connection)) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     auto *publishedResults = reinterpret_cast<irfq_infinite_registration_result_v1 *>(
         static_cast<std::uint8_t *>(responseBytes.data()) + sizeof(response));
@@ -977,12 +1130,13 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
           Candidate{results[index], dispatched.frames[index].bytes, false});
     }
     connection->lastRegisteredOrdinal = previousOrdinal;
-    response.header.status = dispatched.terminalFault || connection->faulted.load(std::memory_order_acquire)
-                                 ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
-                                 : IRFQ_INFINITE_STATUS_OK_V1;
+    response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
     response.result_count = static_cast<std::uint32_t>(descriptors.size());
     if (dispatched.terminalFault) {
+      response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       fenceConnection(engine, connection, response.fault);
+    } else if (fenceIfFaulted(engine, connection)) {
+      response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     return publishBytes(output, outputCapacity, responseBytes.data(), responseLength);
   } catch (...) {
@@ -1018,12 +1172,17 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
     auto engine = connection->engine.lock();
-    std::lock_guard<std::mutex> lane(connection->lane);
     const auto candidate = connection->candidates.find(request->token);
-    if (!engine || connection->faulted.load(std::memory_order_acquire) || candidate == connection->candidates.end()) {
+    if (!engine || candidate == connection->candidates.end()) {
       if (engine && candidate == connection->candidates.end()) {
         fenceConnection(engine, connection, 0);
       }
+      return publishFixed(
+          output,
+          outputCapacity,
+          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
+    if (fenceIfFaulted(engine, connection)) {
       return publishFixed(
           output,
           outputCapacity,
@@ -1043,6 +1202,12 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
         connection->externalHandle,
         request->token,
         {}};
+    if (fenceIfFaulted(engine, connection)) {
+      return publishFixed(
+          output,
+          outputCapacity,
+          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
     irfq_infinite_status_v1 returned = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     try {
       CallbackScope scope(engine.get(), connection.get());
@@ -1055,16 +1220,16 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
-    if (!validCallbackResponse(callbackResponse, returned)
-        || (returned != IRFQ_INFINITE_STATUS_AT_HEAD_V1 && returned != IRFQ_INFINITE_STATUS_STREAM_FENCED_V1)) {
-      fenceConnection(engine, connection, 0);
-      return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
-    }
-    if (connection->faulted.load(std::memory_order_acquire) && returned == IRFQ_INFINITE_STATUS_AT_HEAD_V1) {
+    if (fenceIfFaulted(engine, connection)) {
       return publishFixed(
           output,
           outputCapacity,
           operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
+    if (!validCallbackResponse(callbackResponse, returned) || callbackResponse.reserved != 0
+        || (returned != IRFQ_INFINITE_STATUS_AT_HEAD_V1 && returned != IRFQ_INFINITE_STATUS_STREAM_FENCED_V1)) {
+      fenceConnection(engine, connection, 0);
+      return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
     if (returned == IRFQ_INFINITE_STATUS_AT_HEAD_V1) {
       candidate->second.atHead = true;
@@ -1105,14 +1270,15 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
     auto engine = connection->engine.lock();
-    std::lock_guard<std::mutex> lane(connection->lane);
     const auto candidate = connection->candidates.find(request->token);
-    if (!engine || connection->faulted.load(std::memory_order_acquire) || !connection->session
-        || candidate == connection->candidates.end() || !candidate->second.atHead
+    if (!engine || !connection->session || candidate == connection->candidates.end() || !candidate->second.atHead
         || connection->classifications.count(request->token) != 0) {
       if (engine) {
         fenceConnection(engine, connection, 0);
       }
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    }
+    if (fenceIfFaulted(engine, connection)) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     const auto binding = InfiniteFrameAdapterAccess::atHead(request->token);
@@ -1144,6 +1310,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
         static_cast<std::uint32_t>(plan.failure.size()),
         reinterpret_cast<const std::uint8_t *>(plan.failure.data()),
         candidate->second.registration.observed_tai_ns};
+    if (fenceIfFaulted(engine, connection)) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    }
     AlignedBytes callbackBytes(sizeof(irfq_infinite_classification_callback_response_v1));
     auto &callbackResponse = initializeCallbackOutput<irfq_infinite_classification_callback_response_v1>(callbackBytes);
     irfq_infinite_status_v1 returned = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
@@ -1158,15 +1327,16 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
-    if (!validCallbackResponse(callbackResponse, returned) || callbackResponse.outcome != returned
+    if (fenceIfFaulted(engine, connection)) {
+      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    }
+    if (!validCallbackResponse(callbackResponse, returned) || callbackResponse.reserved != 0
+        || callbackResponse.outcome != returned
         || (returned != IRFQ_INFINITE_STATUS_AUTHORIZED_CONSUME_V1
             && returned != IRFQ_INFINITE_STATUS_AUTHORIZED_NO_CONSUME_V1
             && returned != IRFQ_INFINITE_STATUS_STREAM_FENCED_V1)) {
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
-    }
-    if (connection->faulted.load(std::memory_order_acquire) && returned != IRFQ_INFINITE_STATUS_STREAM_FENCED_V1) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     if (returned == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
         || classification->kind() == InfiniteSessionActionKind::Failure) {
@@ -1260,7 +1430,6 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
     auto engine = connection->engine.lock();
-    std::lock_guard<std::mutex> lane(connection->lane);
     auto selected = connection->classifications.end();
     for (auto entry = connection->classifications.begin(); entry != connection->classifications.end(); ++entry) {
       if (sameHandle(entry->second.handle, request->classification)) {
@@ -1268,12 +1437,17 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
         break;
       }
     }
-    if (!engine || connection->faulted.load(std::memory_order_acquire) || !connection->session
-        || selected == connection->classifications.end()
+    if (!engine || !connection->session || selected == connection->classifications.end()
         || !sameHandle(selected->second.authorizationHandle, request->authorization)) {
       if (engine) {
         fenceConnection(engine, connection, 0);
       }
+      return publishFixed(
+          output,
+          outputCapacity,
+          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
+    if (fenceIfFaulted(engine, connection)) {
       return publishFixed(
           output,
           outputCapacity,
@@ -1295,6 +1469,12 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
       }
     } catch (...) {
       fenceConnection(engine, connection, 0);
+      return publishFixed(
+          output,
+          outputCapacity,
+          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
+    if (fenceIfFaulted(engine, connection)) {
       return publishFixed(
           output,
           outputCapacity,
@@ -1337,7 +1517,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_close_v1(
     if (!allZero(request->reserved)) {
       return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
     }
-    if (activeCallbackConnection == connection.get()) {
+    if (activeCallbackContains(connection.get())) {
       connection->faulted.store(true, std::memory_order_release);
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }

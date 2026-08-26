@@ -42,9 +42,6 @@
 
 namespace FIX {
 namespace {
-constexpr std::size_t MAX_INFINITE_PLANNED_MESSAGES = 256;
-constexpr std::size_t MAX_INFINITE_PLANNED_BYTES = 16 * 1024 * 1024;
-
 void cleanse(std::string &bytes) noexcept {
 #ifdef HAVE_SSL
   OPENSSL_cleanse(bytes.data(), bytes.size());
@@ -151,7 +148,7 @@ public:
       messages.clear();
       return;
     }
-    if (static_cast<std::uint64_t>(end) - static_cast<std::uint64_t>(begin) >= MAX_INFINITE_PLANNED_MESSAGES) {
+    if (static_cast<std::uint64_t>(end) - static_cast<std::uint64_t>(begin) >= INFINITE_MAX_PLANNED_MESSAGES) {
       throw IOException("Infinite effect plan message range exceeds bound");
     }
 
@@ -173,13 +170,13 @@ public:
       if (cleanseCredentialMessages(loaded)) {
         throw IOException("Infinite effect plan store contains credential-bearing Logon");
       }
-      if (loaded.size() > MAX_INFINITE_PLANNED_MESSAGES) {
+      if (loaded.size() > INFINITE_MAX_PLANNED_MESSAGES) {
         throw IOException("Infinite effect plan store returned too many messages");
       }
       std::size_t loadedBytes = 0;
       for (std::size_t index = 0; index < loaded.size(); ++index) {
         const auto &bytes = loaded[index];
-        if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - loadedBytes) {
+        if (bytes.size() > INFINITE_MAX_PLANNED_BYTES - loadedBytes) {
           throw IOException("Infinite effect plan store returned too many bytes");
         }
         loadedBytes += bytes.size();
@@ -283,8 +280,8 @@ bool sourceMessagesMatch(const MessageStore &store, const InfiniteActionPlan &pl
   }
   if (plan.sourceRangeBegin <= 0 || plan.sourceRangeEnd < plan.sourceRangeBegin
       || static_cast<std::uint64_t>(plan.sourceRangeEnd) - static_cast<std::uint64_t>(plan.sourceRangeBegin)
-             >= MAX_INFINITE_PLANNED_MESSAGES
-      || expected.size() > MAX_INFINITE_PLANNED_MESSAGES) {
+             >= INFINITE_MAX_PLANNED_MESSAGES
+      || expected.size() > INFINITE_MAX_PLANNED_MESSAGES) {
     return false;
   }
 
@@ -306,7 +303,7 @@ bool sourceMessagesMatch(const MessageStore &store, const InfiniteActionPlan &pl
   std::size_t loadedBytes = 0;
   for (std::size_t index = 0; index < loaded.size(); ++index) {
     const auto &bytes = loaded[index];
-    if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - loadedBytes) {
+    if (bytes.size() > INFINITE_MAX_PLANNED_BYTES - loadedBytes) {
       return false;
     }
     loadedBytes += bytes.size();
@@ -451,7 +448,7 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
   const auto targetSequence = m_state.m_pStore->getNextTargetMsgSeqNum();
   const auto storeCreationTime = m_state.m_pStore->getCreationTime();
 
-  if (m_state.m_queue.size() > MAX_INFINITE_PLANNED_MESSAGES) {
+  if (m_state.m_queue.size() > INFINITE_MAX_PLANNED_MESSAGES) {
     throw std::length_error("Infinite queued message count exceeds bound");
   }
 
@@ -470,7 +467,7 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
         cleanse(bytes);
         throw std::invalid_argument("Infinite queued state contains credential-bearing Logon");
       }
-      if (bytes.size() > MAX_INFINITE_PLANNED_BYTES - queuedBytes) {
+      if (bytes.size() > INFINITE_MAX_PLANNED_BYTES - queuedBytes) {
         throw std::length_error("Infinite queued message bytes exceed bound");
       }
       queuedBytes += bytes.size();

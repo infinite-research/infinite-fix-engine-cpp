@@ -38,6 +38,9 @@ class InfiniteFrameAdapterAccess;
 class InfiniteSessionClassificationTestAccess;
 class Session;
 
+inline constexpr std::size_t INFINITE_MAX_PLANNED_MESSAGES = 256;
+inline constexpr std::size_t INFINITE_MAX_PLANNED_BYTES = 16 * 1024 * 1024;
+
 enum class InfiniteSessionActionKind : std::uint8_t {
   ProtocolControl = 1,
   SequenceReset = 2,
