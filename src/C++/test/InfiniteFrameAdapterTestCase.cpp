@@ -2545,6 +2545,40 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][publication-closure-
     shutdownEngine(initialized.engine);
   }
 
+  SECTION("a managed alias whose fence fails remains closing and cannot release caller state") {
+    CallbackContext context;
+    context.duplicateBootstrapHandle = true;
+    const auto registeredSessions = FIX::Session::numSessions();
+    const auto initialized = initializeEngine(context);
+    const auto owner = bootstrapConnection(initialized.engine, "ALIASFF", UINT64_C(11781));
+    REQUIRE(owner.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+    context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
+    const auto alias = bootstrapConnection(initialized.engine, "ALIASFF", UINT64_C(11783));
+    CHECK(alias.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(context.fenceCount == 1);
+    CHECK(context.releaseCount == 0);
+    CHECK(FIX::Session::numSessions() == registeredSessions);
+
+    const irfq_infinite_close_request_v1
+        close{sizeof(close), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, UINT32_C(82), 0, {}};
+    auto closed = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_connection_close_v1(owner.response.connection, &close, &closed, sizeof(closed))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(closed.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(closed.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+    CHECK(context.releaseCount == 0);
+
+    auto shutdown = output<irfq_infinite_operation_response_v1>();
+    CHECK(
+        irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown))
+        == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(shutdown.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(shutdown.lifecycle == IRFQ_INFINITE_ENGINE_CLOSING_V1);
+    CHECK(context.releaseCount == 0);
+  }
+
   SECTION("a failed raw fence acknowledgement forbids release") {
     CallbackContext context;
     context.bootstrapReservedNonzero = true;

@@ -208,6 +208,16 @@ sudo make install
     <code>NOT_REGISTERED</code> and <code>STREAM_FENCED</code> write exactly the
     response prefix and zero results.</p>
 
+    <p>If bootstrap returns an external connection handle already owned by a
+    live connection in the same engine, the adapter fences the managed owner
+    and rejects the alias without releasing that external handle. If the fence
+    acknowledgement fails, the managed connection remains quarantined:
+    close reports <code>INTERNAL_ERROR/CONNECTION_CLOSING</code> and shutdown
+    reports <code>INTERNAL_ERROR/ENGINE_CLOSING</code>. Neither result means the
+    connection is quiescent or released. The caller must keep its callback
+    context and external connection state live until the release callback has
+    actually run.</p>
+
     <p><b>./configure</b> options:</p>
 
     <table>

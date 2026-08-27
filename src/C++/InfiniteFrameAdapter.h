@@ -422,7 +422,15 @@ irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
  * connection handle, NOT_READY/REJECTED publishes none, and
  * STREAM_FENCED/FENCED publishes none. Credentials reach only the synchronous
  * bootstrap authority and are scrubbed from adapter parse state before session
- * ownership. Capacity must cover the exact response.
+ * ownership. If bootstrap returns an external connection handle already owned
+ * by a live connection in this engine, the adapter fences that managed owner
+ * and rejects the alias without releasing the external handle. When that fence
+ * acknowledgement fails, the managed connection remains quarantined: close
+ * returns INTERNAL_ERROR/CONNECTION_CLOSING, shutdown returns
+ * INTERNAL_ERROR/ENGINE_CLOSING, and neither result means quiescence or release.
+ * The caller must keep its callback context and external connection state live
+ * because the release callback has not run. Capacity must cover the exact
+ * response.
  */
 irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     irfq_infinite_handle_v1 engine,

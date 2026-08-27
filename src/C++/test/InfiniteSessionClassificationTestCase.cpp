@@ -122,6 +122,8 @@ public:
 
   static void cleanseCredentials(Message &message) { Session::cleanseInfiniteMessageCredentials(message); }
 
+  static void cleansePlan(InfiniteActionPlan &plan) { Session::cleanseInfiniteActionPlan(plan); }
+
   static void setSessionTime(Session &session, const TimeRange &sessionTime) {
     session.m_isNonStopSession = false;
     session.m_sessionTime = sessionTime;
@@ -395,6 +397,9 @@ struct RecordingStore : MemoryStore {
       getCondition.wait(lock, [this]() { return releaseGet; });
     }
     MemoryStore::get(begin, end, messages);
+    if (throwAfterGet) {
+      throw IOException("source read failed after output");
+    }
     if (reverseReads) {
       std::reverse(messages.begin(), messages.end());
     }
@@ -463,6 +468,7 @@ struct RecordingStore : MemoryStore {
   mutable bool getEntered{false};
   mutable bool releaseGet{false};
   mutable bool reverseReads{false};
+  mutable bool throwAfterGet{false};
   mutable std::mutex getMutex;
   mutable std::condition_variable getCondition;
 };
@@ -671,6 +677,52 @@ struct Fixture {
 };
 
 TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][session]") {
+  SECTION("transitive plan cleanup erases live heap-backed FIX owners") {
+    const std::string marker(512, 's');
+    auto queuedMessage = applicationMessage(session.getExpectedTargetNum() + 1);
+    queuedMessage.setField(Text(marker));
+    auto queued = std::make_shared<InfinitePlannedMessages>();
+    queued->push_back(InfinitePlannedMessage{session.getExpectedTargetNum() + 1, marker, queuedMessage});
+    const auto *const ownedQueue = queued.get();
+
+    InfiniteExpectedSessionState resultingState{};
+    resultingState.mutableState.logoutReason = marker;
+    resultingState.mutableState.queuedMessages = std::move(queued);
+    InfiniteActionPlan plan{
+        marker,
+        now,
+        InfiniteSequenceDisposition::Unavailable,
+        marker,
+        std::move(resultingState),
+        {{1, marker}},
+        {},
+        {},
+        0};
+    auto callbackMessage = applicationMessage(session.getExpectedTargetNum());
+    callbackMessage.setField(Text(marker));
+    InfiniteExpectedSessionState callbackState{};
+    callbackState.mutableState.logoutReason = marker;
+    plan.callbacks.push_back(
+        InfinitePlannedCallback{0, InfiniteCallbackKind::FromApplication, marker, callbackMessage, callbackState});
+    plan.effects.push_back(InfinitePlannedEffect{1, InfiniteEffectKind::LogIncoming, 0, marker, now});
+
+    REQUIRE(plan.callbacks.front().bytes.size() > sizeof(std::string));
+    REQUIRE(plan.effects.front().bytes.size() > sizeof(std::string));
+    REQUIRE(ownedQueue->front().bytes.size() > sizeof(std::string));
+
+    InfiniteSessionClassificationTestAccess::cleansePlan(plan);
+
+    const auto erased = [](const std::string &bytes) {
+      return std::all_of(bytes.begin(), bytes.end(), [](char value) { return value == '\0'; });
+    };
+    CHECK(erased(plan.callbacks.front().bytes));
+    CHECK(plan.callbacks.front().message.getField(FIELD::Text).empty());
+    CHECK(erased(plan.callbacks.front().observedState.mutableState.logoutReason));
+    CHECK(erased(plan.effects.front().bytes));
+    CHECK(erased(ownedQueue->front().bytes));
+    CHECK(ownedQueue->front().message.getField(FIELD::Text).empty());
+  }
+
   SECTION("owned action-plan destruction erases its inline byte copies") {
     constexpr const char marker[] = "plan-secret";
     alignas(InfiniteActionPlan) std::array<unsigned char, sizeof(InfiniteActionPlan)> storage{};
@@ -898,6 +950,33 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(plan.sourceMessages.empty());
     CHECK(plan.callbacks.empty());
     CHECK(plan.effects.empty());
+  }
+
+  SECTION("a source-store exception after output fails closed without retaining a partial plan") {
+    const auto storedSequence = session.getExpectedSenderNum();
+    const auto stored = applicationMessageOfSize(storedSequence, 1024);
+    REQUIRE(storeFactory.store->set(storedSequence, stored));
+    session.setNextSenderMsgSeqNum(storedSequence + 1);
+    storeFactory.store->throwAfterGet = true;
+    clearEffects();
+    auto request = finish(
+                       FIX42::ResendRequest(BeginSeqNo(storedSequence), EndSeqNo(storedSequence)),
+                       session.getExpectedTargetNum())
+                       .toString();
+
+    const auto classification = InfiniteSessionClassificationTestAccess::classifyOwned(
+        session,
+        InfiniteSessionClassificationTestAccess::atHead(0x27),
+        request,
+        now);
+    const auto &plan = infiniteActionPlan(classification.actionData());
+
+    CHECK(classification.kind() == InfiniteSessionActionKind::Failure);
+    CHECK(plan.failure == "IO Error: source read failed after output");
+    CHECK(plan.sourceMessages.empty());
+    CHECK(plan.callbacks.empty());
+    CHECK(plan.effects.empty());
+    CHECK(std::all_of(request.begin(), request.end(), [](char value) { return value == '\0'; }));
   }
 
   SECTION("owned frame storage is cleansed on success, parse failure, and fence refusal") {

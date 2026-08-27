@@ -89,6 +89,14 @@ bool cleanseCredentialMessages(std::vector<std::string> &messages) noexcept {
   return found;
 }
 
+void cleanseMessages(std::vector<std::string> &messages) noexcept {
+  for (auto &bytes : messages) {
+    cleanse(bytes);
+  }
+}
+
+void cleanseMessage(Message &message) noexcept { InfinitePlannedMessage planned{0, {}, std::move(message)}; }
+
 InfiniteActionData makeActionData(InfiniteSessionActionKind action, InfiniteActionPlan plan) {
   switch (action) {
   case InfiniteSessionActionKind::ProtocolControl:
@@ -141,7 +149,15 @@ public:
   }
 
   bool set(SEQNUM sequence, const std::string &message) override {
-    m_messages[sequence] = message;
+    auto replacement = message;
+    auto replacementGuard = sg::make_scope_guard([&replacement]() { cleanse(replacement); });
+    auto existing = m_messages.find(sequence);
+    if (existing == m_messages.end()) {
+      m_messages.emplace(sequence, std::move(replacement));
+    } else {
+      cleanse(existing->second);
+      existing->second.swap(replacement);
+    }
     appendEffect(m_plan, InfiniteEffectKind::StoreMessage, sequence, message, m_now);
     return true;
   }
@@ -159,6 +175,7 @@ public:
     }
 
     std::vector<std::string> loaded;
+    auto loadedGuard = sg::make_scope_guard([&loaded]() { cleanseMessages(loaded); });
     std::set<SEQNUM> loadedSequences;
     if (!m_reset) {
       if (m_plan.sourceRangeRead) {
@@ -186,7 +203,9 @@ public:
           throw IOException("Infinite effect plan store returned too many bytes");
         }
         loadedBytes += bytes.size();
-        Message message(bytes, false);
+        Message message;
+        auto messageGuard = sg::make_scope_guard([&message]() { cleanseMessage(message); });
+        message.setString(bytes, false);
         const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
         if (sequence < begin || sequence > end || !loadedSequences.insert(sequence).second) {
           throw IOException("Infinite effect plan store returned invalid sequence range");
@@ -195,6 +214,7 @@ public:
     }
 
     std::vector<std::string> stagedMessages;
+    auto stagedGuard = sg::make_scope_guard([&stagedMessages]() { cleanseMessages(stagedMessages); });
     if (m_reset) {
       stagedMessages.reserve(static_cast<std::size_t>(end - begin) + 1);
       for (SEQNUM sequence = begin; sequence <= end; ++sequence) {
@@ -212,9 +232,16 @@ public:
 
     if (!m_reset) {
       std::vector<std::pair<SEQNUM, std::string>> stagedSources;
+      auto sourcesGuard = sg::make_scope_guard([&stagedSources]() {
+        for (auto &source : stagedSources) {
+          cleanse(source.second);
+        }
+      });
       stagedSources.reserve(loaded.size());
       for (auto &bytes : loaded) {
-        Message message(bytes, false);
+        Message message;
+        auto messageGuard = sg::make_scope_guard([&message]() { cleanseMessage(message); });
+        message.setString(bytes, false);
         const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
         stagedSources.emplace_back(sequence, std::move(bytes));
       }
@@ -295,6 +322,7 @@ bool sourceMessagesMatch(const MessageStore &store, const InfiniteActionPlan &pl
   }
 
   std::vector<std::string> loaded;
+  auto loadedGuard = sg::make_scope_guard([&loaded]() { cleanseMessages(loaded); });
   try {
     store.get(plan.sourceRangeBegin, plan.sourceRangeEnd, loaded);
   } catch (...) {
@@ -316,7 +344,9 @@ bool sourceMessagesMatch(const MessageStore &store, const InfiniteActionPlan &pl
       return false;
     }
     loadedBytes += bytes.size();
-    Message message(bytes, false);
+    Message message;
+    auto messageGuard = sg::make_scope_guard([&message]() { cleanseMessage(message); });
+    message.setString(bytes, false);
     const auto sequence = message.getHeader().getField<MsgSeqNum>().getValue();
     if (sequence < plan.sourceRangeBegin || sequence > plan.sourceRangeEnd || !sequences.insert(sequence).second
         || expected[index].first != sequence || expected[index].second != bytes) {
@@ -494,15 +524,14 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
     std::size_t queuedBytes = 0;
     for (const auto &entry : m_state.m_queue) {
       auto bytes = entry.second.toString();
+      auto bytesGuard = sg::make_scope_guard([&bytes]() { cleanse(bytes); });
       if (containsLogonCredentialField(bytes)) {
-        cleanse(bytes);
         throw std::invalid_argument("Infinite queued state contains credential-bearing Logon");
       }
       if (bytes.size() > INFINITE_MAX_PLANNED_BYTES - queuedBytes) {
         throw std::length_error("Infinite queued message bytes exceed bound");
       }
       queuedBytes += bytes.size();
-      auto bytesGuard = sg::make_scope_guard([&bytes]() { cleanse(bytes); });
       captured->push_back(InfinitePlannedMessage{entry.first, bytes, entry.second});
     }
     queue = std::move(captured);
@@ -579,7 +608,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     if (containsLogonCredentialField(bytes)) {
       throw std::invalid_argument("Infinite FIX classification does not accept credential fields");
     }
+    cleanseInfiniteExpectedState(expected);
     expected = currentInfiniteExpectedState(now);
+    cleanseInfiniteExpectedState(plan.resultingState);
     plan.resultingState = expected;
     if (expected.mutableState.infiniteFenced) {
       throw std::logic_error("Infinite session is fenced");
@@ -595,6 +626,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
         = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
     if (m_sessionID.isFIXT()) {
       Message headerOnly;
+      auto headerGuard = sg::make_scope_guard([&headerOnly]() { cleanseInfiniteMessage(headerOnly); });
       headerOnly.setStringHeader(bytes);
       ApplVerID applVerID = m_targetDefaultApplVerID;
       headerOnly.getHeader().getFieldIfSet(applVerID);
@@ -606,9 +638,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
         throw std::invalid_argument("Infinite FIXT frame uses an unsupported application dictionary");
       }
       const DataDictionary &applicationDictionary = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
-      message = Message(bytes, sessionDictionary, applicationDictionary, m_validateLengthAndChecksum);
+      message.setString(bytes, m_validateLengthAndChecksum, &sessionDictionary, &applicationDictionary);
     } else {
-      message = Message(bytes, sessionDictionary, m_validateLengthAndChecksum);
+      message.setString(bytes, m_validateLengthAndChecksum, &sessionDictionary);
     }
 
     const Header &header = message.getHeader();
@@ -651,6 +683,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     plan.callbacks.clear();
     plan.effects.clear();
     plan.operationCount = 0;
+    cleanse(plan.failure);
     plan.failure = error.what();
     action = InfiniteSessionActionKind::Failure;
     return InfiniteSessionClassification(
@@ -670,7 +703,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   Responder *const originalResponder = session.m_pResponder;
   auto originalQueue = session.m_state.m_queue;
   const auto originalTimestamper = session.m_timestamper;
-  const auto originalTargetDefaultApplVerID = session.m_targetDefaultApplVerID;
+  auto originalTargetDefaultApplVerID = session.m_targetDefaultApplVerID;
+  auto targetDefaultGuard
+      = sg::make_scope_guard([&originalTargetDefaultApplVerID]() { cleanse(originalTargetDefaultApplVerID); });
   const auto originalConfigurationRevision = session.m_infiniteConfigurationRevision;
   const auto originalResponderGeneration = session.m_infiniteResponderGeneration;
 
@@ -690,12 +725,17 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     session.m_state.m_heartBtInt = HeartBtInt(state.heartBtInt);
     session.m_state.m_lastSentTime = state.lastSentTime;
     session.m_state.m_lastReceivedTime = state.lastReceivedTime;
+    cleanse(session.m_state.m_logoutReason);
     session.m_state.m_logoutReason = state.logoutReason;
+    for (auto &entry : session.m_state.m_queue) {
+      cleanseInfiniteMessage(entry.second);
+    }
     session.m_state.m_queue.swap(originalQueue);
     session.m_state.m_pStore = originalStore;
     session.m_state.m_pLog = originalLog;
     session.m_pResponder = originalResponder;
     session.m_timestamper = originalTimestamper;
+    cleanse(session.m_targetDefaultApplVerID);
     session.m_targetDefaultApplVerID = originalTargetDefaultApplVerID;
     session.m_infiniteConfigurationRevision = originalConfigurationRevision;
     session.m_infiniteResponderGeneration = originalResponderGeneration;
@@ -715,6 +755,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     recordingLog.onIncoming(bytes);
     session.next(message, now, false);
 
+    cleanseInfiniteExpectedState(plan.resultingState);
     plan.resultingState = session.currentInfiniteExpectedState(
         now,
         plan.callbacks.empty() ? &expected : &plan.callbacks.back().observedState);
@@ -734,6 +775,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     plan.callbacks.clear();
     plan.effects.clear();
     plan.operationCount = 0;
+    cleanse(plan.failure);
     plan.failure = error.what();
     action = InfiniteSessionActionKind::Failure;
   } catch (...) {
@@ -749,6 +791,7 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     plan.callbacks.clear();
     plan.effects.clear();
     plan.operationCount = 0;
+    cleanse(plan.failure);
     plan.failure = "Non-standard exception during Infinite classification";
     action = InfiniteSessionActionKind::Failure;
   }
@@ -788,8 +831,12 @@ void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &e
   m_state.m_heartBtInt = HeartBtInt(state.heartBtInt);
   m_state.m_lastSentTime = state.lastSentTime;
   m_state.m_lastReceivedTime = state.lastReceivedTime;
+  cleanse(m_state.m_logoutReason);
   m_state.m_logoutReason = state.logoutReason;
   if (!queueAlreadyInstalled) {
+    for (auto &entry : m_state.m_queue) {
+      cleanseInfiniteMessage(entry.second);
+    }
     m_state.m_queue.clear();
     if (state.queuedMessages) {
       for (const auto &entry : *state.queuedMessages) {
@@ -798,7 +845,9 @@ void Session::installInfiniteExpectedState(const InfiniteExpectedSessionState &e
     }
   }
 
+  cleanse(m_senderDefaultApplVerID);
   m_senderDefaultApplVerID = state.senderDefaultApplVerID;
+  cleanse(m_targetDefaultApplVerID);
   m_targetDefaultApplVerID = state.targetDefaultApplVerID;
   m_sendRedundantResendRequests = state.sendRedundantResendRequests;
   m_checkCompId = state.checkCompId;
@@ -985,6 +1034,8 @@ void Session::cleanseInfiniteMessageCredentials(Message &message) noexcept {
   cleanseInfiniteFieldMapCredentials(message.getTrailer());
 }
 
+void Session::cleanseInfiniteBytes(std::string &bytes) noexcept { cleanse(bytes); }
+
 void Session::cleanseInfiniteMessage(Message &message) noexcept {
   cleanseInfiniteFieldMap(message);
   cleanseInfiniteFieldMap(message.getHeader());
@@ -995,9 +1046,9 @@ void Session::cleanseInfiniteFieldMap(FieldMap &fields) noexcept {
   for (auto &field : fields) {
     cleanse(field.m_string);
     cleanse(field.m_data);
-    try {
-      field.setString("");
-    } catch (...) {}
+    field.m_string.clear();
+    field.m_data.clear();
+    field.m_metrics = FieldBase::no_metrics();
   }
   for (const auto &groupSet : fields.groups()) {
     for (auto *group : groupSet.second) {
@@ -1022,19 +1073,33 @@ void Session::cleanseInfiniteActionPlan(InfiniteActionPlan &plan) noexcept {
   for (auto &source : plan.sourceMessages) {
     cleanse(source.second);
   }
+  for (auto &callback : plan.callbacks) {
+    cleanse(callback.bytes);
+    cleanseInfiniteMessage(callback.message);
+    cleanseInfiniteExpectedState(callback.observedState);
+  }
+  for (auto &effect : plan.effects) {
+    cleanse(effect.bytes);
+  }
+  const auto &queued = plan.resultingState.mutableState.queuedMessages;
+  if (queued && queued.use_count() == 1) {
+    for (auto &entry : const_cast<InfinitePlannedMessages &>(*queued)) {
+      cleanse(entry.bytes);
+      cleanseInfiniteMessage(entry.message);
+    }
+  }
 }
 
 void Session::cleanseInfiniteFieldMapCredentials(FieldMap &fields) noexcept {
-  for (const int tag : {FIELD::Username, FIELD::Password}) {
-    if (!fields.isSetField(tag)) {
+  for (auto &field : fields) {
+    if (field.getTag() != FIELD::Username && field.getTag() != FIELD::Password) {
       continue;
     }
-    try {
-      auto &field = const_cast<FieldBase &>(fields.getFieldRef(tag));
-      cleanse(field.m_string);
-      cleanse(field.m_data);
-      field.setString("");
-    } catch (...) {}
+    cleanse(field.m_string);
+    cleanse(field.m_data);
+    field.m_string.clear();
+    field.m_data.clear();
+    field.m_metrics = FieldBase::no_metrics();
   }
   for (const auto &groupSet : fields.groups()) {
     for (auto *group : groupSet.second) {

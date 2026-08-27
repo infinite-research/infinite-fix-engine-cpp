@@ -449,6 +449,7 @@ private:
   void advanceInfiniteConfigurationRevision();
   void recordInfiniteCallback(InfiniteCallbackKind, const std::string &, const Message & = Message());
   static void cleanseInfiniteMessageCredentials(Message &) noexcept;
+  static void cleanseInfiniteBytes(std::string &) noexcept;
   static void cleanseInfiniteFieldMapCredentials(FieldMap &) noexcept;
   static void cleanseInfiniteMessage(Message &) noexcept;
   static void cleanseInfiniteFieldMap(FieldMap &) noexcept;

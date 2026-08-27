@@ -26,6 +26,7 @@
 #include "InfiniteSessionClassification.h"
 #include "Session.h"
 #include "Values.h"
+#include "scope_guard.hpp"
 #include <algorithm>
 #include <atomic>
 #include <iostream>
@@ -468,6 +469,11 @@ void Session::nextResendRequest(const Message &resendRequest, const UtcTimeStamp
 
 void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   std::vector<std::string> messages;
+  auto messagesGuard = sg::make_scope_guard([&messages]() {
+    for (auto &bytes : messages) {
+      cleanseInfiniteBytes(bytes);
+    }
+  });
   m_state.get(beginSeqNo, endSeqNo, messages);
 
   std::vector<std::string>::iterator i;
@@ -477,11 +483,18 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   SEQNUM current = beginSeqNo;
   bool appMessageJustSent = false;
   std::string messageString;
+  auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
 
   for (i = messages.begin(); i != messages.end(); ++i) {
     appMessageJustSent = false;
     std::unique_ptr<FIX::Message> pMsg;
+    auto parsedGuard = sg::make_scope_guard([&pMsg]() {
+      if (pMsg) {
+        cleanseInfiniteMessage(*pMsg);
+      }
+    });
     std::string strMsgType;
+    auto typeGuard = sg::make_scope_guard([&strMsgType]() { cleanseInfiniteBytes(strMsgType); });
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
     if (sessionDD.isMessageFieldsOrderPreserved()) {
       std::string::size_type equalSign = (*i).find("\00135=");
@@ -492,6 +505,7 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
     if (m_sessionID.isFIXT()) {
       Message msg;
+      auto headerGuard = sg::make_scope_guard([&msg]() { cleanseInfiniteMessage(msg); });
       msg.setStringHeader(*i);
       ApplVerID applVerID;
       if (!msg.getHeader().getFieldIfSet(applVerID)) {
