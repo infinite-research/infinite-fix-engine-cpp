@@ -1506,20 +1506,21 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]"
     context.condition.wait(lock, [&context]() { return context.releaseEntered; });
   }
 
-  bool shutdownStarted = false;
   std::size_t shutdownCompletedOrder = 0;
   std::thread shuttingDown([&]() {
-    {
-      std::lock_guard<std::mutex> lock(context.mutex);
-      shutdownStarted = true;
-    }
-    context.condition.notify_all();
     shutdownEngine(initialized.engine);
     shutdownCompletedOrder = ++context.completionOrder;
   });
-  {
-    std::unique_lock<std::mutex> lock(context.mutex);
-    context.condition.wait(lock, [&shutdownStarted]() { return shutdownStarted; });
+  const irfq_infinite_bootstrap_request_v1
+      probe{sizeof(probe), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, {nullptr, 0}, 0, {}};
+  irfq_infinite_status_v1 probeStatus = IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
+  for (;;) {
+    auto response = output<irfq_infinite_bootstrap_response_v1>();
+    probeStatus = irfq_infinite_connection_bootstrap_v1(initialized.engine, &probe, &response, sizeof(response));
+    if (probeStatus != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1) {
+      break;
+    }
+    std::this_thread::yield();
   }
 
   {
@@ -1529,6 +1530,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]"
   context.condition.notify_all();
   closing.join();
   shuttingDown.join();
+  CHECK(probeStatus == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
   CHECK(context.releaseCount == 1);
   CHECK(context.releaseCompletedOrder.load(std::memory_order_acquire) < shutdownCompletedOrder);
 }
@@ -1573,48 +1575,39 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fence-quiescence]") {
   CallbackContext context;
   context.blockFence = true;
-  context.registrationNotRegistered = true;
   context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
   const auto initialized = initializeEngine(context);
   const auto bootstrapped = bootstrapConnection(initialized.engine, "FENCEBOUND", 3500);
   REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
 
-  const auto heartbeat = finishFix("35=0\00134=2\00149=FENCEBOUND\00156=VENUE\00152=20260826-08:08:09.000\001");
-  irfq_infinite_status_v1 dispatchStatus = IRFQ_INFINITE_STATUS_OK_V1;
-  std::thread fencing([&]() { dispatchStatus = dispatchFrame(bootstrapped.response.connection, heartbeat).status; });
+  irfq_infinite_status_v1 closeStatus = IRFQ_INFINITE_STATUS_OK_V1;
+  std::size_t closeCompletedOrder = 0;
+  std::thread closing([&]() {
+    closeStatus = nestedClose(bootstrapped.response.connection, UINT32_C(94));
+    closeCompletedOrder = ++context.completionOrder;
+  });
   {
     std::unique_lock<std::mutex> lock(context.mutex);
     context.condition.wait(lock, [&context]() { return context.fenceEntered; });
   }
 
-  bool closeStarted = false;
-  irfq_infinite_status_v1 closeStatus = IRFQ_INFINITE_STATUS_OK_V1;
-  std::size_t closeCompletedOrder = 0;
-  std::thread closing([&]() {
-    {
-      std::lock_guard<std::mutex> lock(context.mutex);
-      closeStarted = true;
-    }
-    context.condition.notify_all();
-    closeStatus = nestedClose(bootstrapped.response.connection, UINT32_C(94));
-    closeCompletedOrder = ++context.completionOrder;
-  });
-  bool shutdownStarted = false;
   irfq_infinite_status_v1 shutdownStatus = IRFQ_INFINITE_STATUS_OK_V1;
   std::size_t shutdownCompletedOrder = 0;
   auto shutdown = output<irfq_infinite_operation_response_v1>();
   std::thread shuttingDown([&]() {
-    {
-      std::lock_guard<std::mutex> lock(context.mutex);
-      shutdownStarted = true;
-    }
-    context.condition.notify_all();
     shutdownStatus = irfq_infinite_engine_shutdown_v1(initialized.engine, &shutdown, sizeof(shutdown));
     shutdownCompletedOrder = ++context.completionOrder;
   });
-  {
-    std::unique_lock<std::mutex> lock(context.mutex);
-    context.condition.wait(lock, [&closeStarted, &shutdownStarted]() { return closeStarted && shutdownStarted; });
+  const irfq_infinite_bootstrap_request_v1
+      probe{sizeof(probe), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, {nullptr, 0}, 0, {}};
+  irfq_infinite_status_v1 probeStatus = IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
+  for (;;) {
+    auto response = output<irfq_infinite_bootstrap_response_v1>();
+    probeStatus = irfq_infinite_connection_bootstrap_v1(initialized.engine, &probe, &response, sizeof(response));
+    if (probeStatus != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1) {
+      break;
+    }
+    std::this_thread::yield();
   }
 
   {
@@ -1622,12 +1615,9 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fence-quiescence]") 
     context.allowFence = true;
   }
   context.condition.notify_all();
-  fencing.join();
   closing.join();
   shuttingDown.join();
-  CHECK(
-      (dispatchStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1
-       || dispatchStatus == IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1));
+  CHECK(probeStatus == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
   CHECK(closeStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   CHECK(context.fenceCount == 1);
   CHECK(context.releaseCount == 0);
@@ -2576,6 +2566,26 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][failed-fence-publica
     shutdownEngine(initialized.engine);
   }
 
+  SECTION("oversized classification plan") {
+    CallbackContext context;
+    const auto initialized = initializeEngine(context);
+    const auto bootstrapped = bootstrapConnection(initialized.engine, "FENCEPUBPLAN", UINT64_C(11786));
+    REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+    const auto oversizedTag = std::string(IRFQ_INFINITE_MAX_FAILURE_BYTES_V1 + 1, 'X');
+    const auto frame = finishFix(
+        "35=0\00134=2\00149=FENCEPUBPLAN\00156=VENUE\00152=20260826-08:08:09.000\001" + oversizedTag + "=1\001");
+    const auto dispatched = dispatchFrame(bootstrapped.response.connection, frame);
+    REQUIRE(dispatched.status == IRFQ_INFINITE_STATUS_OK_V1);
+    REQUIRE(
+        waitAtHead(bootstrapped.response.connection, dispatched.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    context.fenceAcknowledgement = IRFQ_INFINITE_STATUS_OK_V1;
+
+    const auto classified = classifyAtHead(bootstrapped.response.connection, dispatched.registration.token);
+    CHECK(classified.first == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+    CHECK(context.fenceCount == 1);
+    shutdownEngine(initialized.engine);
+  }
+
   SECTION("application") {
     CallbackContext context;
     const auto initialized = initializeEngine(context);
@@ -2605,6 +2615,24 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][failed-fence-publica
     CHECK(context.fenceCount == 1);
     shutdownEngine(initialized.engine);
   }
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][terminal-dispatch-cleanup]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "TERMINALCLEANUP", UINT64_C(11789));
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto frame = finishFix("35=0\00134=2\00149=TERMINALCLEANUP\00156=VENUE\00152=20260826-08:08:09.000\001") + "X";
+
+  const auto dispatched = dispatchFrame(bootstrapped.response.connection, frame);
+  CHECK(dispatched.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(dispatched.count == 0);
+  CHECK(dispatched.writtenLength == sizeof(irfq_infinite_dispatch_response_v1));
+  CHECK(context.registeredFrames.size() == 1);
+  CHECK(context.fenceCount == 1);
+  shutdownEngine(initialized.engine);
 #endif
 }
 

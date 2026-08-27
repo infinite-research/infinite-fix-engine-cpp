@@ -1542,29 +1542,52 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
       return faultStatus;
     }
+    if (dispatched.terminalFault) {
+      for (auto &frame : dispatched.frames) {
+        secureErase(frame.bytes);
+      }
+      response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      response.result_count = 0;
+      if (!fenceConnection(engine, connection, response.fault)) {
+        response.header.status = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      }
+      return publishBytes(output, outputCapacity, responseBytes.data(), sizeof(response));
+    }
     auto *publishedResults = reinterpret_cast<irfq_infinite_registration_result_v1 *>(
         static_cast<std::uint8_t *>(responseBytes.data()) + sizeof(response));
+    std::vector<irfq_infinite_handle_v1> insertedCandidates;
+    insertedCandidates.reserve(descriptors.size());
+    auto candidateGuard = sg::make_scope_guard([&connection, &insertedCandidates]() noexcept {
+      for (const auto token : insertedCandidates) {
+        const auto candidate = connection->candidates.find(token);
+        if (candidate != connection->candidates.end()) {
+          secureErase(candidate->second.bytes);
+          connection->candidates.erase(candidate);
+        }
+      }
+    });
     for (std::size_t index = 0; index < descriptors.size(); ++index) {
       publishedResults[index] = results[index];
       publishedResults[index].token = nextHandle();
-      connection->candidates.emplace(
-          publishedResults[index].token,
-          Candidate{publishedResults[index], results[index].token, std::move(dispatched.frames[index].bytes), false});
+      const auto inserted = connection->candidates.try_emplace(publishedResults[index].token);
+      if (!inserted.second) {
+        throw std::logic_error("Duplicate Infinite adapter candidate handle");
+      }
+      insertedCandidates.push_back(publishedResults[index].token);
+      inserted.first->second.registration = publishedResults[index];
+      inserted.first->second.externalToken = results[index].token;
+      inserted.first->second.bytes = std::move(dispatched.frames[index].bytes);
     }
     connection->lastRegisteredOrdinal = previousOrdinal;
     response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
     response.result_count = static_cast<std::uint32_t>(descriptors.size());
-    if (dispatched.terminalFault) {
-      response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
-      if (!fenceConnection(engine, connection, response.fault)) {
-        response.header.status = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
-      }
-    } else {
-      faultStatus = fenceIfFaulted(engine, connection);
-      if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
-        response.header.status = faultStatus;
-      }
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      response.header.status = faultStatus;
+      response.result_count = 0;
+      return publishBytes(output, outputCapacity, responseBytes.data(), sizeof(response));
     }
+    candidateGuard.dismiss();
     return publishBytes(output, outputCapacity, responseBytes.data(), responseLength);
   } catch (...) {
     if (connection) {
@@ -1736,8 +1759,8 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
     const auto &plan = infiniteActionPlan(classification->actionData());
     if (plan.failure.size() > IRFQ_INFINITE_MAX_FAILURE_BYTES_V1
         || plan.operationCount > std::numeric_limits<std::uint32_t>::max()) {
-      fenceConnection(engine, connection, 0);
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                    : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
     const auto classificationHandle = nextHandle();
     const irfq_infinite_classification_callback_request_v1 callbackRequest{
