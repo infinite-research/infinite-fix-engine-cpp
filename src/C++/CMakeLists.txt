@@ -195,7 +195,7 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
 install(FILES ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h DESTINATION include/quickfix)
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)
-  foreach(_irfq_case IN ITEMS DEBUG NO_SSL DICTIONARY_DRIFT)
+  foreach(_irfq_case IN ITEMS DEBUG NO_SSL SHARED NON_LINUX NON_AMD64 DICTIONARY_DRIFT)
     string(TOLOWER "${_irfq_case}" _irfq_case_lower)
     add_test(
       NAME infinite_embedded_rejects_${_irfq_case_lower}
