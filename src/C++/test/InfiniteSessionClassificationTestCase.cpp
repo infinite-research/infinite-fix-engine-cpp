@@ -171,6 +171,25 @@ public:
 namespace {
 using namespace FIX;
 
+struct ThrowOnCopyTimestamper {
+  ThrowOnCopyTimestamper(const UtcTimeStamp &value, bool &enabled)
+      : value(value),
+        enabled(&enabled) {}
+
+  ThrowOnCopyTimestamper(const ThrowOnCopyTimestamper &other)
+      : value(other.value),
+        enabled(other.enabled) {
+    if (*enabled) {
+      throw std::runtime_error("timestamper snapshot failed");
+    }
+  }
+
+  UtcTimeStamp operator()() const { return value; }
+
+  UtcTimeStamp value;
+  bool *enabled;
+};
+
 void fillHeader(Header &header, const char *sender, const char *target, SEQNUM sequence) {
   header.setField(SenderCompID(sender));
   header.setField(TargetCompID(target));
@@ -1643,6 +1662,34 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK_NOTHROW(InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization)));
     storeFactory.store->throwSnapshot = false;
     checkFencedWithoutAuthorizedEffects(snapshot(), beforeApply);
+  }
+
+  SECTION("throwing timestamper snapshot leaves the live queue unchanged") {
+    const std::string marker(512, 'q');
+    const auto queuedSequence = session.getExpectedTargetNum() + 1;
+    auto queued = applicationMessage(queuedSequence);
+    queued.setField(Text(marker));
+    InfiniteSessionClassificationTestAccess::queueMessage(session, queuedSequence, queued);
+    auto bytes = applicationMessage(session.getExpectedTargetNum()).toString();
+    bool throwOnCopy = false;
+    InfiniteSessionClassificationTestAccess::setTimestamper(session, ThrowOnCopyTimestamper(now, throwOnCopy));
+
+    throwOnCopy = true;
+    CHECK_THROWS_WITH(
+        InfiniteSessionClassificationTestAccess::classifyOwned(
+            session,
+            InfiniteSessionClassificationTestAccess::atHead(0x6d),
+            bytes,
+            now),
+        "timestamper snapshot failed");
+    throwOnCopy = false;
+
+    CHECK(std::all_of(bytes.begin(), bytes.end(), [](char value) { return value == '\0'; }));
+    CHECK(InfiniteSessionClassificationTestAccess::queuedMessageCount(session) == 1);
+    CHECK(
+        InfiniteSessionClassificationTestAccess::queuedMessage(session, queuedSequence).getField(FIELD::Text)
+        == marker);
+    InfiniteSessionClassificationTestAccess::setTimestamper(session, [this]() { return now; });
   }
 
   SECTION("freshness snapshot failures fence before the first authorized effect") {

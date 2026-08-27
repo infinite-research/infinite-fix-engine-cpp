@@ -933,7 +933,15 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   RecordingResponder recordingResponder(plan, now);
   Log *const originalLog = session.m_state.m_pLog;
   Responder *const originalResponder = session.m_pResponder;
-  auto originalQueue = session.m_state.m_queue;
+  decltype(session.m_state.m_queue) originalQueue;
+  auto originalQueueGuard = sg::make_scope_guard([&originalQueue]() noexcept {
+    for (auto &entry : originalQueue) {
+      Session::cleanseInfiniteMessage(entry.second);
+    }
+  });
+  for (const auto &entry : session.m_state.m_queue) {
+    originalQueue[entry.first] = entry.second;
+  }
   const auto originalTimestamper = session.m_timestamper;
   auto originalTargetDefaultApplVerID = session.m_targetDefaultApplVerID;
   auto targetDefaultGuard
