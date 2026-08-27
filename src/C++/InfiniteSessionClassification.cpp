@@ -1081,13 +1081,6 @@ void Session::cleanseInfiniteActionPlan(InfiniteActionPlan &plan) noexcept {
   for (auto &effect : plan.effects) {
     cleanse(effect.bytes);
   }
-  const auto &queued = plan.resultingState.mutableState.queuedMessages;
-  if (queued && queued.use_count() == 1) {
-    for (auto &entry : const_cast<InfinitePlannedMessages &>(*queued)) {
-      cleanse(entry.bytes);
-      cleanseInfiniteMessage(entry.message);
-    }
-  }
 }
 
 void Session::cleanseInfiniteFieldMapCredentials(FieldMap &fields) noexcept {

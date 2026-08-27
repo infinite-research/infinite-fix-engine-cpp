@@ -914,7 +914,7 @@ bool rejectAcceptedExternal(
   return released;
 }
 
-void discardConnectionState(const std::shared_ptr<Connection> &connection) {
+void discardConnectionState(const std::shared_ptr<Connection> &connection) noexcept {
   connection->classifications.clear();
   for (auto &entry : connection->candidates) {
     secureErase(entry.second.bytes);
@@ -943,7 +943,11 @@ void discardTerminalConnectionStateIfQuiescent(const std::shared_ptr<Connection>
       }
     }
     discardConnectionState(connection);
-  } catch (...) {}
+  } catch (...) {
+    connection->faulted.store(true, std::memory_order_release);
+    connection->identityQuarantined.store(true, std::memory_order_release);
+    connection->lifecycleCondition.notify_all();
+  }
 }
 
 bool completeCloseConnection(

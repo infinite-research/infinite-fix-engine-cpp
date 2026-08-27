@@ -358,6 +358,12 @@ struct irfq_infinite_callback_table_v1 {
  * Close and shutdown stop acquisition, fence and wake waiters, drain callbacks
  * and in-flight calls, invalidate the generation, then release storage. Close
  * is idempotent while its engine handle remains live.
+ * On every bootstrap, dispatch, head, classification, apply, close, or shutdown
+ * path, a failed fence acknowledgement reported as INTERNAL_ERROR with a
+ * CLOSING lifecycle is a retained terminal quarantine. It does not report
+ * quiescence, transfer ownership, or authorize release. The caller must keep
+ * the callback context and external connection state live until the release
+ * callback actually completes or quiescence is otherwise established.
  *
  * Callback-owned connection, registration-token, and authorization handles are
  * an external namespace. They are returned only through callbacks: bootstrap
@@ -425,12 +431,9 @@ irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
  * ownership. If bootstrap returns an external connection handle already owned
  * by a live connection in this engine, the adapter fences that managed owner
  * and rejects the alias without releasing the external handle. When that fence
- * acknowledgement fails, the managed connection remains quarantined: close
- * returns INTERNAL_ERROR/CONNECTION_CLOSING, shutdown returns
- * INTERNAL_ERROR/ENGINE_CLOSING, and neither result means quiescence or release.
- * The caller must keep its callback context and external connection state live
- * because the release callback has not run. Capacity must cover the exact
- * response.
+ * acknowledgement fails, the general retained terminal-quarantine rule above
+ * applies: close returns INTERNAL_ERROR/CONNECTION_CLOSING and shutdown returns
+ * INTERNAL_ERROR/ENGINE_CLOSING. Capacity must cover the exact response.
  */
 irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     irfq_infinite_handle_v1 engine,

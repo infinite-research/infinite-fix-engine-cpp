@@ -482,9 +482,6 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   SEQNUM begin = 0;
   SEQNUM current = beginSeqNo;
   bool appMessageJustSent = false;
-  std::string messageString;
-  auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
-
   for (i = messages.begin(); i != messages.end(); ++i) {
     appMessageJustSent = false;
     std::unique_ptr<FIX::Message> pMsg;
@@ -514,29 +511,24 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
       const DataDictionary &applicationDD = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
       if (strMsgType.empty()) {
-        pMsg.reset(new Message(*i, sessionDD, applicationDD, m_validateLengthAndChecksum));
+        pMsg.reset(new Message());
       } else {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
         const message_order &messageOrder = applicationDD.getMessageOrderedFields(strMsgType);
-        pMsg.reset(new Message(
-            headerOrder,
-            trailerOrder,
-            messageOrder,
-            *i,
-            sessionDD,
-            applicationDD,
-            m_validateLengthAndChecksum));
+        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder));
       }
+      pMsg->setString(*i, m_validateLengthAndChecksum, &sessionDD, &applicationDD);
     } else {
       if (strMsgType.empty()) {
-        pMsg.reset(new Message(*i, sessionDD, m_validateLengthAndChecksum));
+        pMsg.reset(new Message());
       } else {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
         const message_order &messageOrder = sessionDD.getMessageOrderedFields(strMsgType);
-        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder, *i, sessionDD, m_validateLengthAndChecksum));
+        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder));
       }
+      pMsg->setString(*i, m_validateLengthAndChecksum, &sessionDD);
     }
 
     Message &msg = *pMsg;
@@ -557,6 +549,10 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
         if (begin) {
           generateSequenceReset(begin, msgSeqNum);
         }
+        std::string messageString;
+        auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
+        cleanseInfiniteBytes(messageString);
+        messageString.clear();
         send(msg.toString(messageString));
         m_state.onEvent("Resending Message: " + SEQNUM_CONVERTOR::convert(msgSeqNum));
         begin = 0;

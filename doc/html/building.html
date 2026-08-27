@@ -194,6 +194,14 @@ sudo make install
     its structure size and ABI version; the adapter validates capacity, stages
     the response, copies it, and publishes <code>written_length</code> last.</p>
 
+    <p>On every bootstrap, dispatch, head, classification, apply, close, or
+    shutdown path, a failed fence acknowledgement reported as
+    <code>INTERNAL_ERROR</code> with a closing connection or engine lifecycle is
+    a retained terminal quarantine. It does not report quiescence, transfer
+    ownership, or authorize release. The caller must keep the callback context
+    and external connection state live until the release callback actually
+    completes or quiescence is otherwise established.</p>
+
     <p>Callback-owned connection, registration-token, and authorization handles
     stay in the external callback namespace. Public bootstrap, dispatch, and
     classification results publish the adapter handles that a C caller must use
@@ -213,10 +221,8 @@ sudo make install
     and rejects the alias without releasing that external handle. If the fence
     acknowledgement fails, the managed connection remains quarantined:
     close reports <code>INTERNAL_ERROR/CONNECTION_CLOSING</code> and shutdown
-    reports <code>INTERNAL_ERROR/ENGINE_CLOSING</code>. Neither result means the
-    connection is quiescent or released. The caller must keep its callback
-    context and external connection state live until the release callback has
-    actually run.</p>
+    reports <code>INTERNAL_ERROR/ENGINE_CLOSING</code>. The general retained
+    terminal-quarantine rule above applies.</p>
 
     <p><b>./configure</b> options:</p>
 
