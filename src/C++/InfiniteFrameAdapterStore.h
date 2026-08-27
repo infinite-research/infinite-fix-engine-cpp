@@ -25,6 +25,7 @@
 #include "MessageStore.h"
 
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -32,51 +33,93 @@
 namespace FIX {
 namespace infinite_frame_adapter_detail {
 namespace {
-class BoundedMemoryStore : public MessageStore {
+class BoundedMemoryStore : public MessageStore, public InfiniteMessageStoreRevision {
 public:
   explicit BoundedMemoryStore(const UtcTimeStamp &now)
-      : m_store(now) {}
+      : m_creationTime(now) {}
+
+  ~BoundedMemoryStore() override { eraseMessages(); }
 
   bool set(SEQNUM sequence, const std::string &message) EXCEPT(IOException) override {
-    const auto found = m_messageSizes.find(sequence);
-    const auto previousSize = found == m_messageSizes.end() ? std::size_t{0} : found->second;
+    const auto found = m_messages.find(sequence);
+    const auto previousSize = found == m_messages.end() ? std::size_t{0} : found->second.size();
     const auto retainedBytes = m_storedBytes - previousSize;
-    if ((found == m_messageSizes.end() && m_messageSizes.size() >= INFINITE_MAX_PLANNED_MESSAGES)
+    if ((found == m_messages.end() && m_messages.size() >= INFINITE_MAX_PLANNED_MESSAGES)
         || message.size() > INFINITE_MAX_PLANNED_BYTES - retainedBytes) {
       throw IOException("Infinite adapter message store bound exceeded");
     }
-    if (!m_store.set(sequence, message)) {
-      return false;
+    if (m_contentRevision == std::numeric_limits<std::uint64_t>::max()) {
+      throw IOException("Infinite adapter message store revision exhausted");
     }
-    m_messageSizes[sequence] = message.size();
+    if (found == m_messages.end()) {
+      m_messages.emplace(sequence, message);
+    } else {
+      auto replacement = message;
+      erase(found->second);
+      found->second.swap(replacement);
+    }
     m_storedBytes = retainedBytes + message.size();
+    ++m_contentRevision;
     return true;
   }
 
   void get(SEQNUM begin, SEQNUM end, std::vector<std::string> &messages) const EXCEPT(IOException) override {
-    m_store.get(begin, end, messages);
+    for (auto &message : messages) {
+      erase(message);
+    }
+    messages.clear();
+    messages.reserve(m_messages.size());
+    auto found = m_messages.find(begin);
+    for (; found != m_messages.end() && found->first <= end; ++found) {
+      messages.push_back(found->second);
+    }
   }
 
-  SEQNUM getNextSenderMsgSeqNum() const EXCEPT(IOException) override { return m_store.getNextSenderMsgSeqNum(); }
-  SEQNUM getNextTargetMsgSeqNum() const EXCEPT(IOException) override { return m_store.getNextTargetMsgSeqNum(); }
-  void setNextSenderMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_store.setNextSenderMsgSeqNum(value); }
-  void setNextTargetMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_store.setNextTargetMsgSeqNum(value); }
-  void incrNextSenderMsgSeqNum() EXCEPT(IOException) override { m_store.incrNextSenderMsgSeqNum(); }
-  void incrNextTargetMsgSeqNum() EXCEPT(IOException) override { m_store.incrNextTargetMsgSeqNum(); }
-  UtcTimeStamp getCreationTime() const EXCEPT(IOException) override { return m_store.getCreationTime(); }
+  SEQNUM getNextSenderMsgSeqNum() const EXCEPT(IOException) override { return m_nextSenderSequence; }
+  SEQNUM getNextTargetMsgSeqNum() const EXCEPT(IOException) override { return m_nextTargetSequence; }
+  void setNextSenderMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_nextSenderSequence = value; }
+  void setNextTargetMsgSeqNum(SEQNUM value) EXCEPT(IOException) override { m_nextTargetSequence = value; }
+  void incrNextSenderMsgSeqNum() EXCEPT(IOException) override { ++m_nextSenderSequence; }
+  void incrNextTargetMsgSeqNum() EXCEPT(IOException) override { ++m_nextTargetSequence; }
+  UtcTimeStamp getCreationTime() const EXCEPT(IOException) override { return m_creationTime; }
+  std::uint64_t infiniteContentRevision() const noexcept override { return m_contentRevision; }
 
   void reset(const UtcTimeStamp &now) EXCEPT(IOException) override {
-    m_store.reset(now);
-    m_messageSizes.clear();
+    if (m_contentRevision == std::numeric_limits<std::uint64_t>::max()) {
+      throw IOException("Infinite adapter message store revision exhausted");
+    }
+    eraseMessages();
     m_storedBytes = 0;
+    m_nextSenderSequence = 1;
+    m_nextTargetSequence = 1;
+    m_creationTime = now;
+    ++m_contentRevision;
   }
 
-  void refresh() EXCEPT(IOException) override { m_store.refresh(); }
+  void refresh() EXCEPT(IOException) override {}
 
 private:
-  MemoryStore m_store;
-  std::map<SEQNUM, std::size_t> m_messageSizes;
+  static void erase(std::string &bytes) noexcept {
+    volatile char *cursor = bytes.empty() ? nullptr : &bytes[0];
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+      cursor[index] = 0;
+    }
+    bytes.clear();
+  }
+
+  void eraseMessages() noexcept {
+    for (auto &entry : m_messages) {
+      erase(entry.second);
+    }
+    m_messages.clear();
+  }
+
+  std::map<SEQNUM, std::string> m_messages;
   std::size_t m_storedBytes{0};
+  std::uint64_t m_contentRevision{0};
+  SEQNUM m_nextSenderSequence{1};
+  SEQNUM m_nextTargetSequence{1};
+  UtcTimeStamp m_creationTime;
 };
 
 class BoundedMemoryStoreFactory : public MessageStoreFactory {

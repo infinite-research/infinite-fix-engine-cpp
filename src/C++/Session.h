@@ -50,6 +50,7 @@ class InfiniteAtHeadBinding;
 class InfiniteEffectAuthorization;
 struct InfiniteExpectedSessionState;
 class InfiniteFrameAdapterAccess;
+class InfiniteSensitiveString;
 class InfiniteSessionClassification;
 class InfiniteSessionClassificationTestAccess;
 enum class InfiniteSessionActionKind : std::uint8_t;
@@ -357,6 +358,7 @@ private:
   friend class InfiniteEffectAuthorization;
   friend class InfiniteSessionClassificationTestAccess;
   friend class InfiniteSessionClassification;
+  friend class SessionState;
   friend struct InfiniteActionPlan;
   friend struct InfinitePlannedCallback;
   friend struct InfinitePlannedMessage;
@@ -462,7 +464,7 @@ private:
       const InfiniteExpectedSessionState *reusableQueueState = nullptr) const;
   InfiniteSessionClassification classifyInfiniteFrame(
       const InfiniteAtHeadBinding &,
-      std::string &&,
+      InfiniteSensitiveString &&,
       const UtcTimeStamp &) const;
   void applyInfiniteClassification(const InfiniteSessionClassification &, InfiniteEffectAuthorization &&);
 

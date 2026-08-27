@@ -1136,7 +1136,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle]") {
           oversizedBytes.data(),
           oversizedBytes.size())
       == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1);
-  CHECK(oversizedResponse->header.written_length == 0);
+  CHECK(oversizedResponse->header.status == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1);
+  CHECK(oversizedResponse->header.written_length == sizeof(*oversizedResponse));
 
   const irfq_infinite_dispatch_request_v1 dispatch{
       sizeof(dispatch),
@@ -1832,7 +1833,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][ordinal-wrap]") {
       irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
       == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
-  CHECK(response->header.written_length == 0);
+  CHECK(response->header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(response->header.written_length == sizeof(*response));
   CHECK(response->result_count == 0);
   CHECK(context.registeredFrames.size() == 2);
   CHECK(context.fenceCount == 1);
@@ -2185,11 +2187,14 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accountin
   using FIX::infinite_frame_adapter_detail::BoundedMemoryStore;
   const auto now = FIX::UtcTimeStamp::now();
   BoundedMemoryStore store(now);
+  CHECK(store.infiniteContentRevision() == 0);
 
   SECTION("exact byte bound retains exact bytes for resend reads and rejects one over") {
     const std::string exact(INFINITE_MAX_PLANNED_BYTES, '\x5a');
     REQUIRE(store.set(1, exact));
+    CHECK(store.infiniteContentRevision() == 1);
     CHECK_THROWS(store.set(2, "x"));
+    CHECK(store.infiniteContentRevision() == 1);
     std::vector<std::string> retained;
     store.get(1, 2, retained);
     REQUIRE(retained.size() == 1);
@@ -2215,6 +2220,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accountin
     const std::string expanded(INFINITE_MAX_PLANNED_BYTES - replacementSmall, '\x55');
     REQUIRE(store.set(1, shrunk));
     REQUIRE(store.set(2, expanded));
+    CHECK(store.infiniteContentRevision() == 4);
     std::vector<std::string> retained;
     store.get(1, 2, retained);
     REQUIRE(retained.size() == 2);
@@ -2225,6 +2231,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][store-byte-accountin
   SECTION("reset clears accounting and permits exact-bound reuse") {
     REQUIRE(store.set(1, std::string(INFINITE_MAX_PLANNED_BYTES, '\x66')));
     store.reset(now);
+    CHECK(store.infiniteContentRevision() == 2);
     const std::string reused(INFINITE_MAX_PLANNED_BYTES, '\x77');
     REQUIRE(store.set(1, reused));
     std::vector<std::string> retained;
@@ -2845,6 +2852,72 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][failed-fence-publica
     CHECK(context.fenceCount == 1);
     shutdownEngine(initialized.engine);
   }
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][closing-response-publication]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "CLOSINGPUBLICATION", UINT64_C(11788));
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+  closeConnection(bootstrapped.response.connection);
+
+  const irfq_infinite_dispatch_request_v1 dispatch{
+      sizeof(dispatch),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {nullptr, 0},
+      {}};
+  auto dispatchBytes = dispatchOutput();
+  auto *dispatched = reinterpret_cast<irfq_infinite_dispatch_response_v1 *>(dispatchBytes.data());
+  CHECK(
+      irfq_infinite_connection_dispatch_v1(
+          bootstrapped.response.connection,
+          &dispatch,
+          dispatchBytes.data(),
+          dispatchBytes.size())
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(dispatched->header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(dispatched->header.written_length == sizeof(*dispatched));
+  CHECK(dispatched->result_count == 0);
+  CHECK(dispatched->fault == IRFQ_INFINITE_DISPATCH_FAULT_NONE_V1);
+
+  const irfq_infinite_head_request_v1 head{
+      sizeof(head),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {UINT64_C(1), UINT64_C(1)},
+      {}};
+  auto waited = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited))
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(waited.header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(waited.header.written_length == sizeof(waited));
+  CHECK(waited.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+
+  auto classified = output<irfq_infinite_classification_response_v1>();
+  CHECK(
+      irfq_infinite_connection_classify_v1(bootstrapped.response.connection, &head, &classified, sizeof(classified))
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(classified.header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(classified.header.written_length == sizeof(classified));
+  CHECK(classified.outcome == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+
+  const irfq_infinite_apply_request_v1 apply{
+      sizeof(apply),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {UINT64_C(1), UINT64_C(1)},
+      {UINT64_C(2), UINT64_C(2)},
+      {}};
+  auto applied = output<irfq_infinite_operation_response_v1>();
+  CHECK(
+      irfq_infinite_connection_apply_v1(bootstrapped.response.connection, &apply, &applied, sizeof(applied))
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(applied.header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(applied.header.written_length == sizeof(applied));
+  CHECK(applied.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+
+  shutdownEngine(initialized.engine);
 #endif
 }
 

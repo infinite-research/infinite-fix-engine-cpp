@@ -53,6 +53,8 @@ void cleanse(std::string &bytes) noexcept {
 #endif
 }
 
+void cleanse(InfiniteSensitiveString &bytes) noexcept { bytes.clear(); }
+
 bool containsLogonCredentialField(const std::string &bytes) {
   bool isLogon = false;
   bool hasCredential = false;
@@ -397,9 +399,79 @@ private:
 };
 } // namespace
 
+InfinitePlannedMessage::InfinitePlannedMessage(SEQNUM sequence, InfiniteSensitiveString value, Message message)
+    : sequence(sequence),
+      bytes(std::move(value)),
+      message(std::move(message)) {}
+
+InfinitePlannedMessage::InfinitePlannedMessage(InfinitePlannedMessage &&other) noexcept
+    : sequence(other.sequence),
+      bytes(std::move(other.bytes)),
+      message(std::move(other.message)) {}
+
+InfinitePlannedMessage &InfinitePlannedMessage::operator=(const InfinitePlannedMessage &other) {
+  if (this != &other) {
+    auto replacement = other;
+    *this = std::move(replacement);
+  }
+  return *this;
+}
+
+InfinitePlannedMessage &InfinitePlannedMessage::operator=(InfinitePlannedMessage &&other) noexcept {
+  if (this != &other) {
+    cleanse(bytes);
+    Session::cleanseInfiniteMessage(message);
+    sequence = other.sequence;
+    bytes = std::move(other.bytes);
+    message = std::move(other.message);
+  }
+  return *this;
+}
+
 InfinitePlannedMessage::~InfinitePlannedMessage() {
   cleanse(bytes);
   Session::cleanseInfiniteMessage(message);
+}
+
+InfinitePlannedCallback::InfinitePlannedCallback(
+    std::size_t order,
+    InfiniteCallbackKind kind,
+    InfiniteSensitiveString value,
+    Message message,
+    InfiniteExpectedSessionState observedState)
+    : order(order),
+      kind(kind),
+      bytes(std::move(value)),
+      message(std::move(message)),
+      observedState(std::move(observedState)) {}
+
+InfinitePlannedCallback::InfinitePlannedCallback(InfinitePlannedCallback &&other) noexcept
+    : order(other.order),
+      kind(other.kind),
+      bytes(std::move(other.bytes)),
+      message(std::move(other.message)),
+      observedState(std::move(other.observedState)) {}
+
+InfinitePlannedCallback &InfinitePlannedCallback::operator=(const InfinitePlannedCallback &other) {
+  if (this != &other) {
+    auto replacement = other;
+    *this = std::move(replacement);
+  }
+  return *this;
+}
+
+InfinitePlannedCallback &InfinitePlannedCallback::operator=(InfinitePlannedCallback &&other) noexcept {
+  if (this != &other) {
+    cleanse(bytes);
+    Session::cleanseInfiniteMessage(message);
+    Session::cleanseInfiniteExpectedState(observedState);
+    order = other.order;
+    kind = other.kind;
+    bytes = std::move(other.bytes);
+    message = std::move(other.message);
+    observedState = std::move(other.observedState);
+  }
+  return *this;
 }
 
 InfinitePlannedCallback::~InfinitePlannedCallback() {
@@ -408,11 +480,171 @@ InfinitePlannedCallback::~InfinitePlannedCallback() {
   Session::cleanseInfiniteExpectedState(observedState);
 }
 
+InfinitePlannedEffect::InfinitePlannedEffect(
+    std::size_t order,
+    InfiniteEffectKind kind,
+    SEQNUM sequence,
+    InfiniteSensitiveString value,
+    UtcTimeStamp timestamp)
+    : order(order),
+      kind(kind),
+      sequence(sequence),
+      bytes(std::move(value)),
+      timestamp(timestamp) {}
+
+InfinitePlannedEffect::InfinitePlannedEffect(InfinitePlannedEffect &&other) noexcept
+    : order(other.order),
+      kind(other.kind),
+      sequence(other.sequence),
+      bytes(std::move(other.bytes)),
+      timestamp(other.timestamp) {}
+
+InfinitePlannedEffect &InfinitePlannedEffect::operator=(const InfinitePlannedEffect &other) {
+  if (this != &other) {
+    auto replacement = other;
+    *this = std::move(replacement);
+  }
+  return *this;
+}
+
+InfinitePlannedEffect &InfinitePlannedEffect::operator=(InfinitePlannedEffect &&other) noexcept {
+  if (this != &other) {
+    cleanse(bytes);
+    order = other.order;
+    kind = other.kind;
+    sequence = other.sequence;
+    bytes = std::move(other.bytes);
+    timestamp = other.timestamp;
+  }
+  return *this;
+}
+
 InfinitePlannedEffect::~InfinitePlannedEffect() { cleanse(bytes); }
+
+InfiniteActionPlan::InfiniteActionPlan(
+    InfiniteSensitiveString type,
+    UtcTimeStamp now,
+    InfiniteSequenceDisposition sequenceDisposition,
+    InfiniteSensitiveString failureReason,
+    InfiniteExpectedSessionState resultingState,
+    std::vector<std::pair<SEQNUM, std::string>> sourceMessages,
+    std::vector<InfinitePlannedCallback> callbacks,
+    std::vector<InfinitePlannedEffect> effects,
+    std::size_t operationCount)
+    : messageType(std::move(type)),
+      now(now),
+      sequenceDisposition(sequenceDisposition),
+      failure(std::move(failureReason)),
+      resultingState(std::move(resultingState)),
+      sourceMessages(std::move(sourceMessages)),
+      callbacks(std::move(callbacks)),
+      effects(std::move(effects)),
+      operationCount(operationCount) {}
+
+InfiniteActionPlan::InfiniteActionPlan(InfiniteActionPlan &&other) noexcept
+    : messageType(std::move(other.messageType)),
+      now(other.now),
+      sequenceDisposition(other.sequenceDisposition),
+      failure(std::move(other.failure)),
+      resultingState(std::move(other.resultingState)),
+      sourceMessages(std::move(other.sourceMessages)),
+      callbacks(std::move(other.callbacks)),
+      effects(std::move(other.effects)),
+      operationCount(other.operationCount),
+      sourceRangeRead(other.sourceRangeRead),
+      sourceRangeBegin(other.sourceRangeBegin),
+      sourceRangeEnd(other.sourceRangeEnd) {}
+
+InfiniteActionPlan &InfiniteActionPlan::operator=(const InfiniteActionPlan &other) {
+  if (this != &other) {
+    auto replacement = other;
+    *this = std::move(replacement);
+  }
+  return *this;
+}
+
+InfiniteActionPlan &InfiniteActionPlan::operator=(InfiniteActionPlan &&other) noexcept {
+  if (this != &other) {
+    Session::cleanseInfiniteActionPlan(*this);
+    messageType = std::move(other.messageType);
+    now = other.now;
+    sequenceDisposition = other.sequenceDisposition;
+    failure = std::move(other.failure);
+    resultingState = std::move(other.resultingState);
+    sourceMessages = std::move(other.sourceMessages);
+    callbacks = std::move(other.callbacks);
+    effects = std::move(other.effects);
+    operationCount = other.operationCount;
+    sourceRangeRead = other.sourceRangeRead;
+    sourceRangeBegin = other.sourceRangeBegin;
+    sourceRangeEnd = other.sourceRangeEnd;
+  }
+  return *this;
+}
 
 InfiniteActionPlan::~InfiniteActionPlan() { Session::cleanseInfiniteActionPlan(*this); }
 
+InfiniteEffectAuthorization::InfiniteEffectAuthorization(
+    std::array<std::uint8_t, 32> binding,
+    InfiniteExpectedSessionState expected,
+    InfiniteActionData actionData)
+    : m_binding(std::move(binding)),
+      m_expected(std::move(expected)),
+      m_action(infiniteActionKind(actionData)),
+      m_actionData(std::move(actionData)) {}
+
+InfiniteEffectAuthorization::InfiniteEffectAuthorization(InfiniteEffectAuthorization &&other) noexcept
+    : m_binding(std::move(other.m_binding)),
+      m_expected(std::move(other.m_expected)),
+      m_action(other.m_action),
+      m_actionData(std::move(other.m_actionData)),
+      m_consumed(other.m_consumed) {}
+
+InfiniteEffectAuthorization &InfiniteEffectAuthorization::operator=(InfiniteEffectAuthorization &&other) noexcept {
+  if (this != &other) {
+    Session::cleanseInfiniteExpectedState(m_expected);
+    m_binding = std::move(other.m_binding);
+    m_expected = std::move(other.m_expected);
+    m_action = other.m_action;
+    m_actionData = std::move(other.m_actionData);
+    m_consumed = other.m_consumed;
+  }
+  return *this;
+}
+
 InfiniteEffectAuthorization::~InfiniteEffectAuthorization() { Session::cleanseInfiniteExpectedState(m_expected); }
+
+InfiniteSessionClassification::InfiniteSessionClassification(
+    std::array<std::uint8_t, 32> binding,
+    InfiniteExpectedSessionState expected,
+    InfiniteActionData actionData,
+    Message message)
+    : m_binding(std::move(binding)),
+      m_expected(std::move(expected)),
+      m_action(infiniteActionKind(actionData)),
+      m_actionData(std::move(actionData)),
+      m_message(std::move(message)) {}
+
+InfiniteSessionClassification::InfiniteSessionClassification(InfiniteSessionClassification &&other) noexcept
+    : m_binding(std::move(other.m_binding)),
+      m_expected(std::move(other.m_expected)),
+      m_action(other.m_action),
+      m_actionData(std::move(other.m_actionData)),
+      m_message(std::move(other.m_message)) {}
+
+InfiniteSessionClassification &InfiniteSessionClassification::operator=(
+    InfiniteSessionClassification &&other) noexcept {
+  if (this != &other) {
+    Session::cleanseInfiniteExpectedState(m_expected);
+    Session::cleanseInfiniteMessage(m_message);
+    m_binding = std::move(other.m_binding);
+    m_expected = std::move(other.m_expected);
+    m_action = other.m_action;
+    m_actionData = std::move(other.m_actionData);
+    m_message = std::move(other.m_message);
+  }
+  return *this;
+}
 
 InfiniteSessionClassification::~InfiniteSessionClassification() {
   Session::cleanseInfiniteExpectedState(m_expected);
@@ -591,7 +823,7 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
 
 InfiniteSessionClassification Session::classifyInfiniteFrame(
     const InfiniteAtHeadBinding &atHead,
-    std::string &&bytes,
+    InfiniteSensitiveString &&bytes,
     const UtcTimeStamp &now) const {
   auto cleanseGuard = sg::make_scope_guard([&bytes]() { cleanse(bytes); });
   Locker sessionLock(m_mutex);
@@ -903,7 +1135,10 @@ void Session::applyInfiniteClassification(
       return;
     }
 
-    if (!sourceMessagesMatch(*m_state.m_pStore, plan)) {
+    const auto *const revisionStore = dynamic_cast<const InfiniteMessageStoreRevision *>(m_state.m_pStore);
+    const auto sourceRevision = revisionStore ? revisionStore->infiniteContentRevision() : 0;
+    if (!sourceMessagesMatch(*m_state.m_pStore, plan)
+        || (revisionStore && revisionStore->infiniteContentRevision() != sourceRevision)) {
       throw IOException("Infinite source message changed before application");
     }
 
@@ -916,6 +1151,7 @@ void Session::applyInfiniteClassification(
 
     const auto invokeCallback = [&](const InfinitePlannedCallback &callback) {
       installExpectedState(callback.observedState);
+      const auto callbackSourceRevision = revisionStore ? revisionStore->infiniteContentRevision() : 0;
       m_state.m_infiniteCallbackActive.store(true, std::memory_order_release);
       auto callbackGuard = sg::make_scope_guard(
           [this]() { m_state.m_infiniteCallbackActive.store(false, std::memory_order_release); });
@@ -929,7 +1165,7 @@ void Session::applyInfiniteClassification(
           m_application.fromApp(callback.message, m_sessionID);
         } else if (callback.kind == InfiniteCallbackKind::ToAdmin) {
           Message outgoing = callback.message;
-          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessageCredentials(outgoing); });
+          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessage(outgoing); });
           m_application.toAdmin(outgoing, m_sessionID);
           auto actual = outgoing.toString();
           auto actualGuard = sg::make_scope_guard([&actual]() { cleanse(actual); });
@@ -938,7 +1174,7 @@ void Session::applyInfiniteClassification(
           }
         } else if (callback.kind == InfiniteCallbackKind::ToApplication) {
           Message outgoing = callback.message;
-          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessageCredentials(outgoing); });
+          auto outgoingGuard = sg::make_scope_guard([&outgoing]() { cleanseInfiniteMessage(outgoing); });
           try {
             m_application.toApp(outgoing, m_sessionID);
           } catch (DoNotSend &) {
@@ -956,8 +1192,10 @@ void Session::applyInfiniteClassification(
         }
         callbackNow = m_timestamper();
       }
-      if (!(currentInfiniteExpectedState(callbackNow) == callback.observedState)
-          || !sourceMessagesMatch(*m_state.m_pStore, plan)) {
+      const auto sourceMessagesUnchanged = revisionStore
+                                               ? revisionStore->infiniteContentRevision() == callbackSourceRevision
+                                               : sourceMessagesMatch(*m_state.m_pStore, plan);
+      if (!(currentInfiniteExpectedState(callbackNow) == callback.observedState) || !sourceMessagesUnchanged) {
         throw IOException("Infinite session changed during callback");
       }
     };

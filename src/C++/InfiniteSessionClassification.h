@@ -22,6 +22,7 @@
 #pragma once
 
 #include "Fields.h"
+#include "InfiniteSensitiveString.h"
 #include "Message.h"
 
 #include <array>
@@ -37,6 +38,12 @@ namespace FIX {
 class InfiniteFrameAdapterAccess;
 class InfiniteSessionClassificationTestAccess;
 class Session;
+
+class InfiniteMessageStoreRevision {
+public:
+  virtual ~InfiniteMessageStoreRevision() = default;
+  virtual std::uint64_t infiniteContentRevision() const noexcept = 0;
+};
 
 inline constexpr std::size_t INFINITE_MAX_PLANNED_MESSAGES = 256;
 inline constexpr std::size_t INFINITE_MAX_PLANNED_BYTES = 16 * 1024 * 1024;
@@ -69,9 +76,14 @@ enum class InfiniteCallbackKind : std::uint8_t {
 
 struct InfinitePlannedMessage {
   SEQNUM sequence;
-  std::string bytes;
+  InfiniteSensitiveString bytes;
   Message message;
 
+  InfinitePlannedMessage(SEQNUM sequence, InfiniteSensitiveString bytes, Message message);
+  InfinitePlannedMessage(const InfinitePlannedMessage &) = default;
+  InfinitePlannedMessage &operator=(const InfinitePlannedMessage &other);
+  InfinitePlannedMessage(InfinitePlannedMessage &&other) noexcept;
+  InfinitePlannedMessage &operator=(InfinitePlannedMessage &&other) noexcept;
   ~InfinitePlannedMessage();
 
   bool operator==(const InfinitePlannedMessage &rhs) const;
@@ -111,10 +123,10 @@ struct InfiniteSessionStateFingerprint {
   bool sessionTimeActive;
   bool logonTimeActive;
   bool infiniteFenced;
-  std::string logoutReason;
+  InfiniteSensitiveString logoutReason;
   std::shared_ptr<const InfinitePlannedMessages> queuedMessages;
-  std::string senderDefaultApplVerID;
-  std::string targetDefaultApplVerID;
+  InfiniteSensitiveString senderDefaultApplVerID;
+  InfiniteSensitiveString targetDefaultApplVerID;
   bool sendRedundantResendRequests;
   bool checkCompId;
   bool checkLatency;
@@ -148,10 +160,20 @@ struct InfiniteExpectedSessionState {
 struct InfinitePlannedCallback {
   std::size_t order;
   InfiniteCallbackKind kind;
-  std::string bytes;
+  InfiniteSensitiveString bytes;
   Message message;
   InfiniteExpectedSessionState observedState;
 
+  InfinitePlannedCallback(
+      std::size_t order,
+      InfiniteCallbackKind kind,
+      InfiniteSensitiveString bytes,
+      Message message,
+      InfiniteExpectedSessionState observedState);
+  InfinitePlannedCallback(const InfinitePlannedCallback &) = default;
+  InfinitePlannedCallback &operator=(const InfinitePlannedCallback &other);
+  InfinitePlannedCallback(InfinitePlannedCallback &&other) noexcept;
+  InfinitePlannedCallback &operator=(InfinitePlannedCallback &&other) noexcept;
   ~InfinitePlannedCallback();
 
   bool operator==(const InfinitePlannedCallback &rhs) const;
@@ -161,19 +183,29 @@ struct InfinitePlannedEffect {
   std::size_t order;
   InfiniteEffectKind kind;
   SEQNUM sequence;
-  std::string bytes;
+  InfiniteSensitiveString bytes;
   UtcTimeStamp timestamp;
 
+  InfinitePlannedEffect(
+      std::size_t order,
+      InfiniteEffectKind kind,
+      SEQNUM sequence,
+      InfiniteSensitiveString bytes,
+      UtcTimeStamp timestamp);
+  InfinitePlannedEffect(const InfinitePlannedEffect &) = default;
+  InfinitePlannedEffect &operator=(const InfinitePlannedEffect &other);
+  InfinitePlannedEffect(InfinitePlannedEffect &&other) noexcept;
+  InfinitePlannedEffect &operator=(InfinitePlannedEffect &&other) noexcept;
   ~InfinitePlannedEffect();
 
   bool operator==(const InfinitePlannedEffect &rhs) const;
 };
 
 struct InfiniteActionPlan {
-  std::string messageType;
+  InfiniteSensitiveString messageType;
   UtcTimeStamp now;
   InfiniteSequenceDisposition sequenceDisposition;
-  std::string failure;
+  InfiniteSensitiveString failure;
   InfiniteExpectedSessionState resultingState;
   std::vector<std::pair<SEQNUM, std::string>> sourceMessages;
   std::vector<InfinitePlannedCallback> callbacks;
@@ -183,6 +215,20 @@ struct InfiniteActionPlan {
   SEQNUM sourceRangeBegin{0};
   SEQNUM sourceRangeEnd{0};
 
+  InfiniteActionPlan(
+      InfiniteSensitiveString messageType,
+      UtcTimeStamp now,
+      InfiniteSequenceDisposition sequenceDisposition,
+      InfiniteSensitiveString failure,
+      InfiniteExpectedSessionState resultingState,
+      std::vector<std::pair<SEQNUM, std::string>> sourceMessages,
+      std::vector<InfinitePlannedCallback> callbacks,
+      std::vector<InfinitePlannedEffect> effects,
+      std::size_t operationCount);
+  InfiniteActionPlan(const InfiniteActionPlan &) = default;
+  InfiniteActionPlan &operator=(const InfiniteActionPlan &other);
+  InfiniteActionPlan(InfiniteActionPlan &&other) noexcept;
+  InfiniteActionPlan &operator=(InfiniteActionPlan &&other) noexcept;
   ~InfiniteActionPlan();
 
   bool operator==(const InfiniteActionPlan &rhs) const;
@@ -248,8 +294,8 @@ public:
   ~InfiniteEffectAuthorization();
   InfiniteEffectAuthorization(const InfiniteEffectAuthorization &) = delete;
   InfiniteEffectAuthorization &operator=(const InfiniteEffectAuthorization &) = delete;
-  InfiniteEffectAuthorization(InfiniteEffectAuthorization &&) = default;
-  InfiniteEffectAuthorization &operator=(InfiniteEffectAuthorization &&) = default;
+  InfiniteEffectAuthorization(InfiniteEffectAuthorization &&other) noexcept;
+  InfiniteEffectAuthorization &operator=(InfiniteEffectAuthorization &&other) noexcept;
 
 private:
   friend class InfiniteFrameAdapterAccess;
@@ -258,11 +304,7 @@ private:
   InfiniteEffectAuthorization(
       std::array<std::uint8_t, 32> binding,
       InfiniteExpectedSessionState expected,
-      InfiniteActionData actionData)
-      : m_binding(std::move(binding)),
-        m_expected(std::move(expected)),
-        m_action(infiniteActionKind(actionData)),
-        m_actionData(std::move(actionData)) {}
+      InfiniteActionData actionData);
 
   std::array<std::uint8_t, 32> m_binding;
   InfiniteExpectedSessionState m_expected;
@@ -274,6 +316,10 @@ private:
 class InfiniteSessionClassification {
 public:
   ~InfiniteSessionClassification();
+  InfiniteSessionClassification(const InfiniteSessionClassification &) = delete;
+  InfiniteSessionClassification &operator=(const InfiniteSessionClassification &) = delete;
+  InfiniteSessionClassification(InfiniteSessionClassification &&other) noexcept;
+  InfiniteSessionClassification &operator=(InfiniteSessionClassification &&other) noexcept;
   InfiniteSessionActionKind kind() const { return m_action; }
   const InfiniteExpectedSessionState &expected() const { return m_expected; }
   const InfiniteActionData &actionData() const { return m_actionData; }
@@ -287,12 +333,7 @@ private:
       std::array<std::uint8_t, 32> binding,
       InfiniteExpectedSessionState expected,
       InfiniteActionData actionData,
-      Message message)
-      : m_binding(std::move(binding)),
-        m_expected(std::move(expected)),
-        m_action(infiniteActionKind(actionData)),
-        m_actionData(std::move(actionData)),
-        m_message(std::move(message)) {}
+      Message message);
 
   std::array<std::uint8_t, 32> m_binding;
   InfiniteExpectedSessionState m_expected;

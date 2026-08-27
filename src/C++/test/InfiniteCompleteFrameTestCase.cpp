@@ -34,6 +34,7 @@
 #include <stdexcept>
 #include <string>
 #include <time.h>
+#include <type_traits>
 #include <vector>
 
 #include "catch_amalgamated.hpp"
@@ -178,6 +179,11 @@ auto observedAt(std::int64_t value) {
 } // namespace
 
 TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
+  SECTION("sensitive frame ownership moves without a fallback copy") {
+    CHECK(std::is_nothrow_move_constructible_v<InfiniteCompleteFrame>);
+    CHECK(std::is_nothrow_move_assignable_v<InfiniteCompleteFrame>);
+  }
+
   SECTION("batch limits must be positive") {
     CHECK_THROWS_AS(InfiniteCompleteFrameDispatcher({0, 1}), std::invalid_argument);
     CHECK_THROWS_AS(InfiniteCompleteFrameDispatcher({1, 0}), std::invalid_argument);
@@ -535,14 +541,21 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     CHECK(valid.frames[0].bytes == message);
   }
 
-  SECTION("owned frame destruction erases its inline byte copy") {
-    constexpr const char marker[] = "frame-secret";
-    alignas(InfiniteCompleteFrame) std::array<unsigned char, sizeof(InfiniteCompleteFrame)> storage{};
-    auto *frame = new (storage.data()) InfiniteCompleteFrame{marker, 1};
-    REQUIRE(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) != storage.end());
+  SECTION("frame ownership scrubs string inputs and transfers without copying") {
+    constexpr const char marker[] = "move-secret";
+    alignas(std::string) std::array<unsigned char, sizeof(std::string)> sourceStorage{};
+    auto *source = new (sourceStorage.data()) std::string(marker);
+    InfiniteCompleteFrame frame{std::move(*source), 1};
+    const auto *const ownedBytes = frame.bytes.data();
 
-    frame->~InfiniteCompleteFrame();
+    source->~basic_string();
+    InfiniteCompleteFrame destination{std::move(frame)};
 
-    CHECK(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) == storage.end());
+    CHECK(destination.bytes == marker);
+    CHECK(
+        std::search(sourceStorage.begin(), sourceStorage.end(), std::begin(marker) + 1, std::end(marker) - 1)
+        == sourceStorage.end());
+    CHECK(destination.bytes.data() == ownedBytes);
+    CHECK(frame.bytes.empty());
   }
 }

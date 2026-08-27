@@ -36,6 +36,53 @@ namespace FIX {
 Session::Sessions Session::s_sessions;
 Session::SessionIDs Session::s_sessionIDs;
 Session::Sessions Session::s_registered;
+
+SessionState::~SessionState() {
+  for (auto &entry : m_queue) {
+    Session::cleanseInfiniteMessage(entry.second);
+  }
+}
+
+void SessionState::queue(SEQNUM msgSeqNum, const Message &message) {
+  auto replacement = message;
+  Locker l(m_mutex);
+  const auto found = m_queue.find(msgSeqNum);
+  if (found == m_queue.end()) {
+    m_queue.emplace(msgSeqNum, std::move(replacement));
+    return;
+  }
+  Session::cleanseInfiniteMessage(found->second);
+  found->second = std::move(replacement);
+}
+
+bool SessionState::retrieve(SEQNUM msgSeqNum, Message &message) {
+  Locker l(m_mutex);
+  const auto found = m_queue.find(msgSeqNum);
+  if (found == m_queue.end()) {
+    return false;
+  }
+  message = found->second;
+  Session::cleanseInfiniteMessage(found->second);
+  m_queue.erase(found);
+  return true;
+}
+
+void SessionState::clearQueue() {
+  Locker l(m_mutex);
+  for (auto &entry : m_queue) {
+    Session::cleanseInfiniteMessage(entry.second);
+  }
+  m_queue.clear();
+}
+
+void SessionState::clearQueueUpTo(SEQNUM msgSeqNum) {
+  Locker l(m_mutex);
+  const auto end = m_queue.lower_bound(msgSeqNum);
+  for (auto entry = m_queue.begin(); entry != end; ++entry) {
+    Session::cleanseInfiniteMessage(entry->second);
+  }
+  m_queue.erase(m_queue.begin(), end);
+}
 Mutex Session::s_mutex;
 
 std::uint64_t Session::nextInfiniteGeneration() {
@@ -627,6 +674,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     fill(header);
     std::string messageString;
+    auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
 
     if (num) {
       header.setField(MsgSeqNum(num));
@@ -634,7 +682,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     if (Message::isAdminMsgType(msgType)) {
       if (m_infinitePlan) {
-        recordInfiniteCallback(InfiniteCallbackKind::ToAdmin, message.toString(), message);
+        auto callbackBytes = message.toString();
+        auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
+        recordInfiniteCallback(InfiniteCallbackKind::ToAdmin, callbackBytes, message);
       } else {
         m_application.toAdmin(message, m_sessionID);
       }
@@ -668,7 +718,9 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
       try {
         if (m_infinitePlan) {
-          recordInfiniteCallback(InfiniteCallbackKind::ToApplication, message.toString(), message);
+          auto callbackBytes = message.toString();
+          auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
+          recordInfiniteCallback(InfiniteCallbackKind::ToApplication, callbackBytes, message);
         } else {
           m_application.toApp(message, m_sessionID);
         }
@@ -747,7 +799,9 @@ bool Session::resend(Message &message) {
   insertSendingTime(header);
 
   if (m_infinitePlan) {
-    recordInfiniteCallback(InfiniteCallbackKind::ToApplication, message.toString(), message);
+    auto callbackBytes = message.toString();
+    auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
+    recordInfiniteCallback(InfiniteCallbackKind::ToApplication, callbackBytes, message);
     return true;
   }
 
@@ -1173,9 +1227,11 @@ bool Session::validLogonState(const MsgType &msgType) {
 
 void Session::fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID) {
   if (m_infinitePlan) {
+    auto callbackBytes = msg.toString();
+    auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
     recordInfiniteCallback(
         Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
-        msg.toString(),
+        callbackBytes,
         msg);
     return;
   }

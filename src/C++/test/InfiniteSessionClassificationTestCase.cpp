@@ -52,6 +52,7 @@
 #include <mutex>
 #include <new>
 #include <thread>
+#include <type_traits>
 
 namespace FIX {
 class InfiniteSessionClassificationTestAccess {
@@ -112,7 +113,7 @@ public:
     if (callbacks.empty()) {
       throw std::logic_error("Expected planned callback");
     }
-    callbacks.front().bytes += "tampered";
+    callbacks.front().bytes = "tampered";
     return authorization;
   }
 
@@ -375,7 +376,7 @@ struct RecordingEndpoint : NullApplication, Responder {
   std::function<void()> fromAppHook;
 };
 
-struct RecordingStore : MemoryStore {
+struct RecordingStore : MemoryStore, InfiniteMessageStoreRevision {
   explicit RecordingStore(const UtcTimeStamp &now, std::vector<std::string> *ledger = nullptr)
       : MemoryStore(now),
         ledger(ledger) {}
@@ -391,6 +392,7 @@ struct RecordingStore : MemoryStore {
     if (stored) {
       recordOperation(ledger, "store:set:" + std::to_string(sequence) + ":" + message);
       ++writes;
+      ++contentRevision;
     }
     return stored;
   }
@@ -437,6 +439,7 @@ struct RecordingStore : MemoryStore {
     recordOperation(ledger, "store:reset");
     ++writes;
     MemoryStore::reset(now);
+    ++contentRevision;
   }
   void refresh() override {
     recordOperation(ledger, "store:refresh");
@@ -462,6 +465,7 @@ struct RecordingStore : MemoryStore {
     }
     return MemoryStore::getCreationTime();
   }
+  std::uint64_t infiniteContentRevision() const noexcept override { return contentRevision; }
 
   int writes{0};
   std::vector<std::string> *ledger;
@@ -470,6 +474,7 @@ struct RecordingStore : MemoryStore {
   bool throwTargetWrite{false};
   bool throwSnapshot{false};
   mutable int getCalls{0};
+  std::uint64_t contentRevision{0};
   mutable bool blockGet{false};
   mutable bool getEntered{false};
   mutable bool releaseGet{false};
@@ -683,6 +688,38 @@ struct Fixture {
 };
 
 TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][session]") {
+  SECTION("sensitive plan ownership moves without fallback copies") {
+    CHECK(std::is_nothrow_move_constructible_v<InfinitePlannedMessage>);
+    CHECK(std::is_nothrow_move_assignable_v<InfinitePlannedMessage>);
+    CHECK(std::is_nothrow_move_constructible_v<InfinitePlannedCallback>);
+    CHECK(std::is_nothrow_move_assignable_v<InfinitePlannedCallback>);
+    CHECK(std::is_nothrow_move_constructible_v<InfinitePlannedEffect>);
+    CHECK(std::is_nothrow_move_assignable_v<InfinitePlannedEffect>);
+    CHECK(std::is_nothrow_move_constructible_v<InfiniteActionPlan>);
+    CHECK(std::is_nothrow_move_assignable_v<InfiniteActionPlan>);
+    CHECK(std::is_nothrow_move_constructible_v<InfiniteEffectAuthorization>);
+    CHECK(std::is_nothrow_move_assignable_v<InfiniteEffectAuthorization>);
+    CHECK(std::is_nothrow_move_constructible_v<InfiniteSessionClassification>);
+    CHECK(std::is_nothrow_move_assignable_v<InfiniteSessionClassification>);
+  }
+
+  SECTION("callback move transfers sensitive ownership without copying") {
+    constexpr const char marker[] = "move-secret";
+    InfiniteExpectedSessionState observedState{};
+    observedState.mutableState.logoutReason = marker;
+    InfinitePlannedCallback source{0, InfiniteCallbackKind::FromApplication, marker, Message(), observedState};
+    const auto *const ownedBytes = source.bytes.data();
+    const auto *const ownedReason = source.observedState.mutableState.logoutReason.data();
+    InfinitePlannedCallback destination{std::move(source)};
+
+    CHECK(destination.bytes == marker);
+    CHECK(destination.observedState.mutableState.logoutReason == marker);
+    CHECK(destination.bytes.data() == ownedBytes);
+    CHECK(destination.observedState.mutableState.logoutReason.data() == ownedReason);
+    CHECK(source.bytes.empty());
+    CHECK(source.observedState.mutableState.logoutReason.empty());
+  }
+
   SECTION("transitive plan cleanup erases live heap-backed callback and effect owners") {
     const std::string marker(512, 's');
 
@@ -739,29 +776,23 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     plan.resultingState.mutableState.queuedMessages.reset();
     CHECK(liveAlias->front().bytes == heapMarker);
 
-    constexpr char inlineMarker[] = "queue-secret";
-    alignas(InfinitePlannedMessage) std::array<unsigned char, sizeof(InfinitePlannedMessage)> storage{};
-    auto *planned = new (storage.data()) InfinitePlannedMessage{1, inlineMarker, Message()};
-    REQUIRE(
-        std::search(storage.begin(), storage.end(), std::begin(inlineMarker), std::end(inlineMarker) - 1)
-        != storage.end());
-    planned->~InfinitePlannedMessage();
-    CHECK(
-        std::search(storage.begin(), storage.end(), std::begin(inlineMarker), std::end(inlineMarker) - 1)
-        == storage.end());
+    InfinitePlannedMessage planned{1, "queue-secret", Message()};
+    const auto *const ownedBytes = planned.bytes.data();
+    InfinitePlannedMessage moved{std::move(planned)};
+    CHECK(moved.bytes.data() == ownedBytes);
+    CHECK(planned.bytes.empty());
   }
 
-  SECTION("owned action-plan destruction erases its inline byte copies") {
+  SECTION("action-plan move transfers sensitive ownership without copying") {
     constexpr const char marker[] = "plan-secret";
-    alignas(InfiniteActionPlan) std::array<unsigned char, sizeof(InfiniteActionPlan)> storage{};
-    auto *plan = new (storage.data())
-        InfiniteActionPlan{"", UtcTimeStamp::now(), InfiniteSequenceDisposition::Unavailable, "", {}, {}, {}, {}, 0};
-    plan->messageType = marker;
-    REQUIRE(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) != storage.end());
+    InfiniteActionPlan plan{"", UtcTimeStamp::now(), InfiniteSequenceDisposition::Unavailable, "", {}, {}, {}, {}, 0};
+    plan.messageType = marker;
+    const auto *const ownedType = plan.messageType.data();
+    InfiniteActionPlan moved{std::move(plan)};
 
-    plan->~InfiniteActionPlan();
-
-    CHECK(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) == storage.end());
+    CHECK(moved.messageType == marker);
+    CHECK(moved.messageType.data() == ownedType);
+    CHECK(plan.messageType.empty());
   }
 
   SECTION("credential cleanup clears Message field and encoding buffers") {
@@ -1903,6 +1934,9 @@ TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][sess
     CHECK(classification.kind() == InfiniteSessionActionKind::ResendOrQueuedRelease);
     CHECK(infiniteActionPlan(classification.actionData()).sourceMessages.size() == 256);
     CHECK(storeFactory.store->getCalls == 1);
+    auto authorization = InfiniteSessionClassificationTestAccess::authorization(classification);
+    InfiniteSessionClassificationTestAccess::apply(session, classification, std::move(authorization));
+    CHECK(storeFactory.store->getCalls == 2);
   }
 
   SECTION("the 16-MiB resend cap rejects one byte over without retaining the prefix") {

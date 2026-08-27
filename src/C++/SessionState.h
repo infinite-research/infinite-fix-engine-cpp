@@ -54,6 +54,7 @@ public:
         m_lastReceivedTime(now),
         m_pStore(0),
         m_pLog(0) {}
+  ~SessionState();
 
   bool enabled() const { return m_enabled; }
   void enabled(bool value) { m_enabled = value; }
@@ -135,28 +136,10 @@ public:
     m_logoutReason = value;
   }
 
-  void queue(SEQNUM msgSeqNum, const Message &message) {
-    Locker l(m_mutex);
-    m_queue[msgSeqNum] = message;
-  }
-  bool retrieve(SEQNUM msgSeqNum, Message &message) {
-    Locker l(m_mutex);
-    Messages::iterator i = m_queue.find(msgSeqNum);
-    if (i != m_queue.end()) {
-      message = i->second;
-      m_queue.erase(i);
-      return true;
-    }
-    return false;
-  }
-  void clearQueue() {
-    Locker l(m_mutex);
-    m_queue.clear();
-  }
-  void clearQueueUpTo(SEQNUM msgSeqNum) {
-    Locker l(m_mutex);
-    m_queue.erase(m_queue.begin(), m_queue.lower_bound(msgSeqNum));
-  }
+  void queue(SEQNUM msgSeqNum, const Message &message);
+  bool retrieve(SEQNUM msgSeqNum, Message &message);
+  void clearQueue();
+  void clearQueueUpTo(SEQNUM msgSeqNum);
 
   bool set(SEQNUM s, const std::string &m) EXCEPT(IOException) {
     Locker l(m_mutex);

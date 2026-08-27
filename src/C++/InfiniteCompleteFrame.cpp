@@ -75,7 +75,31 @@ std::int64_t clockTaiNow() {
 }
 } // namespace
 
-InfiniteCompleteFrame::~InfiniteCompleteFrame() { cleanse(bytes.data(), bytes.size()); }
+InfiniteCompleteFrame::InfiniteCompleteFrame(InfiniteSensitiveString value, std::int64_t observedTaiNs)
+    : bytes(std::move(value)),
+      observedTaiNs(observedTaiNs) {}
+
+InfiniteCompleteFrame::InfiniteCompleteFrame(InfiniteCompleteFrame &&other) noexcept
+    : bytes(std::move(other.bytes)),
+      observedTaiNs(other.observedTaiNs) {}
+
+InfiniteCompleteFrame &InfiniteCompleteFrame::operator=(const InfiniteCompleteFrame &other) {
+  if (this != &other) {
+    auto replacement = other;
+    *this = std::move(replacement);
+  }
+  return *this;
+}
+
+InfiniteCompleteFrame &InfiniteCompleteFrame::operator=(InfiniteCompleteFrame &&other) noexcept {
+  if (this != &other) {
+    bytes = std::move(other.bytes);
+    observedTaiNs = other.observedTaiNs;
+  }
+  return *this;
+}
+
+InfiniteCompleteFrame::~InfiniteCompleteFrame() = default;
 
 InfiniteCompleteFrameDispatcher::InfiniteCompleteFrameDispatcher(InfiniteFrameBatch limits)
     : m_limits(limits) {

@@ -70,9 +70,12 @@ FieldMap &FieldMap::operator=(const FieldMap &rhs) {
 }
 
 FieldMap &FieldMap::operator=(FieldMap &&rhs) {
-  m_fields = std::move(rhs.m_fields);
-  m_groups = std::move(rhs.m_groups);
-  m_order = std::move(rhs.m_order);
+  if (this != &rhs) {
+    clear();
+    m_fields = std::move(rhs.m_fields);
+    m_groups = std::move(rhs.m_groups);
+    m_order = std::move(rhs.m_order);
+  }
   return *this;
 }
 

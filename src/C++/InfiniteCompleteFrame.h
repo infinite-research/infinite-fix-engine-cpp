@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "InfiniteSensitiveString.h"
 #include "Parser.h"
 #include <cstddef>
 #include <cstdint>
@@ -31,9 +32,14 @@ namespace FIX {
 class InfiniteCompleteFrameTestAccess;
 
 struct InfiniteCompleteFrame {
-  std::string bytes;
+  InfiniteSensitiveString bytes;
   std::int64_t observedTaiNs;
 
+  InfiniteCompleteFrame(InfiniteSensitiveString bytes, std::int64_t observedTaiNs);
+  InfiniteCompleteFrame(const InfiniteCompleteFrame &) = default;
+  InfiniteCompleteFrame &operator=(const InfiniteCompleteFrame &other);
+  InfiniteCompleteFrame(InfiniteCompleteFrame &&other) noexcept;
+  InfiniteCompleteFrame &operator=(InfiniteCompleteFrame &&other) noexcept;
   ~InfiniteCompleteFrame();
 
   bool operator==(const InfiniteCompleteFrame &other) const {

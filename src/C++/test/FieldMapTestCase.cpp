@@ -26,6 +26,7 @@
 
 #include <FieldMap.h>
 #include <Message.h>
+#include <utility>
 #include <vector>
 
 #include "catch_amalgamated.hpp"
@@ -33,6 +34,27 @@
 using namespace FIX;
 
 TEST_CASE("FieldMapTests") {
+  SECTION("move assignment releases previously owned groups") {
+    struct TrackedGroup : FieldMap {
+      explicit TrackedGroup(bool &destroyed)
+          : destroyed(destroyed) {}
+      ~TrackedGroup() override { destroyed = true; }
+      bool &destroyed;
+    };
+
+    bool destroyed = false;
+    FieldMap destination;
+    destination.addGroupPtr(1, new TrackedGroup(destroyed), false);
+    FieldMap source;
+    FieldMap sourceGroup;
+    source.addGroup(2, sourceGroup, false);
+
+    destination = std::move(source);
+
+    CHECK(destroyed);
+    CHECK(destination.groupCount(2) == 1);
+  }
+
   SECTION("setMessageOrder") {
     int order[] = {1, 2, 3, 0}; // '0' is used to signify the end of array passed to FieldMap()
     FieldMap fieldMap(order);
