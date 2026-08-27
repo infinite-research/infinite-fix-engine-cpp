@@ -175,14 +175,26 @@ sudo make install
     <br/><hr/>
     <h1>Installed Infinite C ABI</h1>
 
-    <p>The static build installs <code>quickfix/InfiniteFrameAdapter.h</code>,
-    <code>libquickfix.a</code>, and the immutable FIX dictionaries under
-    <code>share/quickfix</code>. Configure CMake with the final absolute
+    <p>By default, the static build installs
+    <code>quickfix/InfiniteFrameAdapter.h</code>, <code>libquickfix.a</code>, and
+    the immutable FIX dictionaries under <code>share/quickfix</code>. Configure
+    CMake with the final absolute
     <code>-DCMAKE_INSTALL_PREFIX=/final/path</code> before building, then run
     <code>cmake --install &lt;build-directory&gt;</code> without
     <code>--prefix</code>. The adapter embeds that exact dictionary directory;
     CMake rejects a relative configured prefix and any install-time prefix
     override so the archive and installed dictionaries cannot disagree.</p>
+
+    <p>A self-contained Linux amd64 archive can instead embed the nine approved
+    QuickFIX dictionaries:</p>
+    <pre class='fragment'>
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON \
+  -DQUICKFIX_SHARED_LIBS=OFF -DIRFQ_INFINITE_EMBED_DICTIONARIES=ON
+</pre>
+    <p>This opt-in profile requires GNU <code>objcopy</code> and verifies every
+    dictionary SHA-256 during configuration before generating resources. The
+    resulting archive does not read dictionaries from an installed path at
+    runtime.</p>
 
     <p>A C11 consumer must include the installed header, statically link
     <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime

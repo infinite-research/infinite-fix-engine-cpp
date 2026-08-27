@@ -71,8 +71,66 @@ option(QUICKFIX_SHARED_LIBS "Build using shared libraries" ON)
 # add option to build other targets
 option(QUICKFIX_EXAMPLES "Build quickfix examples" ON)
 option(QUICKFIX_TESTS "Build quickfix tests" ON)
+option(IRFQ_INFINITE_EMBED_DICTIONARIES "Embed approved FIX dictionaries in the static Infinite adapter archive" OFF)
 if (QUICKFIX_TESTS)
   enable_testing()
+endif()
+
+if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+  if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires CMAKE_BUILD_TYPE=Release")
+  endif()
+  if(NOT HAVE_SSL)
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires HAVE_SSL=ON")
+  endif()
+  if(QUICKFIX_SHARED_LIBS)
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires QUICKFIX_SHARED_LIBS=OFF")
+  endif()
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"
+     OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires Linux amd64")
+  endif()
+
+  find_program(IRFQ_INFINITE_OBJCOPY NAMES objcopy)
+  find_program(IRFQ_INFINITE_READELF NAMES readelf)
+  if(NOT IRFQ_INFINITE_OBJCOPY OR NOT IRFQ_INFINITE_READELF OR NOT CMAKE_LINKER)
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires objcopy, readelf, and a linker")
+  endif()
+  execute_process(COMMAND ${IRFQ_INFINITE_OBJCOPY} --version OUTPUT_VARIABLE _irfq_objcopy_version)
+  if(NOT _irfq_objcopy_version MATCHES "GNU objcopy")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires GNU objcopy")
+  endif()
+  unset(_irfq_objcopy_version)
+
+  set(IRFQ_INFINITE_DICTIONARY_PINS
+      FIX40.xml=b5ea484db2b66d6385413dac4cc57b1a2293cedc3f3ac9e3c5200ec1d2df817b
+      FIX41.xml=f29c5a4af3158bd6b857d8e369a4a0a532775b3ef5416b0484e3fc7ef7bc7c1d
+      FIX42.xml=de70931a0bbb7c06ee0cd1aed3621a090aea2439dfb7946aa5cd4e481f8cd3fa
+      FIX43.xml=87e3b757743cb3070f60ad9b6080dfbd04ac015ef1277d1a14dd9d4af5bead4e
+      FIX44.xml=a82655b54363aa9c6d1b2f21f294f1198c0d7125d7b44c26d93d3179f3358425
+      FIX50.xml=e0f2097b6440ff34ecae3ade7170bcd033f4c14abb22a57cce7db2005ef2be09
+      FIX50SP1.xml=05c1b19e560b51702185d93e3905f596126873be60d54b578d70ea827bdfaf00
+      FIX50SP2.xml=7d34e565586dd4096a08691d10e415b5a2fd531a8dadfcfc831daea419d3c3f3
+      FIXT11.xml=baf0ef6ddebbbbe32c6d66c00bd4a9bab7ded324c4bbca6a07f42e808090bf20)
+  set(IRFQ_INFINITE_DICTIONARY_NAMES)
+  foreach(_irfq_pin IN LISTS IRFQ_INFINITE_DICTIONARY_PINS)
+    string(REPLACE "=" ";" _irfq_fields "${_irfq_pin}")
+    list(GET _irfq_fields 0 _irfq_name)
+    list(GET _irfq_fields 1 _irfq_expected)
+    set(_irfq_path "${CMAKE_CURRENT_SOURCE_DIR}/spec/${_irfq_name}")
+    list(APPEND IRFQ_INFINITE_DICTIONARY_NAMES "${_irfq_name}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_irfq_path}")
+    file(SHA256 "${_irfq_path}" _irfq_actual)
+    if(NOT _irfq_actual STREQUAL _irfq_expected)
+      message(FATAL_ERROR "${_irfq_name} SHA-256 mismatch: expected ${_irfq_expected}, got ${_irfq_actual}")
+    endif()
+  endforeach()
+  unset(_irfq_actual)
+  unset(_irfq_expected)
+  unset(_irfq_fields)
+  unset(_irfq_name)
+  unset(_irfq_path)
+  unset(_irfq_pin)
 endif()
 
 #Make sure that a previous config.h has not undefined HAVE_SSL

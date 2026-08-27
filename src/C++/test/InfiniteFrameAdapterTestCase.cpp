@@ -216,6 +216,8 @@ struct CallbackContext {
   irfq_infinite_status_v1 secondNestedStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 firstCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 secondCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_operation_response_v1 firstCloseResponse{};
+  irfq_infinite_operation_response_v1 secondCloseResponse{};
   irfq_infinite_status_v1 firstShutdownStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 secondShutdownStatus{IRFQ_INFINITE_STATUS_OK_V1};
   bool crossCloseOnRelease{false};
@@ -224,6 +226,14 @@ struct CallbackContext {
   irfq_infinite_status_v1 secondReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 bootstrapCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 fenceCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_operation_response_v1 bootstrapCloseResponse{};
+  irfq_infinite_operation_response_v1 fenceCloseResponse{};
+  bool enforceWaitTokenOrder{false};
+  irfq_infinite_handle_v1 lowerWaitToken{};
+  irfq_infinite_handle_v1 laterWaitToken{};
+  bool laterWaitEntered{false};
+  bool lowerRetired{false};
+  bool laterWaitTimedOut{false};
   bool omitRegistrationResult{false};
   bool gapRegistrationOrdinal{false};
   bool bootstrapReservedNonzero{false};
@@ -266,10 +276,20 @@ irfq_infinite_status_v1 nestedDispatch(irfq_infinite_handle_v1 connection, const
   return irfq_infinite_connection_dispatch_v1(connection, &nestedRequest, nestedResponse.data(), nestedResponse.size());
 }
 
-irfq_infinite_status_v1 nestedClose(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
+struct CloseResult {
+  irfq_infinite_status_v1 status;
+  irfq_infinite_operation_response_v1 response;
+};
+
+CloseResult nestedCloseResult(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
   const irfq_infinite_close_request_v1 request{sizeof(request), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, reason, {}};
   auto response = output<irfq_infinite_operation_response_v1>();
-  return irfq_infinite_connection_close_v1(connection, &request, &response, sizeof(response));
+  const auto status = irfq_infinite_connection_close_v1(connection, &request, &response, sizeof(response));
+  return {status, response};
+}
+
+irfq_infinite_status_v1 nestedClose(irfq_infinite_handle_v1 connection, std::uint32_t reason = 1) {
+  return nestedCloseResult(connection, reason).status;
 }
 
 irfq_infinite_status_v1 nestedWait(irfq_infinite_handle_v1 connection, irfq_infinite_handle_v1 token) {
@@ -330,7 +350,9 @@ irfq_infinite_status_v1 bootstrapCallback(
   response.reserved[0] = context.bootstrapReservedNonzero ? 1 : 0;
   const auto status = publishFixed(outputBuffer, capacity, response);
   if (context.closeCrossConnectionOnBootstrap) {
-    context.bootstrapCloseStatus = nestedClose(context.crossConnection, UINT32_C(71));
+    const auto closed = nestedCloseResult(context.crossConnection, UINT32_C(71));
+    context.bootstrapCloseStatus = closed.status;
+    context.bootstrapCloseResponse = closed.response;
   }
   if (context.throwAfterBootstrapAccept) {
     throw std::runtime_error("bootstrap callback failure after acceptance");
@@ -394,14 +416,16 @@ irfq_infinite_status_v1 registerCallback(
       context.condition.notify_all();
       context.condition.wait(lock, [&context]() { return context.concurrentCallbacksEntered == 2; });
     }
-    const auto status
-        = nestedClose(first ? context.secondAdapterConnection : context.firstAdapterConnection, first ? 41 : 42);
+    const auto closed
+        = nestedCloseResult(first ? context.secondAdapterConnection : context.firstAdapterConnection, first ? 41 : 42);
     {
       std::unique_lock<std::mutex> lock(context.mutex);
       if (first) {
-        context.firstCloseStatus = status;
+        context.firstCloseStatus = closed.status;
+        context.firstCloseResponse = closed.response;
       } else {
-        context.secondCloseStatus = status;
+        context.secondCloseStatus = closed.status;
+        context.secondCloseResponse = closed.response;
       }
       ++context.concurrentNestedCompleted;
       context.condition.notify_all();
@@ -483,7 +507,7 @@ irfq_infinite_status_v1 registerCallback(
 
 irfq_infinite_status_v1 waitCallback(
     void *opaque,
-    const irfq_infinite_head_callback_request_v1 *,
+    const irfq_infinite_head_callback_request_v1 *request,
     void *outputBuffer,
     std::uint64_t capacity) {
   auto &context = *static_cast<CallbackContext *>(opaque);
@@ -492,6 +516,14 @@ irfq_infinite_status_v1 waitCallback(
     ++context.waitCallCount;
     context.waitEntered = true;
     context.condition.notify_all();
+    if (context.enforceWaitTokenOrder && request->token.object == context.laterWaitToken.object
+        && request->token.generation == context.laterWaitToken.generation) {
+      context.laterWaitEntered = true;
+      context.condition.notify_all();
+      if (!context.condition.wait_for(lock, std::chrono::seconds(2), [&context]() { return context.lowerRetired; })) {
+        context.laterWaitTimedOut = true;
+      }
+    }
     context.condition.wait(lock, [&context]() { return !context.blockWait || context.allowWait; });
   }
   if (context.reenterWait) {
@@ -554,7 +586,9 @@ irfq_infinite_status_v1 fenceCallback(void *opaque, irfq_infinite_handle_v1, std
     throw std::runtime_error("fence callback failure");
   }
   if (context.closeSameHandleFromFence) {
-    context.fenceCloseStatus = nestedClose(context.crossConnection, UINT32_C(72));
+    const auto closed = nestedCloseResult(context.crossConnection, UINT32_C(72));
+    context.fenceCloseStatus = closed.status;
+    context.fenceCloseResponse = closed.response;
   }
   return context.fenceAcknowledgement;
 }
@@ -1579,7 +1613,13 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence
   REQUIRE(origin.status == IRFQ_INFINITE_STATUS_OK_V1);
 
   CHECK(context.bootstrapCloseStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.bootstrapCloseResponse.header.status == context.bootstrapCloseStatus);
+  CHECK(context.bootstrapCloseResponse.header.written_length == sizeof(context.bootstrapCloseResponse));
+  CHECK(context.bootstrapCloseResponse.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
   CHECK(context.fenceCloseStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.fenceCloseResponse.header.status == context.fenceCloseStatus);
+  CHECK(context.fenceCloseResponse.header.written_length == sizeof(context.fenceCloseResponse));
+  CHECK(context.fenceCloseResponse.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
   CHECK(context.fenceCount == 1);
   CHECK(context.releaseCount == 0);
 
@@ -2045,6 +2085,12 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-cycle
   secondDispatch.join();
   CHECK(context.firstCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.secondCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(context.firstCloseResponse.header.status == context.firstCloseStatus);
+  CHECK(context.secondCloseResponse.header.status == context.secondCloseStatus);
+  CHECK(context.firstCloseResponse.header.written_length == sizeof(context.firstCloseResponse));
+  CHECK(context.secondCloseResponse.header.written_length == sizeof(context.secondCloseResponse));
+  CHECK(context.firstCloseResponse.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+  CHECK(context.secondCloseResponse.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
   CHECK(context.concurrentNestedCompleted == 2);
   CHECK((statuses[0] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[0] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
   CHECK((statuses[1] == IRFQ_INFINITE_STATUS_OK_V1 || statuses[1] == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1));
@@ -2053,6 +2099,106 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-cycle
   context.concurrentCrossCloses = false;
   closeConnection(first.response.connection);
   closeConnection(second.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fifo-wait]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  context.enforceWaitTokenOrder = true;
+  context.lowerWaitToken = {context.nextToken, UINT64_C(1)};
+  context.laterWaitToken = {context.nextToken + 1, UINT64_C(1)};
+  const auto initialized = initializeEngine(context);
+  const auto bootstrapped = bootstrapConnection(initialized.engine, "FIFOWAIT", UINT64_C(9350));
+  REQUIRE(bootstrapped.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto lower = finishFix("35=0\00134=2\00149=FIFOWAIT\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto later = finishFix("35=0\00134=3\00149=FIFOWAIT\00156=VENUE\00152=20260826-08:08:10.000\001");
+  const auto batch = lower + later;
+  const irfq_infinite_dispatch_request_v1 dispatch{
+      sizeof(dispatch),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {reinterpret_cast<const std::uint8_t *>(batch.data()), batch.size()},
+      {}};
+  auto bytes = dispatchOutput();
+  REQUIRE(
+      irfq_infinite_connection_dispatch_v1(bootstrapped.response.connection, &dispatch, bytes.data(), bytes.size())
+      == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto *response = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(bytes.data());
+  REQUIRE(response->result_count == 2);
+  const auto *registered
+      = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
+  const auto lowerToken = registered[0].token;
+  const auto laterToken = registered[1].token;
+
+  SECTION("lower retirement advances later wait") {
+    irfq_infinite_status_v1 laterWaitStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread laterWait([&]() { laterWaitStatus = waitAtHead(bootstrapped.response.connection, laterToken); });
+    {
+      std::unique_lock<std::mutex> lock(context.mutex);
+      context.condition.wait_for(lock, std::chrono::milliseconds(500), [&context]() {
+        return context.laterWaitEntered;
+      });
+    }
+
+    irfq_infinite_status_v1 lowerWaitStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    irfq_infinite_status_v1 lowerClassifyStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    irfq_infinite_status_v1 lowerApplyStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread lowerRetirement([&]() {
+      lowerWaitStatus = waitAtHead(bootstrapped.response.connection, lowerToken);
+      if (lowerWaitStatus == IRFQ_INFINITE_STATUS_AT_HEAD_V1) {
+        const auto classified = classifyAtHead(bootstrapped.response.connection, lowerToken);
+        lowerClassifyStatus = classified.first;
+        if (lowerClassifyStatus == IRFQ_INFINITE_STATUS_CLASSIFIED_V1) {
+          lowerApplyStatus = applyClassification(bootstrapped.response.connection, classified.second);
+        }
+      }
+      {
+        std::lock_guard<std::mutex> lock(context.mutex);
+        context.lowerRetired = true;
+      }
+      context.condition.notify_all();
+    });
+
+    lowerRetirement.join();
+    laterWait.join();
+    CHECK_FALSE(context.laterWaitTimedOut);
+    CHECK(lowerWaitStatus == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    CHECK(lowerClassifyStatus == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+    CHECK(lowerApplyStatus == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(laterWaitStatus == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    CHECK(context.waitCallCount == 2);
+  }
+
+  SECTION("close wakes a locally waiting token") {
+    std::atomic<bool> waitStarting{false};
+    CloseResult closed{IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1, {}};
+    std::thread closing([&]() {
+      while (!waitStarting.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      closed = nestedCloseResult(bootstrapped.response.connection, UINT32_C(93));
+    });
+    const irfq_infinite_head_request_v1 head{sizeof(head), IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1, laterToken, {}};
+    auto waited = output<irfq_infinite_operation_response_v1>();
+    waitStarting.store(true, std::memory_order_release);
+    const auto waitStatus
+        = irfq_infinite_connection_wait_head_v1(bootstrapped.response.connection, &head, &waited, sizeof(waited));
+    closing.join();
+    CHECK(waitStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(waited.header.status == waitStatus);
+    CHECK(waited.header.written_length == sizeof(waited));
+    CHECK(waited.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+    CHECK(context.waitCallCount == 0);
+    CHECK(closed.status == IRFQ_INFINITE_STATUS_CLOSED_V1);
+    CHECK(closed.response.header.status == closed.status);
+    CHECK(closed.response.header.written_length == sizeof(closed.response));
+    CHECK(closed.response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSED_V1);
+  }
+
+  closeConnection(bootstrapped.response.connection);
   shutdownEngine(initialized.engine);
 #endif
 }
@@ -3150,7 +3296,6 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][capability-retiremen
     const auto *registrations
         = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(bytes.data() + sizeof(*response));
     REQUIRE(waitAtHead(bootstrapped.response.connection, registrations[0].token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
-    REQUIRE(waitAtHead(bootstrapped.response.connection, registrations[1].token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
     REQUIRE(
         classifyAtHead(bootstrapped.response.connection, registrations[0].token).first
         == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
