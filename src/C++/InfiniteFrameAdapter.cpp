@@ -315,6 +315,14 @@ bool validCallbackResponse(
 struct Engine;
 struct Connection;
 
+std::mutex registryMutex;
+// Terminal callback failures keep their handles queryable until process exit, so registry storage must outlive Session
+// statics.
+auto &engines = *new std::map<std::uint64_t, std::shared_ptr<Engine>>;
+auto &connections = *new std::map<irfq_infinite_handle_v1, std::shared_ptr<Connection>, HandleLess>;
+std::uint64_t nextObject{1};
+std::uint64_t nextGeneration{1};
+
 using ActiveCallback = std::pair<const Engine *, const Connection *>;
 thread_local std::vector<ActiveCallback> activeCallbacks;
 
@@ -409,6 +417,16 @@ struct Connection : std::enable_shared_from_this<Connection> {
       throw InvalidMessage("Infinite bootstrap requires initial Logon");
     }
     sessionId = SessionID(beginString, target, sender);
+    {
+      std::lock_guard<std::mutex> lock(registryMutex);
+      const auto retained = std::any_of(connections.begin(), connections.end(), [this](const auto &entry) {
+        return entry.second.get() != this && entry.second->identityQuarantined.load(std::memory_order_acquire)
+               && entry.second->sessionId == sessionId;
+      });
+      if (retained) {
+        throw std::logic_error("Duplicate Infinite session identity");
+      }
+    }
     const auto dictionaryPath = std::string(IRFQ_INFINITE_DICTIONARY_PATH) + "/";
     if (beginString == BeginString_FIXT11) {
       dictionaryName(beginString, logon);
@@ -509,6 +527,7 @@ struct Connection : std::enable_shared_from_this<Connection> {
   bool terminalFailure{false};
   std::size_t inFlight{0};
   std::atomic<bool> faulted{false};
+  std::atomic<bool> identityQuarantined{false};
   std::mutex fenceMutex;
   std::condition_variable fenceCondition;
   FenceState fenceState{FenceState::NotStarted};
@@ -525,14 +544,6 @@ struct Connection : std::enable_shared_from_this<Connection> {
   std::map<irfq_infinite_handle_v1, Candidate, HandleLess> candidates;
   std::map<irfq_infinite_handle_v1, PendingClassification, HandleLess> classifications;
 };
-
-std::mutex registryMutex;
-// Terminal callback failures keep their handles queryable until process exit, so registry storage must outlive Session
-// statics.
-auto &engines = *new std::map<std::uint64_t, std::shared_ptr<Engine>>;
-auto &connections = *new std::map<irfq_infinite_handle_v1, std::shared_ptr<Connection>, HandleLess>;
-std::uint64_t nextObject{1};
-std::uint64_t nextGeneration{1};
 
 irfq_infinite_handle_v1 nextHandle() {
   std::lock_guard<std::mutex> lock(registryMutex);
@@ -677,6 +688,7 @@ bool fenceConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason) noexcept;
+void discardTerminalConnectionStateIfQuiescent(const std::shared_ptr<Connection> &connection) noexcept;
 
 class ConnectionCall {
 public:
@@ -724,6 +736,7 @@ public:
       --m_connection->inFlight;
     }
     m_connection->lifecycleCondition.notify_all();
+    discardTerminalConnectionStateIfQuiescent(m_connection);
   }
 
   ConnectionCall(const ConnectionCall &) = delete;
@@ -835,7 +848,9 @@ bool fenceConnection(
   connection->fenceCondition.notify_all();
   connection->lifecycleCondition.notify_all();
   if (!acknowledged) {
+    connection->identityQuarantined.store(true, std::memory_order_release);
     markConnectionTerminalFailure(connection);
+    discardTerminalConnectionStateIfQuiescent(connection);
   }
   return acknowledged;
 }
@@ -909,6 +924,28 @@ void discardConnectionState(const std::shared_ptr<Connection> &connection) {
   connection->session.reset();
 }
 
+void discardTerminalConnectionStateIfQuiescent(const std::shared_ptr<Connection> &connection) noexcept {
+  try {
+    {
+      std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
+      if (!connection->terminalFailure || connection->inFlight != 0) {
+        return;
+      }
+    }
+    std::unique_lock<std::mutex> lane(connection->lane, std::try_to_lock);
+    if (!lane.owns_lock()) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
+      if (!connection->terminalFailure || connection->inFlight != 0) {
+        return;
+      }
+    }
+    discardConnectionState(connection);
+  } catch (...) {}
+}
+
 bool completeCloseConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
@@ -972,6 +1009,8 @@ bool tryCloseConnectionFromCallback(
   connection->faulted.store(true, std::memory_order_release);
   lifecycle.unlock();
   if (!fenceConnection(engine, connection, reason)) {
+    lane.unlock();
+    discardTerminalConnectionStateIfQuiescent(connection);
     return false;
   }
   return completeCloseConnection(engine, connection, reason, std::move(lane));

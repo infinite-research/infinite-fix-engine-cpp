@@ -20,6 +20,7 @@
 #include "InfiniteCompleteFrame.h"
 #include "InfiniteFrameAdapter.h"
 #include "InfiniteFrameAdapterStore.h"
+#include "Session.h"
 
 #include "catch_amalgamated.hpp"
 
@@ -2833,6 +2834,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][terminal-dispatch-cl
 
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle-callback-failure]") {
   const auto exercise = [](bool releaseFailure) {
+    const auto registeredSessions = FIX::Session::numSessions();
     CallbackContext context;
     const auto initialized = initializeEngine(context);
     const auto bootstrapped
@@ -2854,6 +2856,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle-callback-f
         == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
     CHECK(response.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
     CHECK(response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+    CHECK(FIX::Session::numSessions() == registeredSessions);
     auto dispatch = dispatchOutput();
     const irfq_infinite_dispatch_request_v1 empty{
         sizeof(empty),
