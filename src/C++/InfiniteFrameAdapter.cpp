@@ -37,10 +37,6 @@
 #include "Values.h"
 #include "scope_guard.hpp"
 
-#ifdef HAVE_SSL
-#include <openssl/crypto.h>
-#endif
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -250,18 +246,6 @@ private:
   std::vector<std::uint64_t> m_words;
   std::size_t m_size;
 };
-
-void secureErase(std::string &bytes) noexcept {
-#ifdef HAVE_SSL
-  OPENSSL_cleanse(bytes.data(), bytes.size());
-#else
-  volatile char *cursor = bytes.empty() ? nullptr : &bytes[0];
-  for (std::size_t index = 0; index < bytes.size(); ++index) {
-    cursor[index] = 0;
-  }
-#endif
-  bytes.clear();
-}
 
 void secureErase(InfiniteSensitiveString &bytes) noexcept { bytes.clear(); }
 
