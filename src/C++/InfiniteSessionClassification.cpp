@@ -134,6 +134,12 @@ public:
         m_plan(plan),
         m_now(now) {}
 
+  ~RecordingMessageStore() override {
+    for (auto &entry : m_messages) {
+      cleanse(entry.second);
+    }
+  }
+
   bool set(SEQNUM sequence, const std::string &message) override {
     m_messages[sequence] = message;
     appendEffect(m_plan, InfiniteEffectKind::StoreMessage, sequence, message, m_now);
@@ -251,6 +257,9 @@ public:
   UtcTimeStamp getCreationTime() const override { return m_creationTime; }
 
   void reset(const UtcTimeStamp &now) override {
+    for (auto &entry : m_messages) {
+      cleanse(entry.second);
+    }
     m_messages.clear();
     m_reset = true;
     m_senderSequence = 1;
@@ -357,6 +366,28 @@ private:
   UtcTimeStamp m_now;
 };
 } // namespace
+
+InfinitePlannedMessage::~InfinitePlannedMessage() {
+  cleanse(bytes);
+  Session::cleanseInfiniteMessage(message);
+}
+
+InfinitePlannedCallback::~InfinitePlannedCallback() {
+  cleanse(bytes);
+  Session::cleanseInfiniteMessage(message);
+  Session::cleanseInfiniteExpectedState(observedState);
+}
+
+InfinitePlannedEffect::~InfinitePlannedEffect() { cleanse(bytes); }
+
+InfiniteActionPlan::~InfiniteActionPlan() { Session::cleanseInfiniteActionPlan(*this); }
+
+InfiniteEffectAuthorization::~InfiniteEffectAuthorization() { Session::cleanseInfiniteExpectedState(m_expected); }
+
+InfiniteSessionClassification::~InfiniteSessionClassification() {
+  Session::cleanseInfiniteExpectedState(m_expected);
+  Session::cleanseInfiniteMessage(m_message);
+}
 
 bool InfinitePlannedCallback::operator==(const InfinitePlannedCallback &rhs) const {
   return order == rhs.order && kind == rhs.kind && bytes == rhs.bytes && observedState == rhs.observedState;
@@ -471,7 +502,8 @@ InfiniteExpectedSessionState Session::currentInfiniteExpectedState(
         throw std::length_error("Infinite queued message bytes exceed bound");
       }
       queuedBytes += bytes.size();
-      captured->push_back(InfinitePlannedMessage{entry.first, std::move(bytes), entry.second});
+      auto bytesGuard = sg::make_scope_guard([&bytes]() { cleanse(bytes); });
+      captured->push_back(InfinitePlannedMessage{entry.first, bytes, entry.second});
     }
     queue = std::move(captured);
   }
@@ -566,6 +598,13 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
       headerOnly.setStringHeader(bytes);
       ApplVerID applVerID = m_targetDefaultApplVerID;
       headerOnly.getHeader().getFieldIfSet(applVerID);
+      const auto &applicationVersion = applVerID.getValue();
+      if (applicationVersion != ApplVerID_FIX40 && applicationVersion != ApplVerID_FIX41
+          && applicationVersion != ApplVerID_FIX42 && applicationVersion != ApplVerID_FIX43
+          && applicationVersion != ApplVerID_FIX44 && applicationVersion != ApplVerID_FIX50
+          && applicationVersion != ApplVerID_FIX50_SP1 && applicationVersion != ApplVerID_FIX50_SP2) {
+        throw std::invalid_argument("Infinite FIXT frame uses an unsupported application dictionary");
+      }
       const DataDictionary &applicationDictionary = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
       message = Message(bytes, sessionDictionary, applicationDictionary, m_validateLengthAndChecksum);
     } else {
@@ -685,6 +724,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   } catch (const std::exception &error) {
     restore();
     restoreGuard.dismiss();
+    for (auto &source : plan.sourceMessages) {
+      cleanse(source.second);
+    }
     plan.sourceMessages.clear();
     plan.sourceRangeRead = false;
     plan.sourceRangeBegin = 0;
@@ -697,6 +739,9 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   } catch (...) {
     restore();
     restoreGuard.dismiss();
+    for (auto &source : plan.sourceMessages) {
+      cleanse(source.second);
+    }
     plan.sourceMessages.clear();
     plan.sourceRangeRead = false;
     plan.sourceRangeBegin = 0;
@@ -938,6 +983,45 @@ void Session::cleanseInfiniteMessageCredentials(Message &message) noexcept {
   cleanseInfiniteFieldMapCredentials(message);
   cleanseInfiniteFieldMapCredentials(message.getHeader());
   cleanseInfiniteFieldMapCredentials(message.getTrailer());
+}
+
+void Session::cleanseInfiniteMessage(Message &message) noexcept {
+  cleanseInfiniteFieldMap(message);
+  cleanseInfiniteFieldMap(message.getHeader());
+  cleanseInfiniteFieldMap(message.getTrailer());
+}
+
+void Session::cleanseInfiniteFieldMap(FieldMap &fields) noexcept {
+  for (auto &field : fields) {
+    cleanse(field.m_string);
+    cleanse(field.m_data);
+    try {
+      field.setString("");
+    } catch (...) {}
+  }
+  for (const auto &groupSet : fields.groups()) {
+    for (auto *group : groupSet.second) {
+      if (group) {
+        cleanseInfiniteFieldMap(*group);
+      }
+    }
+  }
+}
+
+void Session::cleanseInfiniteExpectedState(InfiniteExpectedSessionState &expected) noexcept {
+  auto &state = expected.mutableState;
+  cleanse(state.logoutReason);
+  cleanse(state.senderDefaultApplVerID);
+  cleanse(state.targetDefaultApplVerID);
+}
+
+void Session::cleanseInfiniteActionPlan(InfiniteActionPlan &plan) noexcept {
+  cleanse(plan.messageType);
+  cleanse(plan.failure);
+  cleanseInfiniteExpectedState(plan.resultingState);
+  for (auto &source : plan.sourceMessages) {
+    cleanse(source.second);
+  }
 }
 
 void Session::cleanseInfiniteFieldMapCredentials(FieldMap &fields) noexcept {

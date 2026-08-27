@@ -24,9 +24,12 @@
 #endif
 
 #include <InfiniteCompleteFrame.h>
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -530,5 +533,16 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     const auto valid = emptyInput.process(message.data(), message.size(), observedAt(1));
     REQUIRE(valid.frames.size() == 1);
     CHECK(valid.frames[0].bytes == message);
+  }
+
+  SECTION("owned frame destruction erases its inline byte copy") {
+    constexpr const char marker[] = "frame-secret";
+    alignas(InfiniteCompleteFrame) std::array<unsigned char, sizeof(InfiniteCompleteFrame)> storage{};
+    auto *frame = new (storage.data()) InfiniteCompleteFrame{marker, 1};
+    REQUIRE(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) != storage.end());
+
+    frame->~InfiniteCompleteFrame();
+
+    CHECK(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) == storage.end());
   }
 }

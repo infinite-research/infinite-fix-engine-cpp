@@ -288,8 +288,10 @@ typedef irfq_infinite_status_v1 (*irfq_infinite_bootstrap_callback_v1)(
  * starts with a preinitialized `irfq_infinite_dispatch_response_v1`. OK requires
  * one immediately following registration result per input frame; ordinals must
  * increase exactly, tokens must be live and unique, and observation values must
- * match. NOT_REGISTERED and STREAM_FENCED require zero results. The returned
- * status, header status, and exact written length must agree.
+ * match. On OK, `written_length` is exactly the response prefix plus one result
+ * per input frame. NOT_REGISTERED and STREAM_FENCED require zero results and a
+ * `written_length` of exactly `sizeof(irfq_infinite_dispatch_response_v1)`.
+ * The returned status and header status must agree.
  */
 typedef irfq_infinite_status_v1 (*irfq_infinite_registration_callback_v1)(
     void *context,
@@ -312,8 +314,10 @@ typedef irfq_infinite_status_v1 (*irfq_infinite_head_callback_v1)(
  * are borrowed for this invocation. `output` is a preinitialized
  * `irfq_infinite_classification_callback_response_v1`. Return AUTHORIZED_CONSUME
  * or AUTHORIZED_NO_CONSUME with a nonzero caller-owned authorization handle, or
- * STREAM_FENCED. `outcome`, header status, function result, and exact written
- * length must agree.
+ * STREAM_FENCED. For every non-failure plan, sequence disposition AT_HEAD
+ * requires AUTHORIZED_CONSUME; every other disposition requires
+ * AUTHORIZED_NO_CONSUME. `outcome`, header status, function result, and exact
+ * written length must agree.
  */
 typedef irfq_infinite_status_v1 (*irfq_infinite_authorize_callback_v1)(
     void *context,
@@ -354,6 +358,18 @@ struct irfq_infinite_callback_table_v1 {
  * Close and shutdown stop acquisition, fence and wake waiters, drain callbacks
  * and in-flight calls, invalidate the generation, then release storage. Close
  * is idempotent while its engine handle remains live.
+ *
+ * Callback-owned connection, registration-token, and authorization handles are
+ * an external namespace. They are returned only through callbacks: bootstrap
+ * supplies the external connection; register_batch supplies external tokens;
+ * wait_head, authorize, fence, and release receive those same external handles.
+ * Public bootstrap and dispatch responses publish fresh adapter handles, and
+ * public operations accept only those adapter handles. The classification
+ * handle supplied to authorize is adapter-owned and is the handle published by
+ * a successful public classification response. The authorization returned by
+ * authorize is external; a successful public classification response publishes
+ * a fresh adapter authorization handle. Never pass an external callback handle
+ * to a public adapter operation.
  *
  * Every output pointer must be naturally aligned and start with a caller-set
  * exact `structure_size` and ABI version. Once that minimal header is valid,

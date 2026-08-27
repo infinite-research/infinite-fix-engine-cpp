@@ -194,6 +194,20 @@ sudo make install
     its structure size and ABI version; the adapter validates capacity, stages
     the response, copies it, and publishes <code>written_length</code> last.</p>
 
+    <p>Callback-owned connection, registration-token, and authorization handles
+    stay in the external callback namespace. Public bootstrap, dispatch, and
+    classification results publish the adapter handles that a C caller must use
+    for later public operations; callback routing continues to use the original
+    external connection and token handles. The classification handle passed to
+    the authorization callback is adapter-owned and is the one published after
+    successful classification, while the callback's external authorization is
+    replaced by a fresh adapter authorization handle for public apply. A
+    non-failure authorization must return <code>AUTHORIZED_CONSUME</code> exactly
+    for <code>AT_HEAD</code>, and <code>AUTHORIZED_NO_CONSUME</code> otherwise.
+    Registration success writes the response prefix plus one result per frame;
+    <code>NOT_REGISTERED</code> and <code>STREAM_FENCED</code> write exactly the
+    response prefix and zero results.</p>
+
     <p><b>./configure</b> options:</p>
 
     <table>

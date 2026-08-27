@@ -354,7 +354,12 @@ public:
 
 private:
   friend class InfiniteFrameAdapterAccess;
+  friend class InfiniteEffectAuthorization;
   friend class InfiniteSessionClassificationTestAccess;
+  friend class InfiniteSessionClassification;
+  friend struct InfiniteActionPlan;
+  friend struct InfinitePlannedCallback;
+  friend struct InfinitePlannedMessage;
   typedef std::map<SessionID, Session *> Sessions;
   typedef std::set<SessionID> SessionIDs;
 
@@ -445,6 +450,10 @@ private:
   void recordInfiniteCallback(InfiniteCallbackKind, const std::string &, const Message & = Message());
   static void cleanseInfiniteMessageCredentials(Message &) noexcept;
   static void cleanseInfiniteFieldMapCredentials(FieldMap &) noexcept;
+  static void cleanseInfiniteMessage(Message &) noexcept;
+  static void cleanseInfiniteFieldMap(FieldMap &) noexcept;
+  static void cleanseInfiniteExpectedState(InfiniteExpectedSessionState &) noexcept;
+  static void cleanseInfiniteActionPlan(InfiniteActionPlan &) noexcept;
   void installInfiniteExpectedState(const InfiniteExpectedSessionState &, bool queueAlreadyInstalled = false);
 
   InfiniteExpectedSessionState currentInfiniteExpectedState(

@@ -409,14 +409,25 @@ struct Connection : std::enable_shared_from_this<Connection> {
       throw InvalidMessage("Infinite bootstrap requires initial Logon");
     }
     sessionId = SessionID(beginString, target, sender);
-    const auto dictionary = std::string(IRFQ_INFINITE_DICTIONARY_PATH) + "/" + dictionaryName(beginString, logon);
+    const auto dictionaryPath = std::string(IRFQ_INFINITE_DICTIONARY_PATH) + "/";
     if (beginString == BeginString_FIXT11) {
-      dictionaries.addTransportDataDictionary(beginString, std::string(IRFQ_INFINITE_DICTIONARY_PATH) + "/FIXT11.xml");
-      DefaultApplVerID applicationVersion;
-      logon.getField(applicationVersion);
-      dictionaries.addApplicationDataDictionary(ApplVerID(applicationVersion.getValue()), dictionary);
+      dictionaryName(beginString, logon);
+      dictionaries.addTransportDataDictionary(beginString, dictionaryPath + "FIXT11.xml");
+      for (const auto &applicationDictionary : std::array<std::pair<const char *, const char *>, 8>{
+               {{ApplVerID_FIX40, "FIX40.xml"},
+                {ApplVerID_FIX41, "FIX41.xml"},
+                {ApplVerID_FIX42, "FIX42.xml"},
+                {ApplVerID_FIX43, "FIX43.xml"},
+                {ApplVerID_FIX44, "FIX44.xml"},
+                {ApplVerID_FIX50, "FIX50.xml"},
+                {ApplVerID_FIX50_SP1, "FIX50SP1.xml"},
+                {ApplVerID_FIX50_SP2, "FIX50SP2.xml"}}}) {
+        dictionaries.addApplicationDataDictionary(
+            ApplVerID(applicationDictionary.first),
+            dictionaryPath + applicationDictionary.second);
+      }
     } else {
-      dictionaries.addTransportDataDictionary(beginString, dictionary);
+      dictionaries.addTransportDataDictionary(beginString, dictionaryPath + dictionaryName(beginString, logon));
     }
     session = std::make_unique<Session>(
         []() { return UtcTimeStamp::now(); },
@@ -677,7 +688,8 @@ public:
     }
     if (activeCallbackContains(m_connection.get())) {
       m_connection->faulted.store(true, std::memory_order_release);
-      fenceConnection(m_engine.engine(), m_connection, 0);
+      m_status = fenceConnection(m_engine.engine(), m_connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                     : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       return;
     }
     {
@@ -717,6 +729,7 @@ public:
   ConnectionCall(const ConnectionCall &) = delete;
   ConnectionCall &operator=(const ConnectionCall &) = delete;
   bool acquired() const { return m_acquired; }
+  irfq_infinite_status_v1 status() const { return m_status; }
 
 private:
   std::shared_ptr<Connection> m_connection;
@@ -724,6 +737,7 @@ private:
   std::unique_lock<std::mutex> m_lane;
   bool m_counted{false};
   bool m_acquired{false};
+  irfq_infinite_status_v1 m_status{IRFQ_INFINITE_STATUS_STREAM_FENCED_V1};
 };
 
 irfq_infinite_dispatch_fault_v1 dispatchFault(const std::optional<InfiniteDispatchFault> &fault) {
@@ -852,21 +866,37 @@ bool rejectAcceptedExternal(
     const std::shared_ptr<Engine> &engine,
     irfq_infinite_handle_v1 externalHandle,
     std::uint32_t reason) noexcept {
+  std::shared_ptr<Connection> managedOwner;
+  {
+    std::lock_guard<std::mutex> lock(engine->mutex);
+    for (const auto &entry : engine->connections) {
+      if (sameHandle(entry.second->externalHandle, externalHandle)) {
+        managedOwner = entry.second;
+        break;
+      }
+    }
+  }
+  if (managedOwner) {
+    return fenceConnection(engine, managedOwner, reason);
+  }
   bool fenced = false;
   try {
     fenced = invokeExternalConnectionCallback(engine, externalHandle, nullptr, engine->callbacks.fence, reason)
              == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
   } catch (...) {}
+  if (!fenced) {
+    markEngineTerminalFailure(engine);
+    return false;
+  }
   bool released = false;
   try {
     released = invokeExternalConnectionCallback(engine, externalHandle, nullptr, engine->callbacks.release, reason)
                == IRFQ_INFINITE_STATUS_CLOSED_V1;
   } catch (...) {}
-  const auto cleaned = fenced && released;
-  if (!cleaned) {
+  if (!released) {
     markEngineTerminalFailure(engine);
   }
-  return cleaned;
+  return released;
 }
 
 void discardConnectionState(const std::shared_ptr<Connection> &connection) {
@@ -877,15 +907,6 @@ void discardConnectionState(const std::shared_ptr<Connection> &connection) {
   connection->candidates.clear();
   connection->dispatcher.discard();
   connection->session.reset();
-}
-
-void quiesceTerminalConnection(const std::shared_ptr<Connection> &connection) {
-  {
-    std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
-    connection->lifecycleCondition.wait(lock, [&connection]() { return connection->inFlight == 0; });
-  }
-  std::unique_lock<std::mutex> lane(connection->lane);
-  discardConnectionState(connection);
 }
 
 bool completeCloseConnection(
@@ -951,7 +972,6 @@ bool tryCloseConnectionFromCallback(
   connection->faulted.store(true, std::memory_order_release);
   lifecycle.unlock();
   if (!fenceConnection(engine, connection, reason)) {
-    discardConnectionState(connection);
     return false;
   }
   return completeCloseConnection(engine, connection, reason, std::move(lane));
@@ -981,12 +1001,10 @@ bool closeConnection(
     }
   }
   if (terminalFailure) {
-    quiesceTerminalConnection(connection);
     return false;
   }
 
   if (!fenceConnection(engine, connection, reason)) {
-    quiesceTerminalConnection(connection);
     return false;
   }
 
@@ -994,18 +1012,11 @@ bool closeConnection(
     std::unique_lock<std::mutex> lock(connection->lifecycleMutex);
     connection->lifecycleCondition.wait(lock, [&connection]() { return connection->inFlight == 0; });
     if (connection->terminalFailure) {
-      lock.unlock();
-      quiesceTerminalConnection(connection);
       return false;
     }
   }
   std::unique_lock<std::mutex> lane(connection->lane);
   return completeCloseConnection(engine, connection, reason, std::move(lane));
-}
-
-bool classificationConsumes(const InfiniteSessionClassification &classification) {
-  return infiniteActionPlan(classification.actionData()).resultingState.targetSequence
-         != classification.expected().targetSequence;
 }
 
 irfq_infinite_operation_response_v1 operationResponse(irfq_infinite_status_v1 status, std::uint32_t lifecycle) {
@@ -1287,6 +1298,26 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
 
+    std::shared_ptr<Connection> acceptedOwner;
+    {
+      std::lock_guard<std::mutex> lock(engine->mutex);
+      for (const auto &entry : engine->connections) {
+        if (sameHandle(entry.second->externalHandle, callbackResponse.connection)) {
+          acceptedOwner = entry.second;
+          break;
+        }
+      }
+    }
+    if (acceptedOwner) {
+      if (!fenceConnection(engine, acceptedOwner, 0)) {
+        return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      }
+      return publishFixed(
+          output,
+          outputCapacity,
+          bootstrapResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_BOOTSTRAP_FENCED_V1));
+    }
+
     std::shared_ptr<Connection> connection;
     bool installed = false;
     try {
@@ -1294,6 +1325,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
       auto credentialGuard
           = sg::make_scope_guard([&logon]() { InfiniteFrameAdapterAccess::cleanseCredentials(logon); });
       logon.setString(dispatch.frames.front().bytes, true);
+      InfiniteFrameAdapterAccess::cleanseCredentials(logon);
       removeCredentials(logon);
       connection = std::make_shared<Connection>(engine, callbackResponse.connection, request->observed_tai_ns);
       connection->initializeSession(logon);
@@ -1404,7 +1436,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     connection = findConnection(connectionHandle);
     ConnectionCall call(connection);
     if (!call.acquired()) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return call.status();
     }
     if (!validRequestHeader(request)) {
       return IRFQ_INFINITE_STATUS_ABI_MISMATCH_V1;
@@ -1493,7 +1525,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
       return faultStatus;
     }
-    if (!validCallbackResponse(callbackResponse, returned, callbackLength)
+    const auto expectedCallbackLength
+        = returned == IRFQ_INFINITE_STATUS_OK_V1 ? callbackLength : sizeof(irfq_infinite_dispatch_response_v1);
+    if (!validCallbackResponse(callbackResponse, returned, expectedCallbackLength)
         || !validCallbackHeader(callbackResponse.header)
         || (returned != IRFQ_INFINITE_STATUS_OK_V1 && returned != IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1
             && returned != IRFQ_INFINITE_STATUS_STREAM_FENCED_V1)) {
@@ -1618,7 +1652,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
     connection = findConnection(connectionHandle);
     ConnectionCall call(connection);
     if (!call.acquired()) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return call.status();
     }
     if (!validRequestHeader(request)) {
       return IRFQ_INFINITE_STATUS_ABI_MISMATCH_V1;
@@ -1645,6 +1679,11 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
           output,
           outputCapacity,
           operationResponse(IRFQ_INFINITE_STATUS_AT_HEAD_V1, IRFQ_INFINITE_CONNECTION_OPEN_V1));
+    }
+    if (insideCallback()) {
+      const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                 : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     AlignedBytes callbackBytes(sizeof(irfq_infinite_operation_response_v1));
     auto &callbackResponse = initializeCallbackOutput<irfq_infinite_operation_response_v1>(callbackBytes);
@@ -1720,7 +1759,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
     connection = findConnection(connectionHandle);
     ConnectionCall call(connection);
     if (!call.acquired()) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return call.status();
     }
     if (!validRequestHeader(request)) {
       return IRFQ_INFINITE_STATUS_ABI_MISMATCH_V1;
@@ -1833,7 +1872,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
               status,
               0});
     }
-    const auto expectedAuthorization = classificationConsumes(*classification)
+    const auto expectedAuthorization = callbackRequest.sequence_disposition == IRFQ_INFINITE_SEQUENCE_AT_HEAD_V1
                                            ? IRFQ_INFINITE_STATUS_AUTHORIZED_CONSUME_V1
                                            : IRFQ_INFINITE_STATUS_AUTHORIZED_NO_CONSUME_V1;
     if (returned != expectedAuthorization) {
@@ -1905,7 +1944,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
     connection = findConnection(connectionHandle);
     ConnectionCall call(connection);
     if (!call.acquired()) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return call.status();
     }
     if (!validRequestHeader(request)) {
       return IRFQ_INFINITE_STATUS_ABI_MISMATCH_V1;

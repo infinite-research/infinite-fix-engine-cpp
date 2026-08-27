@@ -72,6 +72,8 @@ struct InfinitePlannedMessage {
   std::string bytes;
   Message message;
 
+  ~InfinitePlannedMessage();
+
   bool operator==(const InfinitePlannedMessage &rhs) const;
 };
 
@@ -150,6 +152,8 @@ struct InfinitePlannedCallback {
   Message message;
   InfiniteExpectedSessionState observedState;
 
+  ~InfinitePlannedCallback();
+
   bool operator==(const InfinitePlannedCallback &rhs) const;
 };
 
@@ -159,6 +163,8 @@ struct InfinitePlannedEffect {
   SEQNUM sequence;
   std::string bytes;
   UtcTimeStamp timestamp;
+
+  ~InfinitePlannedEffect();
 
   bool operator==(const InfinitePlannedEffect &rhs) const;
 };
@@ -176,6 +182,8 @@ struct InfiniteActionPlan {
   bool sourceRangeRead{false};
   SEQNUM sourceRangeBegin{0};
   SEQNUM sourceRangeEnd{0};
+
+  ~InfiniteActionPlan();
 
   bool operator==(const InfiniteActionPlan &rhs) const;
 };
@@ -237,6 +245,7 @@ private:
 
 class InfiniteEffectAuthorization {
 public:
+  ~InfiniteEffectAuthorization();
   InfiniteEffectAuthorization(const InfiniteEffectAuthorization &) = delete;
   InfiniteEffectAuthorization &operator=(const InfiniteEffectAuthorization &) = delete;
   InfiniteEffectAuthorization(InfiniteEffectAuthorization &&) = default;
@@ -264,6 +273,7 @@ private:
 
 class InfiniteSessionClassification {
 public:
+  ~InfiniteSessionClassification();
   InfiniteSessionActionKind kind() const { return m_action; }
   const InfiniteExpectedSessionState &expected() const { return m_expected; }
   const InfiniteActionData &actionData() const { return m_actionData; }

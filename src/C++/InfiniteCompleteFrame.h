@@ -34,6 +34,8 @@ struct InfiniteCompleteFrame {
   std::string bytes;
   std::int64_t observedTaiNs;
 
+  ~InfiniteCompleteFrame();
+
   bool operator==(const InfiniteCompleteFrame &other) const {
     return bytes == other.bytes && observedTaiNs == other.observedTaiNs;
   }
@@ -84,7 +86,7 @@ private:
   };
 
   std::optional<InfiniteDispatchFault> scanDeclaredFrame();
-  std::string takeDeclaredFrame();
+  void takeDeclaredFrame(std::string &message);
   void cleanseParserPrefix(std::size_t length) noexcept;
   void clearParserBuffer() noexcept;
   const std::string &parserBufferForTest() const noexcept { return m_parser.m_buffer; }

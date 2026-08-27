@@ -44,11 +44,13 @@
 #include "catch_amalgamated.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <future>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <thread>
 
 namespace FIX {
@@ -669,6 +671,19 @@ struct Fixture {
 };
 
 TEST_CASE_METHOD(Fixture, "InfiniteSessionClassificationTests", "[infinite][session]") {
+  SECTION("owned action-plan destruction erases its inline byte copies") {
+    constexpr const char marker[] = "plan-secret";
+    alignas(InfiniteActionPlan) std::array<unsigned char, sizeof(InfiniteActionPlan)> storage{};
+    auto *plan = new (storage.data())
+        InfiniteActionPlan{"", UtcTimeStamp::now(), InfiniteSequenceDisposition::Unavailable, "", {}, {}, {}, {}, 0};
+    plan->messageType = marker;
+    REQUIRE(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) != storage.end());
+
+    plan->~InfiniteActionPlan();
+
+    CHECK(std::search(storage.begin(), storage.end(), std::begin(marker), std::end(marker) - 1) == storage.end());
+  }
+
   SECTION("credential cleanup clears Message field and encoding buffers") {
     auto logon = finish(FIX42::Logon(EncryptMethod(0), HeartBtInt(30)), 1);
     logon.setField(Username("sensitive-user"));
