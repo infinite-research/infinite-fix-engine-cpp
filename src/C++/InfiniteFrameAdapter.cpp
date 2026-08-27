@@ -815,7 +815,8 @@ bool fenceConnection(
                    == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
   } catch (...) {}
   {
-    std::lock_guard<std::mutex> lock(connection->fenceMutex);
+    std::scoped_lock lock(connection->lifecycleMutex, connection->fenceMutex);
+    acknowledged = acknowledged && !connection->terminalFailure;
     connection->fenceState = acknowledged ? FenceState::Acknowledged : FenceState::Failed;
   }
   connection->fenceCondition.notify_all();

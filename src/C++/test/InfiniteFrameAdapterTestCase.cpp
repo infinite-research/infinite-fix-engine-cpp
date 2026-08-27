@@ -48,21 +48,21 @@ namespace FIX {
 class InfiniteCompleteFrameTestAccess {
 public:
   static bool parserBufferContains(const InfiniteCompleteFrameDispatcher &dispatcher, const std::string &value) {
-    const auto &buffer = dispatcher.m_parser.m_buffer;
+    const auto &buffer = dispatcher.parserBufferForTest();
     return buffer.find(value) != std::string::npos;
   }
 
   static bool parserBufferEmpty(const InfiniteCompleteFrameDispatcher &dispatcher) {
-    return dispatcher.m_parser.m_buffer.empty();
+    return dispatcher.parserBufferForTest().empty();
   }
 
   static bool parserBufferAllZero(const InfiniteCompleteFrameDispatcher &dispatcher) {
-    const auto &buffer = dispatcher.m_parser.m_buffer;
+    const auto &buffer = dispatcher.parserBufferForTest();
     return std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 0; });
   }
 
   static void cleanseParserBuffer(InfiniteCompleteFrameDispatcher &dispatcher) {
-    dispatcher.cleanseParserPrefix(dispatcher.m_parser.m_buffer.size());
+    dispatcher.cleanseParserPrefix(dispatcher.parserBufferForTest().size());
   }
 };
 } // namespace FIX
@@ -187,6 +187,8 @@ struct CallbackContext {
   bool blockBootstrap{false};
   std::size_t bootstrapEntered{0};
   bool allowBootstrap{false};
+  bool closeCrossConnectionOnBootstrap{false};
+  bool closeSameHandleFromFence{false};
   bool reenterSameHandle{false};
   bool reenterWait{false};
   bool reenterAuthorize{false};
@@ -204,6 +206,8 @@ struct CallbackContext {
   std::size_t releaseCrossCallbacksEntered{0};
   irfq_infinite_status_v1 firstReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_status_v1 secondReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 bootstrapCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 fenceCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   bool omitRegistrationResult{false};
   bool gapRegistrationOrdinal{false};
   bool bootstrapReservedNonzero{false};
@@ -297,6 +301,9 @@ irfq_infinite_status_v1 bootstrapCallback(
   response.outcome = IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1;
   response.reserved[0] = context.bootstrapReservedNonzero ? 1 : 0;
   const auto status = publishFixed(outputBuffer, capacity, response);
+  if (context.closeCrossConnectionOnBootstrap) {
+    context.bootstrapCloseStatus = nestedClose(context.crossConnection, UINT32_C(71));
+  }
   if (context.throwAfterBootstrapAccept) {
     throw std::runtime_error("bootstrap callback failure after acceptance");
   }
@@ -484,6 +491,9 @@ irfq_infinite_status_v1 fenceCallback(void *opaque, irfq_infinite_handle_v1, std
   context.condition.notify_all();
   if (context.fenceThrows) {
     throw std::runtime_error("fence callback failure");
+  }
+  if (context.closeSameHandleFromFence) {
+    context.fenceCloseStatus = nestedClose(context.crossConnection, UINT32_C(72));
   }
   return context.fenceAcknowledgement;
 }
@@ -1475,6 +1485,43 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]"
   shuttingDown.join();
   CHECK(shutdownReturned.load(std::memory_order_acquire));
   CHECK(context.releaseCount == 1);
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence-reentry]") {
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto target = bootstrapConnection(initialized.engine, "FENCEREENTRYTARGET", UINT64_C(3200));
+  REQUIRE(target.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  context.crossConnection = target.response.connection;
+  context.closeCrossConnectionOnBootstrap = true;
+  context.closeSameHandleFromFence = true;
+  const auto origin = bootstrapConnection(initialized.engine, "FENCEREENTRYORIGIN", UINT64_C(3300));
+  REQUIRE(origin.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  CHECK(context.bootstrapCloseStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.fenceCloseStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(context.fenceCount == 1);
+  CHECK(context.releaseCount == 0);
+
+  const irfq_infinite_close_request_v1 close{
+      sizeof(close),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      UINT32_C(73),
+      {}};
+  auto response = output<irfq_infinite_operation_response_v1>();
+  const auto status
+      = irfq_infinite_connection_close_v1(target.response.connection, &close, &response, sizeof(response));
+  CHECK(status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(status != IRFQ_INFINITE_STATUS_CLOSED_V1);
+  CHECK(response.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+  CHECK(response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
+  CHECK(context.fenceCount == 1);
+  CHECK(context.releaseCount == 0);
+
+  context.closeCrossConnectionOnBootstrap = false;
+  context.closeSameHandleFromFence = false;
+  closeConnection(origin.response.connection);
 }
 
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fence-quiescence]") {

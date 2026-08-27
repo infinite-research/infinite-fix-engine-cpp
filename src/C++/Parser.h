@@ -32,7 +32,6 @@
 
 namespace FIX {
 class InfiniteCompleteFrameDispatcher;
-class InfiniteCompleteFrameTestAccess;
 
 /// Parses %FIX messages off an input stream.
 class Parser {
@@ -48,7 +47,6 @@ public:
 
 private:
   friend class InfiniteCompleteFrameDispatcher;
-  friend class InfiniteCompleteFrameTestAccess;
 
   std::string m_buffer;
 };

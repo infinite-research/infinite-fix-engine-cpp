@@ -86,6 +86,7 @@ private:
   std::string takeDeclaredFrame();
   void cleanseParserPrefix(std::size_t length) noexcept;
   void clearParserBuffer() noexcept;
+  const std::string &parserBufferForTest() const noexcept { return m_parser.m_buffer; }
   InfiniteDispatchResult terminal(InfiniteDispatchResult result, InfiniteDispatchFault fault);
   void resetDeclaredFrameScan();
 
