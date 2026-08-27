@@ -268,26 +268,65 @@ typedef struct irfq_infinite_close_request_v1 {
   uint8_t reserved[20];
 } irfq_infinite_close_request_v1;
 
+/**
+ * Accepts or rejects one validated Logon frame. `request` and its frame are
+ * borrowed for this invocation. `output` is a preinitialized
+ * `irfq_infinite_bootstrap_response_v1`; on return its header status must equal
+ * the function result, `written_length` must equal the response size, and the
+ * status/outcome pair must be OK/ACCEPTED, NOT_READY/REJECTED, or
+ * STREAM_FENCED/FENCED. ACCEPTED must publish a nonzero caller-owned connection
+ * handle. Any nonzero handle returned on another outcome is fenced and released.
+ */
 typedef irfq_infinite_status_v1 (*irfq_infinite_bootstrap_callback_v1)(
     void *context,
     const irfq_infinite_bootstrap_request_v1 *request,
     void *output,
     uint64_t output_capacity);
+/**
+ * Registers a complete-frame batch. All request, descriptor, and frame pointers
+ * are borrowed for this invocation. `output` has `output_capacity` bytes and
+ * starts with a preinitialized `irfq_infinite_dispatch_response_v1`. OK requires
+ * one immediately following registration result per input frame; ordinals must
+ * increase exactly, tokens must be live and unique, and observation values must
+ * match. NOT_REGISTERED and STREAM_FENCED require zero results. The returned
+ * status, header status, and exact written length must agree.
+ */
 typedef irfq_infinite_status_v1 (*irfq_infinite_registration_callback_v1)(
     void *context,
     const irfq_infinite_registration_callback_request_v1 *request,
     void *output,
     uint64_t output_capacity);
+/**
+ * Waits for one registered external token. `request` is borrowed. `output` is a
+ * preinitialized `irfq_infinite_operation_response_v1`. Return AT_HEAD with an
+ * OPEN lifecycle, or STREAM_FENCED with a CLOSING lifecycle; the return value,
+ * header status, and exact written length must agree.
+ */
 typedef irfq_infinite_status_v1 (*irfq_infinite_head_callback_v1)(
     void *context,
     const irfq_infinite_head_callback_request_v1 *request,
     void *output,
     uint64_t output_capacity);
+/**
+ * Authorizes the supplied classification plan. The request and failure bytes
+ * are borrowed for this invocation. `output` is a preinitialized
+ * `irfq_infinite_classification_callback_response_v1`. Return AUTHORIZED_CONSUME
+ * or AUTHORIZED_NO_CONSUME with a nonzero caller-owned authorization handle, or
+ * STREAM_FENCED. `outcome`, header status, function result, and exact written
+ * length must agree.
+ */
 typedef irfq_infinite_status_v1 (*irfq_infinite_authorize_callback_v1)(
     void *context,
     const irfq_infinite_classification_callback_request_v1 *request,
     void *output,
     uint64_t output_capacity);
+/**
+ * Acknowledges connection fencing or release for the external connection
+ * handle. The fence slot must return STREAM_FENCED; the release slot must return
+ * CLOSED. `reason` is the unchanged caller-supplied opaque reason. No output
+ * buffer is used. Release transfers the final external ownership back to the
+ * caller after a successful fence; failed acknowledgements terminalize cleanup.
+ */
 typedef irfq_infinite_status_v1 (
     *irfq_infinite_connection_callback_v1)(void *context, irfq_infinite_handle_v1 connection, uint32_t reason);
 
@@ -308,7 +347,9 @@ struct irfq_infinite_callback_table_v1 {
  * OPEN -> CLOSING -> CLOSED. Dispatch/classify/apply are serialized for one
  * connection; different connections may progress concurrently. Callbacks are
  * synchronous, may not re-enter the same handle, and may retain no argument
- * pointer. The callback table is copied at initialization; its caller-owned
+ * pointer. Engine shutdown is forbidden from every callback ancestry, including
+ * callbacks for another engine, because shutdown drains callbacks. The callback
+ * table is copied at initialization; its caller-owned
  * context must remain valid until quiescent engine shutdown.
  * Close and shutdown stop acquisition, fence and wake waiters, drain callbacks
  * and in-flight calls, invalidate the generation, then release storage. Close
@@ -323,48 +364,119 @@ struct irfq_infinite_callback_table_v1 {
  * `IRFQ_INFINITE_DISPATCH_OUTPUT_CAPACITY_V1`; callers must provide at least
  * that capacity even when a particular call publishes fewer bytes.
  */
+/**
+ * Negotiates ABI v1 in place. Initialize `info.structure_size`, `abi_version`,
+ * and zero reserved bytes. OK replaces the structure with the exact capability
+ * and bound values; ABI_MISMATCH or INVALID_ARGUMENT leaves no usable result.
+ */
 irfq_infinite_status_v1 irfq_infinite_frame_adapter_query_v1(irfq_infinite_abi_info_v1 *info) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Creates one engine and copies the callback table. `register_batch`,
+ * `wait_head`, `authorize`, `fence`, and `release` are mandatory; `bootstrap`
+ * may be null, in which case bootstrap returns NOT_READY. On OK, `output` is an
+ * `irfq_infinite_engine_response_v1` with INITIALIZED lifecycle and a nonzero
+ * engine handle. The callback context remains caller-owned until shutdown has
+ * quiesced. `output_capacity` must cover the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_engine_initialize_v1(
     const irfq_infinite_engine_init_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Stops acquisition, closes all live connections, drains calls and callbacks,
+ * and invalidates `engine`. This function must not be called from any adapter
+ * callback. `output` is an `irfq_infinite_operation_response_v1`: success is
+ * SHUTDOWN/ENGINE_SHUTDOWN; cleanup failure is INTERNAL_ERROR/ENGINE_CLOSING;
+ * an unknown handle is NOT_REGISTERED with lifecycle zero. Capacity must cover
+ * the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
     irfq_infinite_handle_v1 engine,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Parses exactly one complete Logon frame and delegates external connection
+ * ownership to the bootstrap callback. The frame pointer is borrowed for this
+ * call, its length is bounded by `IRFQ_INFINITE_MAX_FRAME_BYTES_V1`, observation
+ * time must be positive, and `transport_nonce` must be nonzero. `output` is an
+ * `irfq_infinite_bootstrap_response_v1`: OK/ACCEPTED publishes a new adapter
+ * connection handle, NOT_READY/REJECTED publishes none, and
+ * STREAM_FENCED/FENCED publishes none. Credentials reach only the synchronous
+ * bootstrap authority and are scrubbed from adapter parse state before session
+ * ownership. Capacity must cover the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     irfq_infinite_handle_v1 engine,
     const irfq_infinite_bootstrap_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Feeds a bounded byte slice to one connection's complete-frame parser and
+ * synchronously registers every completed frame. Partial input may produce an
+ * OK response with zero results. The caller must always provide
+ * `IRFQ_INFINITE_DISPATCH_OUTPUT_CAPACITY_V1` bytes. `output` begins with
+ * `irfq_infinite_dispatch_response_v1`; exactly `result_count` registration
+ * records follow. OK leaves the connection OPEN, while terminal parse,
+ * registration, or fence failure returns a fenced/not-registered/internal
+ * status and no optimistic ownership claim. Input and output may not overlap.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     irfq_infinite_handle_v1 connection,
     const irfq_infinite_dispatch_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Waits until the registered token is authoritative at head. `output` is an
+ * `irfq_infinite_operation_response_v1`; AT_HEAD pairs with CONNECTION_OPEN,
+ * while STREAM_FENCED or INTERNAL_ERROR pairs with CONNECTION_CLOSING. The
+ * request and output may not overlap, and capacity must cover the response.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
     irfq_infinite_handle_v1 connection,
     const irfq_infinite_head_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Classifies an at-head token and obtains external effect authorization.
+ * `output` is an `irfq_infinite_classification_response_v1`. CLASSIFIED publishes
+ * nonzero classification and authorization handles plus the exact session plan
+ * and an AUTHORIZED outcome. Protocol failure or refusal fences the stream;
+ * failed fence acknowledgement publishes INTERNAL_ERROR. The token remains
+ * single-use and capacity must cover the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
     irfq_infinite_handle_v1 connection,
     const irfq_infinite_head_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Applies the exact classification/authorization pair once and consumes its
+ * candidate bytes. `output` is an `irfq_infinite_operation_response_v1`:
+ * APPLIED pairs with CONNECTION_OPEN; STREAM_FENCED or INTERNAL_ERROR pairs
+ * with CONNECTION_CLOSING. Handles from another or earlier operation are
+ * rejected fail-closed. Capacity must cover the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
     irfq_infinite_handle_v1 connection,
     const irfq_infinite_apply_request_v1 *request,
     void *output,
     uint64_t output_capacity) IRFQ_INFINITE_NOEXCEPT;
 
+/**
+ * Fences, drains, releases, and invalidates one connection. `reason` is passed
+ * unchanged to lifecycle callbacks. `output` is an
+ * `irfq_infinite_operation_response_v1`: CLOSED pairs with CONNECTION_CLOSED
+ * and is idempotent while the engine remains live; cleanup failure is
+ * INTERNAL_ERROR/CONNECTION_CLOSING; an unknown handle is NOT_REGISTERED with
+ * lifecycle zero. Capacity must cover the exact response.
+ */
 irfq_infinite_status_v1 irfq_infinite_connection_close_v1(
     irfq_infinite_handle_v1 connection,
     const irfq_infinite_close_request_v1 *request,

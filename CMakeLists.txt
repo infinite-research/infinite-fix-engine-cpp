@@ -4,6 +4,10 @@ set (quickfix_PROJECT_NAME quickfix)
 
 add_definitions(-DNOMINMAX)
 
+if(DEFINED CMAKE_INSTALL_PREFIX AND NOT IS_ABSOLUTE "${CMAKE_INSTALL_PREFIX}")
+  message(FATAL_ERROR "CMAKE_INSTALL_PREFIX must be an absolute final installation path")
+endif()
+
 # Large file support
 if(UNIX)
   add_definitions(-D_FILE_OFFSET_BITS=64)
@@ -11,6 +15,13 @@ endif()
 
 project(${quickfix_PROJECT_NAME} VERSION 1.16.0 LANGUAGES CXX C)
 message("-- Project name ${CMAKE_PROJECT_NAME}")
+
+set(IRFQ_INFINITE_CONFIGURED_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+install(CODE "
+  if(NOT \"\${CMAKE_INSTALL_PREFIX}\" STREQUAL \"${IRFQ_INFINITE_CONFIGURED_INSTALL_PREFIX}\")
+    message(FATAL_ERROR \"The install prefix must match the configured CMAKE_INSTALL_PREFIX because the static Infinite frame adapter embeds its dictionary path\")
+  endif()
+")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

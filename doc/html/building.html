@@ -177,8 +177,12 @@ sudo make install
 
     <p>The static build installs <code>quickfix/InfiniteFrameAdapter.h</code>,
     <code>libquickfix.a</code>, and the immutable FIX dictionaries under
-    <code>share/quickfix</code>. Configure the final installation prefix before
-    building so the adapter can load that exact dictionary directory.</p>
+    <code>share/quickfix</code>. Configure CMake with the final absolute
+    <code>-DCMAKE_INSTALL_PREFIX=/final/path</code> before building, then run
+    <code>cmake --install &lt;build-directory&gt;</code> without
+    <code>--prefix</code>. The adapter embeds that exact dictionary directory;
+    CMake rejects a relative configured prefix and any install-time prefix
+    override so the archive and installed dictionaries cannot disagree.</p>
 
     <p>A C11 consumer must include the installed header, statically link
     <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime

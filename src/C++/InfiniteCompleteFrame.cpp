@@ -216,6 +216,11 @@ void InfiniteCompleteFrameDispatcher::clearParserBuffer() noexcept {
   m_parser.m_buffer.clear();
 }
 
+void InfiniteCompleteFrameDispatcher::discard() noexcept {
+  clearParserBuffer();
+  m_terminalFault = InfiniteDispatchFault::MalformedFrame;
+}
+
 InfiniteDispatchResult InfiniteCompleteFrameDispatcher::terminal(
     InfiniteDispatchResult result,
     InfiniteDispatchFault fault) {

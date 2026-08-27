@@ -35,6 +35,7 @@
 #include "Session.h"
 #include "TimeRange.h"
 #include "Values.h"
+#include "scope_guard.hpp"
 
 #ifdef HAVE_SSL
 #include <openssl/crypto.h>
@@ -93,11 +94,9 @@ public:
 
   static void cleanseCredentials(Message &message) { Session::cleanseInfiniteMessageCredentials(message); }
 };
-} // namespace FIX
 
 namespace {
-using namespace FIX;
-using namespace FIX::infinite_frame_adapter_detail;
+using namespace infinite_frame_adapter_detail;
 
 static_assert(sizeof(void *) == 8, "Infinite frame adapter ABI v1 requires 64-bit pointers");
 static_assert(sizeof(irfq_infinite_callback_table_v1) == 64, "Infinite callback table layout drift");
@@ -827,15 +826,15 @@ bool fenceConnection(
   return acknowledged;
 }
 
-bool fenceIfFaulted(
+irfq_infinite_status_v1 fenceIfFaulted(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
     std::uint32_t reason = 0) noexcept {
   if (!connection->faulted.load(std::memory_order_acquire)) {
-    return false;
+    return IRFQ_INFINITE_STATUS_OK_V1;
   }
-  fenceConnection(engine, connection, reason);
-  return true;
+  return fenceConnection(engine, connection, reason) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                     : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
 }
 
 bool releaseConnection(
@@ -872,7 +871,11 @@ bool rejectAcceptedExternal(
 
 void discardConnectionState(const std::shared_ptr<Connection> &connection) {
   connection->classifications.clear();
+  for (auto &entry : connection->candidates) {
+    secureErase(entry.second.bytes);
+  }
   connection->candidates.clear();
+  connection->dispatcher.discard();
   connection->session.reset();
 }
 
@@ -1116,7 +1119,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
     if (!engine) {
       return publishFixed(output, outputCapacity, operationResponse(IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1, 0));
     }
-    if (activeCallbackContains(engine.get())) {
+    if (insideCallback()) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
     std::vector<std::shared_ptr<Connection>> snapshot;
@@ -1127,12 +1130,6 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_engine_shutdown_v1(
             output,
             outputCapacity,
             operationResponse(IRFQ_INFINITE_STATUS_SHUTDOWN_V1, IRFQ_INFINITE_ENGINE_SHUTDOWN_V1));
-      }
-      if (engine->terminalFailure) {
-        return publishFixed(
-            output,
-            outputCapacity,
-            operationResponse(IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1, IRFQ_INFINITE_ENGINE_CLOSING_V1));
       }
       engine->state = IRFQ_INFINITE_ENGINE_CLOSING_V1;
       for (const auto &entry : engine->connections) {
@@ -1293,12 +1290,15 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
     std::shared_ptr<Connection> connection;
     bool installed = false;
     try {
-      Message logon(dispatch.frames.front().bytes, true);
-      InfiniteFrameAdapterAccess::cleanseCredentials(logon);
+      Message logon;
+      auto credentialGuard
+          = sg::make_scope_guard([&logon]() { InfiniteFrameAdapterAccess::cleanseCredentials(logon); });
+      logon.setString(dispatch.frames.front().bytes, true);
       removeCredentials(logon);
       connection = std::make_shared<Connection>(engine, callbackResponse.connection, request->observed_tai_ns);
       connection->initializeSession(logon);
       irfq_infinite_status_v1 registrationStatus = IRFQ_INFINITE_STATUS_OK_V1;
+      std::shared_ptr<Connection> duplicateOwner;
       {
         std::lock_guard<std::mutex> lock(engine->mutex);
         if (engine->state != IRFQ_INFINITE_ENGINE_INITIALIZED_V1) {
@@ -1307,6 +1307,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
           for (const auto &entry : engine->connections) {
             if (sameHandle(entry.second->externalHandle, connection->externalHandle)) {
               registrationStatus = IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V1;
+              duplicateOwner = entry.second;
               break;
             }
           }
@@ -1332,6 +1333,15 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
       }
       if (registrationStatus != IRFQ_INFINITE_STATUS_OK_V1) {
         connection->session.reset();
+        if (duplicateOwner) {
+          if (!fenceConnection(engine, duplicateOwner, 0)) {
+            return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+          }
+          return publishFixed(
+              output,
+              outputCapacity,
+              bootstrapResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_BOOTSTRAP_FENCED_V1));
+        }
         if (!rejectAcceptedExternal(engine, connection->externalHandle, 0)) {
           return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
         }
@@ -1407,16 +1417,21 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     if (!engine) {
       return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
     }
-    if (fenceIfFaulted(engine, connection) || !connection->session) {
-      fenceConnection(engine, connection, 0);
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    auto faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return faultStatus;
+    }
+    if (!connection->session) {
+      return fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                    : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
     if (!connection->candidates.empty() || !connection->classifications.empty()) {
-      fenceConnection(engine, connection, 0);
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      return fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                    : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
     auto dispatched
         = connection->dispatcher.process(reinterpret_cast<const char *>(request->input.data), request->input.length);
+    SensitiveFrameGuard sensitiveFrames(dispatched.frames);
     const auto responseLength = sizeof(irfq_infinite_dispatch_response_v1)
                                 + dispatched.frames.size() * sizeof(irfq_infinite_registration_result_v1);
     if (outputCapacity < responseLength) {
@@ -1429,13 +1444,14 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     response.fault = dispatchFault(dispatched.terminalFault);
 
     if (dispatched.frames.empty()) {
-      if (fenceIfFaulted(engine, connection)) {
-        return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      faultStatus = fenceIfFaulted(engine, connection);
+      if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+        return faultStatus;
       }
       response.header.status
           = dispatched.terminalFault ? IRFQ_INFINITE_STATUS_NOT_REGISTERED_V1 : IRFQ_INFINITE_STATUS_OK_V1;
-      if (dispatched.terminalFault) {
-        fenceConnection(engine, connection, response.fault);
+      if (dispatched.terminalFault && !fenceConnection(engine, connection, response.fault)) {
+        response.header.status = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
       return publishBytes(output, outputCapacity, responseBytes.data(), responseLength);
     }
@@ -1446,8 +1462,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       descriptors.push_back(
           {reinterpret_cast<const std::uint8_t *>(frame.bytes.data()), frame.bytes.size(), frame.observedTaiNs});
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return faultStatus;
     }
     const auto callbackLength = sizeof(irfq_infinite_dispatch_response_v1)
                                 + descriptors.size() * sizeof(irfq_infinite_registration_result_v1);
@@ -1472,8 +1489,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return faultStatus;
     }
     if (!validCallbackResponse(callbackResponse, returned, callbackLength)
         || !validCallbackHeader(callbackResponse.header)
@@ -1520,8 +1538,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       }
       previousOrdinal = results[index].ordinal;
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return faultStatus;
     }
     auto *publishedResults = reinterpret_cast<irfq_infinite_registration_result_v1 *>(
         static_cast<std::uint8_t *>(responseBytes.data()) + sizeof(response));
@@ -1537,9 +1556,14 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
     response.result_count = static_cast<std::uint32_t>(descriptors.size());
     if (dispatched.terminalFault) {
       response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
-      fenceConnection(engine, connection, response.fault);
-    } else if (fenceIfFaulted(engine, connection)) {
-      response.header.status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      if (!fenceConnection(engine, connection, response.fault)) {
+        response.header.status = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      }
+    } else {
+      faultStatus = fenceIfFaulted(engine, connection);
+      if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+        response.header.status = faultStatus;
+      }
     }
     return publishBytes(output, outputCapacity, responseBytes.data(), responseLength);
   } catch (...) {
@@ -1582,19 +1606,16 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
     auto engine = connection->engine.lock();
     const auto candidate = connection->candidates.find(request->token);
     if (!engine || candidate == connection->candidates.end()) {
+      auto status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       if (engine && candidate == connection->candidates.end()) {
-        fenceConnection(engine, connection, 0);
+        status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                        : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+      return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    auto faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return publishFixed(output, outputCapacity, operationResponse(faultStatus, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     if (candidate->second.atHead) {
       return publishFixed(
@@ -1610,11 +1631,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
         connection->externalHandle,
         candidate->second.externalToken,
         {}};
-    if (fenceIfFaulted(engine, connection)) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return publishFixed(output, outputCapacity, operationResponse(faultStatus, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     irfq_infinite_status_v1 returned = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     try {
@@ -1628,11 +1647,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return publishFixed(output, outputCapacity, operationResponse(faultStatus, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     if (!validCallbackResponse(callbackResponse, returned) || callbackResponse.reserved != 0
         || (returned == IRFQ_INFINITE_STATUS_AT_HEAD_V1
@@ -1646,7 +1663,9 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
     if (returned == IRFQ_INFINITE_STATUS_AT_HEAD_V1) {
       candidate->second.atHead = true;
     } else {
-      fenceConnection(engine, connection, 0);
+      if (!fenceConnection(engine, connection, 0)) {
+        callbackResponse.header.status = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      }
     }
     return publishFixed(output, outputCapacity, callbackResponse);
   } catch (...) {
@@ -1690,13 +1709,22 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
     const auto candidate = connection->candidates.find(request->token);
     if (!engine || !connection->session || candidate == connection->candidates.end() || !candidate->second.atHead
         || !connection->classifications.empty()) {
+      auto status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       if (engine) {
-        fenceConnection(engine, connection, 0);
+        status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                        : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+      irfq_infinite_classification_response_v1 response{};
+      response.header.status = status;
+      response.outcome = status;
+      return publishFixed(output, outputCapacity, response);
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    auto faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      irfq_infinite_classification_response_v1 response{};
+      response.header.status = faultStatus;
+      response.outcome = faultStatus;
+      return publishFixed(output, outputCapacity, response);
     }
     const auto binding = InfiniteFrameAdapterAccess::atHead(request->token);
     auto classification = std::make_unique<InfiniteSessionClassification>(InfiniteFrameAdapterAccess::classify(
@@ -1727,8 +1755,12 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
         static_cast<std::uint32_t>(plan.failure.size()),
         reinterpret_cast<const std::uint8_t *>(plan.failure.data()),
         candidate->second.registration.observed_tai_ns};
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      irfq_infinite_classification_response_v1 response{};
+      response.header.status = faultStatus;
+      response.outcome = faultStatus;
+      return publishFixed(output, outputCapacity, response);
     }
     AlignedBytes callbackBytes(sizeof(irfq_infinite_classification_callback_response_v1));
     auto &callbackResponse = initializeCallbackOutput<irfq_infinite_classification_callback_response_v1>(callbackBytes);
@@ -1744,8 +1776,12 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
       fenceConnection(engine, connection, 0);
       return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      irfq_infinite_classification_response_v1 response{};
+      response.header.status = faultStatus;
+      response.outcome = faultStatus;
+      return publishFixed(output, outputCapacity, response);
     }
     if (!validCallbackResponse(callbackResponse, returned) || callbackResponse.reserved != 0
         || callbackResponse.outcome != returned
@@ -1757,12 +1793,13 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
     }
     if (returned == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
         || classification->kind() == InfiniteSessionActionKind::Failure) {
-      fenceConnection(engine, connection, 0);
+      const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                 : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       return publishFixed(
           output,
           outputCapacity,
           irfq_infinite_classification_response_v1{
-              {0, 0, IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, 0, 0},
+              {0, 0, status, 0, 0},
               classificationHandle,
               {},
               expected.revision,
@@ -1770,7 +1807,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
               expected.targetSequence,
               actionKind(classification->kind()),
               sequenceDisposition(plan.sequenceDisposition),
-              IRFQ_INFINITE_STATUS_STREAM_FENCED_V1,
+              status,
               0});
     }
     const auto expectedAuthorization = classificationConsumes(*classification)
@@ -1863,46 +1900,41 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
     }
     if (!engine || !connection->session || selected == connection->classifications.end()
         || !sameHandle(selected->second.authorizationHandle, request->authorization)) {
+      auto status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       if (engine) {
-        fenceConnection(engine, connection, 0);
+        status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                        : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+      return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    auto faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return publishFixed(output, outputCapacity, operationResponse(faultStatus, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     auto classification = std::move(selected->second.classification);
     auto authorization = std::move(selected->second.authorization);
     const auto token = selected->second.token;
     connection->classifications.erase(selected);
-    connection->candidates.erase(token);
+    const auto candidate = connection->candidates.find(token);
+    if (candidate != connection->candidates.end()) {
+      secureErase(candidate->second.bytes);
+      connection->candidates.erase(candidate);
+    }
     try {
       InfiniteFrameAdapterAccess::apply(*connection->session, *classification, std::move(*authorization));
       if (InfiniteFrameAdapterAccess::fenced(*connection->session)) {
-        fenceConnection(engine, connection, 0);
-        return publishFixed(
-            output,
-            outputCapacity,
-            operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+        const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                   : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+        return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
       }
     } catch (...) {
-      fenceConnection(engine, connection, 0);
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+      const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                 : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
-    if (fenceIfFaulted(engine, connection)) {
-      return publishFixed(
-          output,
-          outputCapacity,
-          operationResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    faultStatus = fenceIfFaulted(engine, connection);
+    if (faultStatus != IRFQ_INFINITE_STATUS_OK_V1) {
+      return publishFixed(output, outputCapacity, operationResponse(faultStatus, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     return publishFixed(
         output,
@@ -1986,3 +2018,5 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_close_v1(
     return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
   }
 }
+
+} // namespace FIX

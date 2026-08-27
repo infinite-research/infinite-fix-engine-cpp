@@ -70,6 +70,7 @@ public:
       std::size_t length,
       const std::function<std::int64_t()> &observeTaiNs);
   InfiniteDispatchResult process(const char *bytes, std::size_t length);
+  void discard() noexcept;
 
 private:
   friend class InfiniteCompleteFrameTestAccess;
