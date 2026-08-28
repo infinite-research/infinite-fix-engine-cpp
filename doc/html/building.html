@@ -191,10 +191,11 @@ sudo make install
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON \
   -DQUICKFIX_SHARED_LIBS=OFF -DIRFQ_INFINITE_EMBED_DICTIONARIES=ON
 </pre>
-    <p>This opt-in profile requires GNU <code>objcopy</code> and verifies every
-    dictionary SHA-256 during configuration before generating resources. The
-    resulting archive does not read dictionaries from an installed path at
-    runtime.</p>
+    <p>This opt-in profile requires the pinned Linux amd64 GCC/G++ 13.3.0 and
+    GNU <code>objcopy</code>/<code>ld</code> 2.42 route. It verifies every
+    dictionary SHA-256 during configuration before generating read-only,
+    non-executable-stack resources. The resulting archive does not read
+    dictionaries from an installed path at runtime.</p>
 
     <p>A C11 consumer must include the installed header, statically link
     <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime

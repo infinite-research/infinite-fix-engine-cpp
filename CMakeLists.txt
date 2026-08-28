@@ -90,17 +90,35 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
      OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
     message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires Linux amd64")
   endif()
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU"
+     OR NOT CMAKE_C_COMPILER_VERSION VERSION_EQUAL "13.3.0"
+     OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+     OR NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "13.3.0")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires GCC/G++ 13.3.0")
+  endif()
 
   find_program(IRFQ_INFINITE_OBJCOPY NAMES objcopy)
   find_program(IRFQ_INFINITE_READELF NAMES readelf)
   if(NOT IRFQ_INFINITE_OBJCOPY OR NOT IRFQ_INFINITE_READELF OR NOT CMAKE_LINKER)
     message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires objcopy, readelf, and a linker")
   endif()
-  execute_process(COMMAND ${IRFQ_INFINITE_OBJCOPY} --version OUTPUT_VARIABLE _irfq_objcopy_version)
-  if(NOT _irfq_objcopy_version MATCHES "GNU objcopy")
-    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires GNU objcopy")
+  execute_process(
+    COMMAND ${IRFQ_INFINITE_OBJCOPY} --version
+    RESULT_VARIABLE _irfq_objcopy_result
+    OUTPUT_VARIABLE _irfq_objcopy_version)
+  if(NOT _irfq_objcopy_result EQUAL 0
+     OR NOT _irfq_objcopy_version MATCHES "GNU objcopy[^\n]* 2\\.42(\n|$)")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires GNU objcopy 2.42")
   endif()
-  unset(_irfq_objcopy_version)
+  execute_process(
+    COMMAND ${CMAKE_LINKER} --version
+    RESULT_VARIABLE _irfq_linker_result
+    OUTPUT_VARIABLE _irfq_linker_version)
+  if(NOT _irfq_linker_result EQUAL 0
+     OR NOT _irfq_linker_version MATCHES "GNU ld[^\n]* 2\\.42(\n|$)")
+    message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires GNU ld 2.42")
+  endif()
+  message(STATUS "Infinite adapter toolchain: GCC/G++ 13.3.0; GNU objcopy/ld 2.42")
 
   include(VerifyInfiniteDictionaryPins)
   irfq_verify_infinite_dictionary_pins("${CMAKE_CURRENT_SOURCE_DIR}/spec")
@@ -110,6 +128,10 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
   endforeach()
   unset(_irfq_name)
   unset(_irfq_path)
+  unset(_irfq_objcopy_result)
+  unset(_irfq_objcopy_version)
+  unset(_irfq_linker_result)
+  unset(_irfq_linker_version)
 endif()
 
 #Make sure that a previous config.h has not undefined HAVE_SSL

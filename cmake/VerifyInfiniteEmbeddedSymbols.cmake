@@ -1,4 +1,4 @@
-foreach(required IN ITEMS IRFQ_INFINITE_ARCHIVE IRFQ_INFINITE_READELF)
+foreach(required IN ITEMS IRFQ_INFINITE_ARCHIVE IRFQ_INFINITE_AR IRFQ_INFINITE_READELF)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "${required} is required")
   endif()
@@ -11,6 +11,30 @@ execute_process(
   ERROR_VARIABLE stderr)
 if(NOT result EQUAL 0)
   message(FATAL_ERROR "readelf failed: ${stderr}")
+endif()
+
+set(embedded_object "${CMAKE_CURRENT_BINARY_DIR}/irfq-infinite-dictionaries.o")
+execute_process(
+  COMMAND "${IRFQ_INFINITE_AR}" p "${IRFQ_INFINITE_ARCHIVE}" dictionaries.o
+  RESULT_VARIABLE extract_result
+  OUTPUT_FILE "${embedded_object}"
+  ERROR_VARIABLE extract_stderr)
+if(NOT extract_result EQUAL 0)
+  message(FATAL_ERROR "ar failed: ${extract_stderr}")
+endif()
+execute_process(
+  COMMAND "${IRFQ_INFINITE_READELF}" -SW "${embedded_object}"
+  RESULT_VARIABLE sections_result
+  OUTPUT_VARIABLE sections
+  ERROR_VARIABLE sections_stderr)
+if(NOT sections_result EQUAL 0)
+  message(FATAL_ERROR "readelf sections failed: ${sections_stderr}")
+endif()
+if(NOT sections MATCHES "[^\n]*\\.note\\.GNU-stack[^\n]*")
+  message(FATAL_ERROR "Embedded dictionary object has no GNU stack note")
+endif()
+if(sections MATCHES "[^\n]*\\.note\\.GNU-stack[^\n]*[ \t][A-Z]*X[A-Z]*[ \t]")
+  message(FATAL_ERROR "Embedded dictionary object requires an executable stack")
 endif()
 
 string(

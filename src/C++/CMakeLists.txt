@@ -77,6 +77,8 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
                  -O elf64-x86-64
                  -B i386:x86-64
                  --rename-section .data=.rodata,alloc,load,readonly,data,contents
+                 --add-section .note.GNU-stack=/dev/null
+                 --set-section-flags .note.GNU-stack=noload,readonly
                  "${_irfq_name}"
                  "${_irfq_object}")
     foreach(_irfq_boundary IN ITEMS start end size)
@@ -195,7 +197,7 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
 install(FILES ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h DESTINATION include/quickfix)
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)
-  foreach(_irfq_case IN ITEMS DEBUG NO_SSL SHARED NON_LINUX NON_AMD64 DICTIONARY_DRIFT)
+  foreach(_irfq_case IN ITEMS DEBUG NO_SSL SHARED NON_LINUX NON_AMD64 WRONG_COMPILER WRONG_OBJCOPY WRONG_LINKER DICTIONARY_DRIFT)
     string(TOLOWER "${_irfq_case}" _irfq_case_lower)
     add_test(
       NAME infinite_embedded_rejects_${_irfq_case_lower}
@@ -205,12 +207,15 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)
               "-DIRFQ_INFINITE_TEST_CASE=${_irfq_case}"
               "-DIRFQ_INFINITE_GENERATOR=${CMAKE_GENERATOR}"
               "-DIRFQ_INFINITE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+              "-DIRFQ_INFINITE_REAL_OBJCOPY=${IRFQ_INFINITE_OBJCOPY}"
+              "-DIRFQ_INFINITE_REAL_LINKER=${CMAKE_LINKER}"
               -P "${PROJECT_SOURCE_DIR}/cmake/VerifyInfiniteEmbeddedConfigure.cmake")
   endforeach()
   add_test(
     NAME infinite_embedded_symbols_are_hidden
     COMMAND "${CMAKE_COMMAND}"
             "-DIRFQ_INFINITE_ARCHIVE=$<TARGET_FILE:${PROJECT_NAME}>"
+            "-DIRFQ_INFINITE_AR=${CMAKE_AR}"
             "-DIRFQ_INFINITE_READELF=${IRFQ_INFINITE_READELF}"
             -P "${PROJECT_SOURCE_DIR}/cmake/VerifyInfiniteEmbeddedSymbols.cmake")
 endif()

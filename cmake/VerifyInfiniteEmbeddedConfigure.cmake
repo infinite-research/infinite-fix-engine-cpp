@@ -30,6 +30,36 @@ elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "NON_AMD64")
   set(system_name Linux)
   set(system_processor aarch64)
   set(expected "requires Linux amd64")
+elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "WRONG_COMPILER")
+  set(project_include "${IRFQ_INFINITE_BINARY_DIR}/wrong-compiler.cmake")
+  file(WRITE "${project_include}"
+       "set(CMAKE_C_COMPILER_ID GNU)\n"
+       "set(CMAKE_C_COMPILER_VERSION 16.2.1)\n"
+       "set(CMAKE_CXX_COMPILER_ID GNU)\n"
+       "set(CMAKE_CXX_COMPILER_VERSION 16.2.1)\n")
+  set(expected "requires GCC/G\\+\\+ 13.3.0")
+elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "WRONG_OBJCOPY")
+  set(objcopy "${IRFQ_INFINITE_BINARY_DIR}/objcopy")
+  file(WRITE "${objcopy}"
+       "#!/bin/sh\n"
+       "if [ \"$1\" = \"--version\" ]; then\n"
+       "  printf '%s\\n' 'GNU objcopy (GNU Binutils) 2.47'\n"
+       "else\n"
+       "  exec \"${IRFQ_INFINITE_REAL_OBJCOPY}\" \"$@\"\n"
+       "fi\n")
+  file(CHMOD "${objcopy}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  set(expected "requires GNU objcopy 2.42")
+elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "WRONG_LINKER")
+  set(linker "${IRFQ_INFINITE_BINARY_DIR}/ld")
+  file(WRITE "${linker}"
+       "#!/bin/sh\n"
+       "if [ \"$1\" = \"--version\" ]; then\n"
+       "  printf '%s\\n' 'GNU ld (GNU Binutils) 2.47'\n"
+       "else\n"
+       "  exec \"${IRFQ_INFINITE_REAL_LINKER}\" \"$@\"\n"
+       "fi\n")
+  file(CHMOD "${linker}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  set(expected "requires GNU ld 2.42")
 elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "DICTIONARY_DRIFT")
   include("${IRFQ_INFINITE_SOURCE_DIR}/cmake/VerifyInfiniteDictionaryPins.cmake")
   set(dictionary_dir "${IRFQ_INFINITE_BINARY_DIR}/spec")
@@ -67,6 +97,15 @@ if(NOT IRFQ_INFINITE_TEST_CASE STREQUAL "DICTIONARY_DRIFT")
          "-DCMAKE_SYSTEM_NAME=${system_name}"
          "-DCMAKE_SYSTEM_PROCESSOR=${system_processor}"
          -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY)
+  endif()
+  if(DEFINED project_include)
+    list(APPEND configure "-DCMAKE_PROJECT_INCLUDE=${project_include}")
+  endif()
+  if(DEFINED objcopy)
+    list(APPEND configure "-DIRFQ_INFINITE_OBJCOPY=${objcopy}")
+  endif()
+  if(DEFINED linker)
+    list(APPEND configure "-DCMAKE_LINKER=${linker}")
   endif()
   if(DEFINED IRFQ_INFINITE_GENERATOR)
     list(APPEND configure -G "${IRFQ_INFINITE_GENERATOR}")
