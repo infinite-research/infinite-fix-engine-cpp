@@ -23,7 +23,6 @@ set(quickfix_SOURCES
   HttpServer.cpp
   InfiniteCompleteFrame.cpp
   InfiniteFrameAdapter.cpp
-  InfiniteSessionClassification.cpp
   Initiator.cpp
   Log.cpp
   Message.cpp
@@ -115,7 +114,7 @@ include(CheckCSourceCompiles)
 set(_quickfix_saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")
 set(CMAKE_REQUIRED_INCLUDES ${PROJECT_SOURCE_DIR}/src/C++)
 check_c_source_compiles(
-  "#include <InfiniteFrameAdapter.h>\nint main(void) { irfq_infinite_handle_v1 handle = {0, 0}; return (int)handle.object; }"
+  "#include <InfiniteFrameAdapter.h>\nint main(void) { irfq_infinite_scan_cursor_v2 cursor = {0}; return (int)cursor.stage; }"
   INFINITE_FRAME_ADAPTER_HEADER_IS_C_COMPATIBLE)
 set(CMAKE_REQUIRED_INCLUDES "${_quickfix_saved_required_includes}")
 unset(_quickfix_saved_required_includes)
@@ -197,7 +196,7 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
 install(FILES ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h DESTINATION include/quickfix)
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)
-  foreach(_irfq_case IN ITEMS DEBUG NO_SSL SHARED NON_LINUX NON_AMD64 WRONG_COMPILER WRONG_OBJCOPY WRONG_LINKER DICTIONARY_DRIFT)
+  foreach(_irfq_case IN ITEMS DEBUG SSL SHARED NON_LINUX NON_AMD64 WRONG_COMPILER WRONG_OBJCOPY WRONG_LINKER DICTIONARY_DRIFT)
     string(TOLOWER "${_irfq_case}" _irfq_case_lower)
     add_test(
       NAME infinite_embedded_rejects_${_irfq_case_lower}
@@ -207,6 +206,8 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)
               "-DIRFQ_INFINITE_TEST_CASE=${_irfq_case}"
               "-DIRFQ_INFINITE_GENERATOR=${CMAKE_GENERATOR}"
               "-DIRFQ_INFINITE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+              "-DIRFQ_INFINITE_C_COMPILER=${CMAKE_C_COMPILER}"
+              "-DIRFQ_INFINITE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
               "-DIRFQ_INFINITE_REAL_OBJCOPY=${IRFQ_INFINITE_OBJCOPY}"
               "-DIRFQ_INFINITE_REAL_LINKER=${CMAKE_LINKER}"
               -P "${PROJECT_SOURCE_DIR}/cmake/VerifyInfiniteEmbeddedConfigure.cmake")

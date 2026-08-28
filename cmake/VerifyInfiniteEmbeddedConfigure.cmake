@@ -11,14 +11,14 @@ endif()
 file(REMOVE_RECURSE "${IRFQ_INFINITE_BINARY_DIR}")
 set(test_source "${IRFQ_INFINITE_SOURCE_DIR}")
 set(build_type Release)
-set(have_ssl ON)
+set(have_ssl OFF)
 set(shared OFF)
 if(IRFQ_INFINITE_TEST_CASE STREQUAL "DEBUG")
   set(build_type Debug)
   set(expected "requires CMAKE_BUILD_TYPE=Release")
-elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "NO_SSL")
-  set(have_ssl OFF)
-  set(expected "requires HAVE_SSL=ON")
+elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "SSL")
+  set(have_ssl ON)
+  set(expected "requires HAVE_SSL=OFF")
 elseif(IRFQ_INFINITE_TEST_CASE STREQUAL "SHARED")
   set(shared ON)
   set(expected "requires QUICKFIX_SHARED_LIBS=OFF")
@@ -85,6 +85,8 @@ if(NOT IRFQ_INFINITE_TEST_CASE STREQUAL "DICTIONARY_DRIFT")
       -S "${test_source}"
       -B "${IRFQ_INFINITE_BINARY_DIR}"
       "-DCMAKE_BUILD_TYPE=${build_type}"
+      "-DCMAKE_C_COMPILER=${IRFQ_INFINITE_C_COMPILER}"
+      "-DCMAKE_CXX_COMPILER=${IRFQ_INFINITE_CXX_COMPILER}"
       "-DCMAKE_INSTALL_PREFIX=${IRFQ_INFINITE_BINARY_DIR}/stage"
       "-DQUICKFIX_LIB_OUTPUT_DIR=${IRFQ_INFINITE_BINARY_DIR}/lib"
       "-DQUICKFIX_SHARED_LIBS=${shared}"

@@ -23,100 +23,16 @@
 #include "config.h"
 #endif
 
-#include "InfiniteSessionClassification.h"
 #include "Session.h"
 #include "Values.h"
-#include "scope_guard.hpp"
 #include <algorithm>
-#include <atomic>
 #include <iostream>
-#include <limits>
 
 namespace FIX {
 Session::Sessions Session::s_sessions;
 Session::SessionIDs Session::s_sessionIDs;
 Session::Sessions Session::s_registered;
-
-SessionState::~SessionState() {
-  for (auto &entry : m_queue) {
-    Session::cleanseInfiniteMessage(entry.second);
-  }
-}
-
-void SessionState::queue(SEQNUM msgSeqNum, const Message &message) {
-  auto replacement = message;
-  Locker l(m_mutex);
-  const auto found = m_queue.find(msgSeqNum);
-  if (found == m_queue.end()) {
-    m_queue.emplace(msgSeqNum, std::move(replacement));
-    return;
-  }
-  Session::cleanseInfiniteMessage(found->second);
-  found->second = std::move(replacement);
-}
-
-bool SessionState::retrieve(SEQNUM msgSeqNum, Message &message) {
-  Locker l(m_mutex);
-  const auto found = m_queue.find(msgSeqNum);
-  if (found == m_queue.end()) {
-    return false;
-  }
-  message = found->second;
-  Session::cleanseInfiniteMessage(found->second);
-  m_queue.erase(found);
-  return true;
-}
-
-void SessionState::clearQueue() {
-  Locker l(m_mutex);
-  for (auto &entry : m_queue) {
-    Session::cleanseInfiniteMessage(entry.second);
-  }
-  m_queue.clear();
-}
-
-void SessionState::clearQueueUpTo(SEQNUM msgSeqNum) {
-  Locker l(m_mutex);
-  const auto end = m_queue.lower_bound(msgSeqNum);
-  for (auto entry = m_queue.begin(); entry != end; ++entry) {
-    Session::cleanseInfiniteMessage(entry->second);
-  }
-  m_queue.erase(m_queue.begin(), end);
-}
 Mutex Session::s_mutex;
-
-std::uint64_t Session::nextInfiniteGeneration() {
-  static std::atomic<std::uint64_t> next{1};
-  auto value = next.load(std::memory_order_relaxed);
-  while (value != std::numeric_limits<std::uint64_t>::max()) {
-    if (next.compare_exchange_weak(value, value + 1, std::memory_order_relaxed)) {
-      return value;
-    }
-  }
-  throw std::overflow_error("Infinite session generation exhausted");
-}
-
-void Session::advanceInfiniteConfigurationRevision() {
-  if (m_infiniteConfigurationRevision == std::numeric_limits<std::uint64_t>::max()) {
-    throw std::overflow_error("Infinite session configuration revision exhausted");
-  }
-  ++m_infiniteConfigurationRevision;
-}
-
-void Session::recordInfiniteCallback(InfiniteCallbackKind kind, const std::string &bytes, const Message &message) {
-  if (!m_infinitePlan) {
-    throw std::logic_error("Infinite callback recording is inactive");
-  }
-  const auto *reusableQueueState = m_infinitePlan->callbacks.empty() ? &m_infinitePlan->resultingState
-                                                                     : &m_infinitePlan->callbacks.back().observedState;
-  m_infinitePlan->callbacks.push_back(
-      InfinitePlannedCallback{
-          m_infinitePlan->operationCount++,
-          kind,
-          bytes,
-          message,
-          currentInfiniteExpectedState(m_timestamper(), reusableQueueState)});
-}
 
 #define LOGEX(method)                                                                                                  \
   try {                                                                                                                \
@@ -158,8 +74,7 @@ Session::Session(
       m_dataDictionaryProvider(dataDictionaryProvider.deepCopy()),
       m_messageStoreFactory(messageStoreFactory),
       m_pLogFactory(pLogFactory),
-      m_pResponder(0),
-      m_infiniteSessionIdentity(nextInfiniteGeneration()) {
+      m_pResponder(0) {
   m_state.heartBtInt(heartBtInt);
   m_state.initiate(heartBtInt != 0);
   m_state.store(m_messageStoreFactory.create(m_timestamper(), m_sessionID));
@@ -202,7 +117,6 @@ void Session::fill(Header &header) {
 }
 
 void Session::next(const UtcTimeStamp &now) {
-  ensureInfiniteCallbackNotReentrant();
   try {
     if (!checkSessionTime(now)) {
       reset();
@@ -262,12 +176,7 @@ void Session::next(const UtcTimeStamp &now) {
   }
 }
 
-void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool releaseQueued) {
-  const auto markInfiniteDisposition = [this]() {
-    if (m_infiniteAction) {
-      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
-    }
-  };
+void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
   logon.getHeader().getField<SenderCompID>();
   logon.getHeader().getField<TargetCompID>();
 
@@ -276,14 +185,12 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
   }
 
   if (!isEnabled()) {
-    markInfiniteDisposition();
     m_state.onEvent("Session is not enabled for logon");
     disconnect();
     return;
   }
 
   if (!isLogonTime(now)) {
-    markInfiniteDisposition();
     m_state.onEvent("Received logon outside of valid logon time");
     disconnect();
     return;
@@ -301,7 +208,6 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
   }
 
   if (m_state.shouldSendLogon() && !m_state.receivedReset()) {
-    markInfiniteDisposition();
     m_state.onEvent("Received logon response before sending request");
     disconnect();
     return;
@@ -322,7 +228,6 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
     if (nextExpectedMsgSeqNum.getValue() < getExpectedSenderNum()) {
       sendRetransmitsAfterLogon = true;
     } else if (nextExpectedMsgSeqNum.getValue() > getExpectedSenderNum()) {
-      markInfiniteDisposition();
       std::stringstream stream;
       stream << "NextExpectedMsgSeqNum too high, expecting " << getExpectedSenderNum() << " but received "
              << nextExpectedMsgSeqNum;
@@ -351,26 +256,18 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
       m_state.onEvent(
           "Expecting retransmits FROM: " + SEQNUM_CONVERTOR::convert(getExpectedTargetNum())
           + " TO: " + SEQNUM_CONVERTOR::convert(msgSeqNum - 1));
-      if (!m_infinitePlan) {
-        m_state.queue(msgSeqNum, logon);
-      }
+      m_state.queue(msgSeqNum, logon);
       m_state.resendRange(getExpectedTargetNum(), msgSeqNum - 1);
     } else {
       doTargetTooHigh(logon);
     }
   } else {
     m_state.incrNextTargetMsgSeqNum();
-    if (releaseQueued) {
-      nextQueued(now);
-    }
+    nextQueued(now);
   }
 
   if (isLoggedOn()) {
-    if (m_infinitePlan) {
-      recordInfiniteCallback(InfiniteCallbackKind::Logon, "");
-    } else {
-      m_application.onLogon(m_sessionID);
-    }
+    m_application.onLogon(m_sessionID);
   }
 
   if (sendRetransmitsAfterLogon) {
@@ -395,25 +292,21 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now, bool rele
   }
 }
 
-void Session::nextHeartbeat(const Message &heartbeat, const UtcTimeStamp &now, bool releaseQueued) {
+void Session::nextHeartbeat(const Message &heartbeat, const UtcTimeStamp &now) {
   if (!verify(heartbeat)) {
     return;
   }
   m_state.incrNextTargetMsgSeqNum();
-  if (releaseQueued) {
-    nextQueued(now);
-  }
+  nextQueued(now);
 }
 
-void Session::nextTestRequest(const Message &testRequest, const UtcTimeStamp &now, bool releaseQueued) {
+void Session::nextTestRequest(const Message &testRequest, const UtcTimeStamp &now) {
   if (!verify(testRequest)) {
     return;
   }
   generateHeartbeat(testRequest);
   m_state.incrNextTargetMsgSeqNum();
-  if (releaseQueued) {
-    nextQueued(now);
-  }
+  nextQueued(now);
 }
 
 void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
@@ -435,17 +328,15 @@ void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
   disconnect();
 }
 
-void Session::nextReject(const Message &reject, const UtcTimeStamp &now, bool releaseQueued) {
+void Session::nextReject(const Message &reject, const UtcTimeStamp &now) {
   if (!verify(reject, false, true)) {
     return;
   }
   m_state.incrNextTargetMsgSeqNum();
-  if (releaseQueued) {
-    nextQueued(now);
-  }
+  nextQueued(now);
 }
 
-void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp &now, bool releaseQueued) {
+void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp &now) {
   bool isGapFill = false;
   GapFillFlag gapFillFlag;
   if (sequenceReset.getFieldIfSet(gapFillFlag)) {
@@ -466,9 +357,7 @@ void Session::nextSequenceReset(const Message &sequenceReset, const UtcTimeStamp
       m_state.setNextTargetMsgSeqNum(MsgSeqNum(newSeqNo));
       if (isGapFill) {
         m_state.clearQueueUpTo(newSeqNo);
-        if (releaseQueued) {
-          nextQueued(now);
-        }
+        nextQueued(now);
       }
     } else if (newSeqNo < getExpectedTargetNum()) {
       generateReject(sequenceReset, SessionRejectReason_VALUE_IS_INCORRECT);
@@ -516,11 +405,6 @@ void Session::nextResendRequest(const Message &resendRequest, const UtcTimeStamp
 
 void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   std::vector<std::string> messages;
-  auto messagesGuard = sg::make_scope_guard([&messages]() {
-    for (auto &bytes : messages) {
-      cleanseInfiniteBytes(bytes);
-    }
-  });
   m_state.get(beginSeqNo, endSeqNo, messages);
 
   std::vector<std::string>::iterator i;
@@ -529,16 +413,12 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   SEQNUM begin = 0;
   SEQNUM current = beginSeqNo;
   bool appMessageJustSent = false;
+  std::string messageString;
+
   for (i = messages.begin(); i != messages.end(); ++i) {
     appMessageJustSent = false;
     std::unique_ptr<FIX::Message> pMsg;
-    auto parsedGuard = sg::make_scope_guard([&pMsg]() {
-      if (pMsg) {
-        cleanseInfiniteMessage(*pMsg);
-      }
-    });
     std::string strMsgType;
-    auto typeGuard = sg::make_scope_guard([&strMsgType]() { cleanseInfiniteBytes(strMsgType); });
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
     if (sessionDD.isMessageFieldsOrderPreserved()) {
       std::string::size_type equalSign = (*i).find("\00135=");
@@ -549,7 +429,6 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
     if (m_sessionID.isFIXT()) {
       Message msg;
-      auto headerGuard = sg::make_scope_guard([&msg]() { cleanseInfiniteMessage(msg); });
       msg.setStringHeader(*i);
       ApplVerID applVerID;
       if (!msg.getHeader().getFieldIfSet(applVerID)) {
@@ -558,24 +437,29 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
       const DataDictionary &applicationDD = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
       if (strMsgType.empty()) {
-        pMsg.reset(new Message());
+        pMsg.reset(new Message(*i, sessionDD, applicationDD, m_validateLengthAndChecksum));
       } else {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
         const message_order &messageOrder = applicationDD.getMessageOrderedFields(strMsgType);
-        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder));
+        pMsg.reset(new Message(
+            headerOrder,
+            trailerOrder,
+            messageOrder,
+            *i,
+            sessionDD,
+            applicationDD,
+            m_validateLengthAndChecksum));
       }
-      pMsg->setString(*i, m_validateLengthAndChecksum, &sessionDD, &applicationDD);
     } else {
       if (strMsgType.empty()) {
-        pMsg.reset(new Message());
+        pMsg.reset(new Message(*i, sessionDD, m_validateLengthAndChecksum));
       } else {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
         const message_order &messageOrder = sessionDD.getMessageOrderedFields(strMsgType);
-        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder));
+        pMsg.reset(new Message(headerOrder, trailerOrder, messageOrder, *i, sessionDD, m_validateLengthAndChecksum));
       }
-      pMsg->setString(*i, m_validateLengthAndChecksum, &sessionDD);
     }
 
     Message &msg = *pMsg;
@@ -596,10 +480,6 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
         if (begin) {
           generateSequenceReset(begin, msgSeqNum);
         }
-        std::string messageString;
-        auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
-        cleanseInfiniteBytes(messageString);
-        messageString.clear();
         send(msg.toString(messageString));
         m_state.onEvent("Resending Message: " + SEQNUM_CONVERTOR::convert(msgSeqNum));
         begin = 0;
@@ -656,7 +536,6 @@ Message Session::newMessage(const MsgType &msgType) const {
 }
 
 bool Session::send(Message &message) {
-  ensureInfiniteCallbackNotReentrant();
   message.getHeader().removeField(FIELD::PossDupFlag);
   message.getHeader().removeField(FIELD::OrigSendingTime);
   return sendRaw(message);
@@ -664,7 +543,6 @@ bool Session::send(Message &message) {
 
 bool Session::sendRaw(Message &message, SEQNUM num) {
   Locker l(m_mutex);
-  ensureInfiniteCallbackNotReentrant();
 
   try {
     Header &header = message.getHeader();
@@ -674,20 +552,13 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     fill(header);
     std::string messageString;
-    auto messageStringGuard = sg::make_scope_guard([&messageString]() { cleanseInfiniteBytes(messageString); });
 
     if (num) {
       header.setField(MsgSeqNum(num));
     }
 
     if (Message::isAdminMsgType(msgType)) {
-      if (m_infinitePlan) {
-        auto callbackBytes = message.toString();
-        auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
-        recordInfiniteCallback(InfiniteCallbackKind::ToAdmin, callbackBytes, message);
-      } else {
-        m_application.toAdmin(message, m_sessionID);
-      }
+      m_application.toAdmin(message, m_sessionID);
 
       if (msgType == MsgType_Logon && !m_state.receivedReset()) {
         ResetSeqNumFlag resetSeqNumFlag(false);
@@ -717,13 +588,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       }
 
       try {
-        if (m_infinitePlan) {
-          auto callbackBytes = message.toString();
-          auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
-          recordInfiniteCallback(InfiniteCallbackKind::ToApplication, callbackBytes, message);
-        } else {
-          m_application.toApp(message, m_sessionID);
-        }
+        m_application.toApp(message, m_sessionID);
         message.toString(messageString);
 
         if (!num) {
@@ -740,9 +605,6 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
 
     return true;
   } catch (IOException &e) {
-    if (m_infinitePlan) {
-      throw;
-    }
     m_state.onEvent(e.what());
     return false;
   }
@@ -758,24 +620,18 @@ bool Session::send(const std::string &string) {
 
 void Session::disconnect() {
   Locker l(m_mutex);
-  ensureInfiniteCallbackNotReentrant();
 
   if (m_pResponder) {
     m_state.onEvent("Disconnecting");
 
     m_pResponder->disconnect();
     m_pResponder = 0;
-    m_infiniteResponderGeneration = 0;
   }
 
   if (m_state.receivedLogon() || m_state.sentLogon()) {
     m_state.receivedLogon(false);
     m_state.sentLogon(false);
-    if (m_infinitePlan) {
-      recordInfiniteCallback(InfiniteCallbackKind::Logout, "");
-    } else {
-      m_application.onLogout(m_sessionID);
-    }
+    m_application.onLogout(m_sessionID);
   }
 
   m_state.sentLogout(false);
@@ -797,13 +653,6 @@ bool Session::resend(Message &message) {
   insertOrigSendingTime(header, sendingTime);
   header.setField(PossDupFlag(true));
   insertSendingTime(header);
-
-  if (m_infinitePlan) {
-    auto callbackBytes = message.toString();
-    auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
-    recordInfiniteCallback(InfiniteCallbackKind::ToApplication, callbackBytes, message);
-    return true;
-  }
 
   try {
     m_application.toApp(message, m_sessionID);
@@ -1131,11 +980,6 @@ void Session::populateRejectReason(Message &reject, const std::string &text) { r
 bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
   const MsgType *pMsgType = 0;
   const MsgSeqNum *pMsgSeqNum = 0;
-  const auto markInfiniteDisposition = [this]() {
-    if (m_infiniteAction) {
-      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
-    }
-  };
 
   try {
     const Header &header = msg.getHeader();
@@ -1154,12 +998,10 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
     }
 
     if (!isGoodTime(sendingTime)) {
-      markInfiniteDisposition();
       doBadTime(msg);
       return false;
     }
     if (!isCorrectCompID(senderCompID, targetCompID)) {
-      markInfiniteDisposition();
       doBadCompID(msg);
       return false;
     }
@@ -1183,7 +1025,6 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
       }
     }
   } catch (std::exception &e) {
-    markInfiniteDisposition();
     m_state.onEvent(e.what());
     disconnect();
     return false;
@@ -1226,15 +1067,6 @@ bool Session::validLogonState(const MsgType &msgType) {
 }
 
 void Session::fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID) {
-  if (m_infinitePlan) {
-    auto callbackBytes = msg.toString();
-    auto callbackBytesGuard = sg::make_scope_guard([&callbackBytes]() { cleanseInfiniteBytes(callbackBytes); });
-    recordInfiniteCallback(
-        Message::isAdminMsgType(msgType) ? InfiniteCallbackKind::FromAdmin : InfiniteCallbackKind::FromApplication,
-        callbackBytes,
-        msg);
-    return;
-  }
   if (Message::isAdminMsgType(msgType)) {
     m_application.fromAdmin(msg, m_sessionID);
   } else {
@@ -1299,9 +1131,7 @@ void Session::doTargetTooHigh(const Message &msg) {
       "MsgSeqNum too high, expecting " + SEQNUM_CONVERTOR::convert(getExpectedTargetNum()) + " but received "
       + SEQNUM_CONVERTOR::convert(msgSeqNum));
 
-  if (!m_infinitePlan) {
-    m_state.queue(msgSeqNum, msg);
-  }
+  m_state.queue(msgSeqNum, msg);
 
   if (m_state.resendRequested()) {
     SessionState::ResendRange range = m_state.resendRange();
@@ -1338,7 +1168,6 @@ bool Session::nextQueued(SEQNUM num, const UtcTimeStamp &now) {
 }
 
 void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued) {
-  ensureInfiniteCallbackNotReentrant();
   try {
     m_state.onIncoming(msg);
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
@@ -1363,17 +1192,10 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
 }
 
 void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
-  ensureInfiniteCallbackNotReentrant();
   const Header &header = message.getHeader();
-  const auto markInfiniteDisposition = [this]() {
-    if (m_infiniteAction) {
-      *m_infiniteAction = InfiniteSessionActionKind::ProtocolDisposition;
-    }
-  };
 
   try {
     if (!checkSessionTime(now)) {
-      markInfiniteDisposition();
       reset();
       return;
     }
@@ -1411,19 +1233,19 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
     }
 
     if (msgType == MsgType_Logon) {
-      nextLogon(message, now, !m_infinitePlan);
+      nextLogon(message, now);
     } else if (msgType == MsgType_Heartbeat) {
-      nextHeartbeat(message, now, !m_infinitePlan);
+      nextHeartbeat(message, now);
     } else if (msgType == MsgType_TestRequest) {
-      nextTestRequest(message, now, !m_infinitePlan);
+      nextTestRequest(message, now);
     } else if (msgType == MsgType_SequenceReset) {
-      nextSequenceReset(message, now, !m_infinitePlan);
+      nextSequenceReset(message, now);
     } else if (msgType == MsgType_Logout) {
       nextLogout(message, now);
     } else if (msgType == MsgType_ResendRequest) {
       nextResendRequest(message, now);
     } else if (msgType == MsgType_Reject) {
-      nextReject(message, now, !m_infinitePlan);
+      nextReject(message, now);
     } else {
       if (!verify(message)) {
         return;
@@ -1431,13 +1253,10 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       m_state.incrNextTargetMsgSeqNum();
     }
   } catch (MessageParseError &e) {
-    markInfiniteDisposition();
     m_state.onEvent(e.what());
   } catch (RequiredTagMissing &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_REQUIRED_TAG_MISSING, e.field));
   } catch (FieldNotFound &e) {
-    markInfiniteDisposition();
     if (header.getField(FIELD::BeginString) >= FIX::BeginString_FIX42 && message.isApp()) {
       LOGEX(generateBusinessReject(message, BusinessRejectReason_CONDITIONALLY_REQUIRED_FIELD_MISSING, e.field));
     } else {
@@ -1448,49 +1267,36 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       }
     }
   } catch (InvalidTagNumber &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INVALID_TAG_NUMBER, e.field));
   } catch (NoTagValue &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_SPECIFIED_WITHOUT_A_VALUE, e.field));
   } catch (TagNotDefinedForMessage &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_NOT_DEFINED_FOR_THIS_MESSAGE_TYPE, e.field));
   } catch (InvalidMessageType &) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INVALID_MSGTYPE));
   } catch (UnsupportedMessageType &) {
-    markInfiniteDisposition();
     if (header.getField(FIELD::BeginString) >= FIX::BeginString_FIX42) {
       LOGEX(generateBusinessReject(message, BusinessRejectReason_UNSUPPORTED_MESSAGE_TYPE));
     } else {
       LOGEX(generateReject(message, "Unsupported message type"));
     }
   } catch (TagOutOfOrder &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_SPECIFIED_OUT_OF_REQUIRED_ORDER, e.field));
   } catch (IncorrectDataFormat &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INCORRECT_DATA_FORMAT_FOR_VALUE, e.field));
   } catch (IncorrectTagValue &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_VALUE_IS_INCORRECT, e.field));
   } catch (RepeatedTag &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_TAG_APPEARS_MORE_THAN_ONCE, e.field));
   } catch (RepeatingGroupCountMismatch &e) {
-    markInfiniteDisposition();
     LOGEX(generateReject(message, SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP, e.field));
   } catch (InvalidMessage &e) {
-    markInfiniteDisposition();
     m_state.onEvent(e.what());
   } catch (RejectLogon &e) {
-    markInfiniteDisposition();
     m_state.onEvent(e.what());
     generateLogout(e.what());
     disconnect();
   } catch (UnsupportedVersion &) {
-    markInfiniteDisposition();
     if (header.getField(FIELD::MsgType) == MsgType_Logout) {
       nextLogout(message, now);
     } else {
@@ -1498,19 +1304,15 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
       m_state.incrNextTargetMsgSeqNum();
     }
   } catch (IOException &e) {
-    if (m_infinitePlan) {
-      throw;
-    }
-    markInfiniteDisposition();
     m_state.onEvent(e.what());
     disconnect();
   }
 
-  if (!queued && !m_infinitePlan) {
+  if (!queued) {
     nextQueued(now);
   }
 
-  if (isLoggedOn() && !m_infinitePlan) {
+  if (isLoggedOn()) {
     next(m_timestamper());
   }
 }
@@ -1632,14 +1434,8 @@ bool Session::addSession(Session &s) {
 
 void Session::removeSession(Session &s) {
   Locker locker(s_mutex);
-  const auto session = s_sessions.find(s.m_sessionID);
-  if (session != s_sessions.end() && session->second == &s) {
-    s_sessions.erase(session);
-    s_sessionIDs.erase(s.m_sessionID);
-  }
-  const auto registered = s_registered.find(s.m_sessionID);
-  if (registered != s_registered.end() && registered->second == &s) {
-    s_registered.erase(registered);
-  }
+  s_sessions.erase(s.m_sessionID);
+  s_sessionIDs.erase(s.m_sessionID);
+  s_registered.erase(s.m_sessionID);
 }
 } // namespace FIX

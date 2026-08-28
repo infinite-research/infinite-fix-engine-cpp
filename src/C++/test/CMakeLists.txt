@@ -1,12 +1,17 @@
 add_definitions(-DCATCH_AMALGAMATED_CUSTOM_MAIN)
 
 if (QUICKFIX_TESTS)
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime/log ${CMAKE_BINARY_DIR}/test-runtime/store)
   set(infinite_complete_frame_fixture
       ${PROJECT_SOURCE_DIR}/test/fixtures/complete-frame-gate.v1.tsv)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                ${infinite_complete_frame_fixture})
   set(INFINITE_COMPLETE_FRAME_FIXTURE_PATH ${infinite_complete_frame_fixture})
   include(${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
+  set(infinite_frame_adapter_abi_fixture
+      ${PROJECT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v2.tsv)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${infinite_frame_adapter_abi_fixture})
 
   configure_file(${infinite_complete_frame_fixture}
                  ${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv
@@ -38,7 +43,6 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterTestCase.cpp
-  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteSessionClassificationTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessagesTestCase.cpp
@@ -70,7 +74,7 @@ if (QUICKFIX_TESTS)
   add_executable(ut ut.cpp ${ut_SOURCES})
   target_compile_definitions(ut PRIVATE
     INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
-    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${PROJECT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v1.tsv")
+    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}")
   
   target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
     ${PROJECT_SOURCE_DIR}/src/C++)
@@ -83,11 +87,12 @@ if (QUICKFIX_TESTS)
                --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
   add_test(
     NAME infinite_frame_adapter
-    COMMAND ut "InfiniteFrameAdapterTests"
+    COMMAND ut "[infinite][adapter][v2]"
                --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
   add_test(
     NAME quickfix_unit
     COMMAND ut --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  set_tests_properties(quickfix_unit PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime)
   
   if (NOT WIN32)
   ADD_CUSTOM_TARGET(ut_target ALL

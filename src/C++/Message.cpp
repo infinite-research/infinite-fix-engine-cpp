@@ -528,7 +528,8 @@ void Message::setSessionID(const SessionID &sessionID) {
 
 void Message::validate() const {
   try {
-    const BodyLength &aBodyLength = FIELD_GET_REF(m_header, BodyLength);
+    BodyLength aBodyLength;
+    m_header.getField(aBodyLength);
 
     const size_t expectedLength = static_cast<size_t>(aBodyLength);
     const size_t receivedLength = bodyLength();
@@ -539,7 +540,8 @@ void Message::validate() const {
       throw InvalidMessage(text.str());
     }
 
-    const CheckSum &aCheckSum = FIELD_GET_REF(m_trailer, CheckSum);
+    CheckSum aCheckSum;
+    m_trailer.getField(aCheckSum);
 
     const int expectedChecksum = (int)aCheckSum;
     const int receivedChecksum = checkSum();

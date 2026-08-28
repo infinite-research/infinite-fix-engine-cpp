@@ -60,6 +60,28 @@ enum class InfiniteDispatchFault : std::uint8_t {
   InvalidObservation = 5,
 };
 
+enum class InfiniteDeclaredFrameScanResult : std::uint8_t {
+  NeedMore,
+  Ready,
+  Malformed,
+  TooLarge,
+};
+
+struct InfiniteDeclaredFrameCursor {
+  std::size_t frameStart{0};
+  std::size_t scanOffset{0};
+  std::size_t bodyLength{0};
+  std::size_t checksumBegin{0};
+  std::uint32_t stage{0};
+  bool bodyLengthHasDigit{false};
+};
+
+InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
+    const char *bytes,
+    std::size_t length,
+    InfiniteDeclaredFrameCursor &cursor,
+    std::size_t &completePrefix) noexcept;
+
 struct InfiniteDispatchResult {
   std::vector<InfiniteCompleteFrame> frames;
   std::optional<InfiniteDispatchFault> terminalFault;

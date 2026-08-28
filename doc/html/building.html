@@ -188,7 +188,7 @@ sudo make install
     <p>A self-contained Linux amd64 archive can instead embed the nine approved
     QuickFIX dictionaries:</p>
     <pre class='fragment'>
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON \
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=OFF \
   -DQUICKFIX_SHARED_LIBS=OFF -DIRFQ_INFINITE_EMBED_DICTIONARIES=ON
 </pre>
     <p>This opt-in profile requires the pinned Linux amd64 GCC/G++ 13.3.0 and
@@ -197,45 +197,30 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON \
     non-executable-stack resources. The resulting archive does not read
     dictionaries from an installed path at runtime.</p>
 
-    <p>A C11 consumer must include the installed header, statically link
+    <p>A C17 consumer must include the installed header, statically link
     <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime
-    libraries), and call <code>irfq_infinite_frame_adapter_query_v1</code> before
-    initializing an engine. ABI v1 callbacks are synchronous: callback request
-    pointers and output buffers are valid only for the callback invocation.
-    Connection and engine handles follow the documented open/closing/closed and
-    initialized/closing/shutdown lifecycles. Initialize every output header with
-    its structure size and ABI version; the adapter validates capacity, stages
-    the response, copies it, and publishes <code>written_length</code> last.</p>
+    libraries). ABI v2 exposes exactly seven semantic calls:
+    <code>scan</code>, <code>session_create</code>, <code>prepare</code>,
+    <code>resume</code>, <code>apply_committed</code>, <code>abort</code>, and
+    <code>destroy</code>. Initialize every request and response header with its
+    structure size and ABI version. Input is borrowed for one call and output is
+    written only to caller-owned bounded buffers; a short buffer reports the
+    exact required capacity without changing session state.</p>
 
-    <p>On every bootstrap, dispatch, head, classification, apply, close, or
-    shutdown path, a failed fence acknowledgement reported as
-    <code>INTERNAL_ERROR</code> with a closing connection or engine lifecycle is
-    a retained terminal quarantine. It does not report quiescence, transfer
-    ownership, or authorize release. The caller must keep the callback context
-    and external connection state live until the release callback actually
-    completes or quiescence is otherwise established.</p>
+    <p>The session handle is exclusively owned. Calls for one handle must not
+    overlap, ownership may move between threads only after the previous call has
+    joined, and <code>destroy</code> must not race another call. The adapter keeps
+    only disposable session cache state and one bounded pending plan. It performs
+    no transport, TLS, durable-store, callback, gate, or fence operation. The
+    Rust gateway owns those responsibilities and supplies typed bounded inputs
+    when <code>resume</code> requests store data or an explicit decision.</p>
 
-    <p>Callback-owned connection, registration-token, and authorization handles
-    stay in the external callback namespace. Public bootstrap, dispatch, and
-    classification results publish the adapter handles that a C caller must use
-    for later public operations; callback routing continues to use the original
-    external connection and token handles. The classification handle passed to
-    the authorization callback is adapter-owned and is the one published after
-    successful classification, while the callback's external authorization is
-    replaced by a fresh adapter authorization handle for public apply. A
-    non-failure authorization must return <code>AUTHORIZED_CONSUME</code> exactly
-    for <code>AT_HEAD</code>, and <code>AUTHORIZED_NO_CONSUME</code> otherwise.
-    Registration success writes the response prefix plus one result per frame;
-    <code>NOT_REGISTERED</code> and <code>STREAM_FENCED</code> write exactly the
-    response prefix and zero results.</p>
-
-    <p>If bootstrap returns an external connection handle already owned by a
-    live connection in the same engine, the adapter fences the managed owner
-    and rejects the alias without releasing that external handle. If the fence
-    acknowledgement fails, the managed connection remains quarantined:
-    close reports <code>INTERNAL_ERROR/CONNECTION_CLOSING</code> and shutdown
-    reports <code>INTERNAL_ERROR/ENGINE_CLOSING</code>. The general retained
-    terminal-quarantine rule above applies.</p>
+    <p>The embedded adapter artifact requires <code>HAVE_SSL=OFF</code>; Rust owns
+    TLS. Session creation accepts authenticated identity and profile digests plus
+    the already-validated native snapshot bytes. <code>apply_committed</code>
+    installs only an exact, already-durable successor snapshot after checking its
+    revision and domain-separated SHA-256. No legacy compatibility or callback
+    bridge is installed.</p>
 
     <p><b>./configure</b> options:</p>
 
