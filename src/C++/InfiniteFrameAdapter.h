@@ -333,6 +333,16 @@ typedef irfq_infinite_status_v1 (*irfq_infinite_authorize_callback_v1)(
  */
 typedef irfq_infinite_status_v1 (
     *irfq_infinite_connection_callback_v1)(void *context, irfq_infinite_handle_v1 connection, uint32_t reason);
+/**
+ * Transfers one exact at-head token back to its Rust owner immediately before
+ * C++ applies its authorized effects. OK is a one-way terminal handoff;
+ * STREAM_FENCED rejects the handoff and permits no C++ effect. This callback
+ * runs under the partition commit gate and must not re-enter the adapter.
+ */
+typedef irfq_infinite_status_v1 (*irfq_infinite_handoff_callback_v1)(
+    void *context,
+    irfq_infinite_handle_v1 connection,
+    irfq_infinite_handle_v1 token);
 
 struct irfq_infinite_callback_table_v1 {
   uint32_t structure_size;
@@ -344,6 +354,7 @@ struct irfq_infinite_callback_table_v1 {
   irfq_infinite_authorize_callback_v1 authorize;
   irfq_infinite_connection_callback_v1 fence;
   irfq_infinite_connection_callback_v1 release;
+  irfq_infinite_handoff_callback_v1 handoff;
 };
 
 /**

@@ -27,6 +27,7 @@ typedef struct consumer_context {
   int registration_routed;
   int wait_routed;
   int authorization_routed;
+  int handoff_routed;
   irfq_infinite_handle_v1 external_token;
   irfq_infinite_handle_v1 external_authorization;
   irfq_infinite_handle_v1 callback_classification;
@@ -203,6 +204,16 @@ static irfq_infinite_status_v1 release(void *opaque, irfq_infinite_handle_v1 con
   return IRFQ_INFINITE_STATUS_CLOSED_V1;
 }
 
+static irfq_infinite_status_v1 handoff(
+    void *opaque,
+    irfq_infinite_handle_v1 connection,
+    irfq_infinite_handle_v1 token) {
+  consumer_context *context = (consumer_context *)opaque;
+  const irfq_infinite_handle_v1 external_connection = {UINT64_C(1), UINT64_C(1)};
+  context->handoff_routed = same_handle(connection, external_connection) && same_handle(token, context->external_token);
+  return context->handoff_routed ? IRFQ_INFINITE_STATUS_OK_V1 : IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+}
+
 static irfq_infinite_status_v1 bootstrap_connection(
     irfq_infinite_handle_v1 engine,
     const char *logon,
@@ -277,6 +288,7 @@ int main(void) {
   callbacks.authorize = authorize;
   callbacks.fence = fence;
   callbacks.release = release;
+  callbacks.handoff = handoff;
   memset(&initialize, 0, sizeof(initialize));
   initialize.structure_size = (uint32_t)sizeof(initialize);
   initialize.abi_version = IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1;
@@ -360,7 +372,8 @@ int main(void) {
   apply_request.authorization = classified.authorization;
   initialize_output(&operation, (uint32_t)sizeof(operation));
   if (irfq_infinite_connection_apply_v1(bootstrapped.connection, &apply_request, &operation, sizeof(operation))
-      != IRFQ_INFINITE_STATUS_APPLIED_V1) {
+          != IRFQ_INFINITE_STATUS_APPLIED_V1
+      || !context.handoff_routed) {
     return 11;
   }
   if (close_connection(bootstrapped.connection) != IRFQ_INFINITE_STATUS_CLOSED_V1 || context.fence_count != 2

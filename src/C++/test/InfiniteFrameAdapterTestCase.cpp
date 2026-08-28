@@ -157,6 +157,12 @@ std::string finishFix(std::string beginString, std::string body) {
 
 std::string finishFix(std::string body) { return finishFix("FIX.4.2", std::move(body)); }
 
+struct ConcurrentShutdownContext {
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::size_t callbacksEntered{0};
+};
+
 struct CallbackContext {
   std::mutex mutex;
   std::condition_variable condition;
@@ -171,8 +177,8 @@ struct CallbackContext {
   irfq_infinite_handle_v1 crossToken{};
   irfq_infinite_handle_v1 firstAdapterConnection{};
   irfq_infinite_handle_v1 secondAdapterConnection{};
-  irfq_infinite_handle_v1 firstEngine{};
-  irfq_infinite_handle_v1 secondEngine{};
+  irfq_infinite_handle_v1 crossShutdownEngine{};
+  ConcurrentShutdownContext *concurrentShutdownContext{nullptr};
   std::string firstNestedFrame;
   std::string secondNestedFrame;
   irfq_infinite_status_v1 sameHandleReentryStatus{IRFQ_INFINITE_STATUS_OK_V1};
@@ -218,8 +224,7 @@ struct CallbackContext {
   irfq_infinite_status_v1 secondCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_operation_response_v1 firstCloseResponse{};
   irfq_infinite_operation_response_v1 secondCloseResponse{};
-  irfq_infinite_status_v1 firstShutdownStatus{IRFQ_INFINITE_STATUS_OK_V1};
-  irfq_infinite_status_v1 secondShutdownStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 crossShutdownStatus{IRFQ_INFINITE_STATUS_OK_V1};
   bool crossCloseOnRelease{false};
   std::size_t releaseCrossCallbacksEntered{0};
   irfq_infinite_status_v1 firstReleaseCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
@@ -249,8 +254,13 @@ struct CallbackContext {
   bool credentialsObserved{false};
   bool fenceThrows{false};
   bool releaseThrows{false};
+  bool handoffThrows{false};
   irfq_infinite_status_v1 fenceAcknowledgement{IRFQ_INFINITE_STATUS_STREAM_FENCED_V1};
   irfq_infinite_status_v1 releaseAcknowledgement{IRFQ_INFINITE_STATUS_CLOSED_V1};
+  irfq_infinite_status_v1 handoffAcknowledgement{IRFQ_INFINITE_STATUS_OK_V1};
+  std::size_t handoffCount{0};
+  irfq_infinite_handle_v1 handedOffConnection{};
+  irfq_infinite_handle_v1 handedOffToken{};
   std::atomic<std::size_t> completionOrder{0};
   std::atomic<std::size_t> fenceCompletedOrder{0};
   std::atomic<std::size_t> releaseCompletedOrder{0};
@@ -433,23 +443,16 @@ irfq_infinite_status_v1 registerCallback(
     }
   }
   if (context.concurrentCrossShutdowns && registrationCallbackDepth == 1) {
-    const auto first = request->connection.object == UINT64_C(7);
+    auto &coordination = *context.concurrentShutdownContext;
     {
-      std::unique_lock<std::mutex> lock(context.mutex);
-      ++context.concurrentCallbacksEntered;
-      context.condition.notify_all();
-      context.condition.wait(lock, [&context]() { return context.concurrentCallbacksEntered == 2; });
+      std::unique_lock<std::mutex> lock(coordination.mutex);
+      ++coordination.callbacksEntered;
+      coordination.condition.notify_all();
+      coordination.condition.wait(lock, [&coordination]() { return coordination.callbacksEntered == 2; });
     }
     auto response = output<irfq_infinite_operation_response_v1>();
-    const auto status = irfq_infinite_engine_shutdown_v1(
-        first ? context.secondEngine : context.firstEngine,
-        &response,
-        sizeof(response));
-    if (first) {
-      context.firstShutdownStatus = status;
-    } else {
-      context.secondShutdownStatus = status;
-    }
+    context.crossShutdownStatus
+        = irfq_infinite_engine_shutdown_v1(context.crossShutdownEngine, &response, sizeof(response));
   }
   const auto responseBytes = sizeof(irfq_infinite_dispatch_response_v1)
                              + request->frame_count * sizeof(irfq_infinite_registration_result_v1);
@@ -627,6 +630,20 @@ irfq_infinite_status_v1 releaseCallback(void *opaque, irfq_infinite_handle_v1 ex
   return context.releaseAcknowledgement;
 }
 
+irfq_infinite_status_v1 handoffCallback(
+    void *opaque,
+    irfq_infinite_handle_v1 externalConnection,
+    irfq_infinite_handle_v1 externalToken) {
+  auto &context = *static_cast<CallbackContext *>(opaque);
+  ++context.handoffCount;
+  context.handedOffConnection = externalConnection;
+  context.handedOffToken = externalToken;
+  if (context.handoffThrows) {
+    throw std::runtime_error("handoff callback failure");
+  }
+  return context.handoffAcknowledgement;
+}
+
 irfq_infinite_callback_table_v1 callbacks(CallbackContext &context) {
   return {
       sizeof(irfq_infinite_callback_table_v1),
@@ -637,7 +654,8 @@ irfq_infinite_callback_table_v1 callbacks(CallbackContext &context) {
       waitCallback,
       authorizeCallback,
       fenceCallback,
-      releaseCallback};
+      releaseCallback,
+      handoffCallback};
 }
 
 irfq_infinite_engine_response_v1 initializeEngine(CallbackContext &context) {
@@ -760,6 +778,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK(fixture.text("contract", "fence_quiescence") == "noncallback_waits>release_after_completion");
   CHECK(fixture.text("contract", "callback_argument_lifetime") == "synchronous_only");
   CHECK(fixture.text("contract", "callback_table_lifetime") == "copied_context_valid_until_quiescent_shutdown");
+  CHECK(fixture.text("contract", "token_handoff") == "exact_at_head_once_before_effects");
   CHECK(fixture.text("contract", "acquisition") == "open_only_increments_in_flight");
   CHECK(fixture.text("contract", "close_shutdown") == "stop_acquisition>fence_wake>drain>invalidate>release");
   CHECK(fixture.text("contract", "release_quiescence") == "release_complete_before_shutdown");
@@ -870,6 +889,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fixture]") {
   CHECK_OFFSET(irfq_infinite_callback_table_v1, authorize);
   CHECK_OFFSET(irfq_infinite_callback_table_v1, fence);
   CHECK_OFFSET(irfq_infinite_callback_table_v1, release);
+  CHECK_OFFSET(irfq_infinite_callback_table_v1, handoff);
   CHECK_LAYOUT(irfq_infinite_engine_init_request_v1);
   CHECK_OFFSET(irfq_infinite_engine_init_request_v1, structure_size);
   CHECK_OFFSET(irfq_infinite_engine_init_request_v1, abi_version);
@@ -1039,7 +1059,7 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][output]") {
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][initialization]") {
   CallbackContext context;
   const auto complete = callbacks(context);
-  for (std::uint32_t missing = 0; missing < 5; ++missing) {
+  for (std::uint32_t missing = 0; missing < 6; ++missing) {
     auto table = complete;
     switch (missing) {
     case 0:
@@ -1056,6 +1076,9 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][initialization]") {
       break;
     case 4:
       table.release = nullptr;
+      break;
+    case 5:
+      table.handoff = nullptr;
       break;
     }
     const irfq_infinite_engine_init_request_v1 request{
@@ -1113,8 +1136,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle]") {
   REQUIRE(irfq_infinite_frame_adapter_query_v1(&info) == IRFQ_INFINITE_STATUS_OK_V1);
   CHECK(info.capabilities == IRFQ_INFINITE_REQUIRED_CAPABILITIES_V1);
 
-  CallbackContext context;
-  auto table = callbacks(context);
+  CallbackContext failedContext;
+  auto table = callbacks(failedContext);
   const irfq_infinite_engine_init_request_v1 init{
       sizeof(init),
       IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
@@ -1133,21 +1156,24 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][lifecycle]") {
       {reinterpret_cast<const std::uint8_t *>(logon.data()), logon.size()},
       1,
       {UINT64_C(10), UINT64_C(20)}};
-  context.throwAfterBootstrapAccept = true;
+  failedContext.throwAfterBootstrapAccept = true;
   auto failedBootstrap = output<irfq_infinite_bootstrap_response_v1>();
   CHECK(
       irfq_infinite_connection_bootstrap_v1(initialized.engine, &bootstrap, &failedBootstrap, sizeof(failedBootstrap))
       == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   CHECK(failedBootstrap.header.written_length == 0);
-  CHECK(context.fenced);
-  CHECK(context.released);
-  CHECK(context.fenceCount == 1);
-  CHECK(context.releaseCount == 1);
-  context.throwAfterBootstrapAccept = false;
-  context.fenced = false;
-  context.released = false;
-  context.fenceCount = 0;
-  context.releaseCount = 0;
+  CHECK(failedContext.fenced);
+  CHECK(failedContext.released);
+  CHECK(failedContext.fenceCount == 1);
+  CHECK(failedContext.releaseCount == 1);
+  auto poisonedShutdown = output<irfq_infinite_operation_response_v1>();
+  REQUIRE(
+      irfq_infinite_engine_shutdown_v1(initialized.engine, &poisonedShutdown, sizeof(poisonedShutdown))
+      == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
+  CallbackContext context;
+  table = callbacks(context);
+  initialized = output<irfq_infinite_engine_response_v1>();
+  REQUIRE(irfq_infinite_engine_initialize_v1(&init, &initialized, sizeof(initialized)) == IRFQ_INFINITE_STATUS_OK_V1);
 
   auto bootstrapped = output<irfq_infinite_bootstrap_response_v1>();
   REQUIRE(
@@ -1452,9 +1478,9 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry]") {
   registrationWaiter.join();
   CHECK(registrationFenceWake.load(std::memory_order_acquire));
   CHECK(context.sameHandleReentryStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
-  CHECK(context.crossConnectionStatus == IRFQ_INFINITE_STATUS_OK_V1);
+  CHECK(context.crossConnectionStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.fenced);
-  CHECK(context.fenceCount == 1);
+  CHECK(context.fenceCount == 2);
 
   context.reenterSameHandle = false;
   context.callCrossConnection = false;
@@ -1468,9 +1494,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry]") {
   auto secondBytes = dispatchOutput();
   CHECK(
       irfq_infinite_connection_dispatch_v1(second, &secondDispatch, secondBytes.data(), secondBytes.size())
-      == IRFQ_INFINITE_STATUS_OK_V1);
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
 
-  context.omitRegistrationResult = true;
   const auto thirdHeartbeat = finishFix("35=0\00134=2\00149=PARTICIPANT5\00156=VENUE\00152=20260826-08:08:09.000\001");
   const irfq_infinite_dispatch_request_v1 thirdDispatch{
       sizeof(thirdDispatch),
@@ -1480,8 +1505,9 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][reentry]") {
   auto thirdBytes = dispatchOutput();
   CHECK(
       irfq_infinite_connection_dispatch_v1(third, &thirdDispatch, thirdBytes.data(), thirdBytes.size())
-      == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(context.fenced);
+  CHECK(context.fenceCount == 3);
 #endif
 
   const irfq_infinite_close_request_v1 close{
@@ -1630,6 +1656,121 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][cross-stream-token]"
   closeConnection(presenting.response.connection);
   shutdownEngine(ownerEngine.engine);
   shutdownEngine(presentingEngine.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][candidate-claim-apply]") {
+#ifdef CLOCK_TAI
+  CallbackContext ownerContext;
+  CallbackContext presentingContext;
+  const auto ownerEngine = initializeEngine(ownerContext);
+  const auto presentingEngine = initializeEngine(presentingContext);
+  const auto owner = bootstrapConnection(ownerEngine.engine, "CLAIMAPPLYOWNER", UINT64_C(2070));
+  const auto presenting = bootstrapConnection(presentingEngine.engine, "CLAIMAPPLYPRESENTER", UINT64_C(2072));
+  REQUIRE(owner.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(presenting.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto frame = finishFix("35=0\00134=2\00149=CLAIMAPPLYOWNER\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto dispatched = dispatchFrame(owner.response.connection, frame);
+  REQUIRE(dispatched.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(dispatched.count == 1);
+  REQUIRE(waitAtHead(owner.response.connection, dispatched.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+  const auto classified = classifyAtHead(owner.response.connection, dispatched.registration.token);
+  REQUIRE(classified.first == IRFQ_INFINITE_STATUS_CLASSIFIED_V1);
+
+  SECTION("apply retirement wins before a later foreign presentation") {
+    CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.handedOffConnection.object == UINT64_C(7));
+    CHECK(ownerContext.handedOffToken.object == UINT64_C(100));
+    CHECK(
+        waitAtHead(presenting.response.connection, dispatched.registration.token)
+        == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.fenceCount == 0);
+    CHECK(presentingContext.fenceCount == 1);
+  }
+
+  SECTION("foreign claim wins before apply effects") {
+    ownerContext.blockFence = true;
+    irfq_infinite_status_v1 presentingStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread presentingClaim(
+        [&]() { presentingStatus = waitAtHead(presenting.response.connection, dispatched.registration.token); });
+    {
+      std::unique_lock<std::mutex> lock(ownerContext.mutex);
+      ownerContext.condition.wait(lock, [&ownerContext]() { return ownerContext.fenceEntered; });
+    }
+
+    std::atomic<bool> applyStarting{false};
+    irfq_infinite_status_v1 applyStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread applying([&]() {
+      applyStarting.store(true, std::memory_order_release);
+      applyStatus = applyClassification(owner.response.connection, classified.second);
+    });
+    while (!applyStarting.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    {
+      std::lock_guard<std::mutex> lock(ownerContext.mutex);
+      ownerContext.allowFence = true;
+    }
+    ownerContext.condition.notify_all();
+
+    applying.join();
+    presentingClaim.join();
+    CHECK(presentingStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(applyStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(applyStatus != IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(ownerContext.handoffCount == 0);
+    CHECK(ownerContext.fenceCount == 1);
+    CHECK(presentingContext.fenceCount == 1);
+  }
+
+  SECTION("rejected handoff fences before apply effects") {
+    ownerContext.handoffAcknowledgement = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
+    CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.fenceCount == 1);
+  }
+
+  SECTION("throwing handoff fences before apply effects") {
+    ownerContext.handoffThrows = true;
+    CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.fenceCount == 1);
+  }
+
+  closeConnection(owner.response.connection);
+  closeConnection(presenting.response.connection);
+  shutdownEngine(ownerEngine.engine);
+  shutdownEngine(presentingEngine.engine);
+#endif
+}
+
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][partition-commit-gate]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto first = bootstrapConnection(initialized.engine, "PARTITIONGATEA", UINT64_C(2080));
+  const auto second = bootstrapConnection(initialized.engine, "PARTITIONGATEB", UINT64_C(2082));
+  REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto secondFrame = finishFix("35=0\00134=2\00149=PARTITIONGATEB\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto secondRegistration = dispatchFrame(second.response.connection, secondFrame);
+  REQUIRE(secondRegistration.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(
+      waitAtHead(second.response.connection, secondRegistration.registration.token) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+
+  const irfq_infinite_handle_v1 unknownToken{UINT64_C(999999), UINT64_C(999999)};
+  CHECK(waitAtHead(first.response.connection, unknownToken) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(
+      waitAtHead(second.response.connection, secondRegistration.registration.token)
+      == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(context.fenceCount == 2);
+
+  closeConnection(first.response.connection);
+  closeConnection(second.response.connection);
+  shutdownEngine(initialized.engine);
 #endif
 }
 
@@ -2280,16 +2421,21 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fifo-wait]") {
 
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-shutdown-cycle]") {
 #ifdef CLOCK_TAI
-  CallbackContext context;
-  const auto firstEngine = initializeEngine(context);
-  const auto secondEngine = initializeEngine(context);
+  CallbackContext firstContext;
+  CallbackContext secondContext;
+  ConcurrentShutdownContext coordination;
+  const auto firstEngine = initializeEngine(firstContext);
+  const auto secondEngine = initializeEngine(secondContext);
   const auto first = bootstrapConnection(firstEngine.engine, "SHUTDOWNCYCLEA", UINT64_C(9350));
   const auto second = bootstrapConnection(secondEngine.engine, "SHUTDOWNCYCLEB", UINT64_C(9360));
   REQUIRE(first.status == IRFQ_INFINITE_STATUS_OK_V1);
   REQUIRE(second.status == IRFQ_INFINITE_STATUS_OK_V1);
-  context.firstEngine = firstEngine.engine;
-  context.secondEngine = secondEngine.engine;
-  context.concurrentCrossShutdowns = true;
+  firstContext.crossShutdownEngine = secondEngine.engine;
+  secondContext.crossShutdownEngine = firstEngine.engine;
+  firstContext.concurrentShutdownContext = &coordination;
+  secondContext.concurrentShutdownContext = &coordination;
+  firstContext.concurrentCrossShutdowns = true;
+  secondContext.concurrentCrossShutdowns = true;
 
   const auto firstFrame = finishFix("35=0\00134=2\00149=SHUTDOWNCYCLEA\00156=VENUE\00152=20260826-08:08:09.000\001");
   const auto secondFrame = finishFix("35=0\00134=2\00149=SHUTDOWNCYCLEB\00156=VENUE\00152=20260826-08:08:09.000\001");
@@ -2299,12 +2445,13 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-shutdown-cy
   firstDispatch.join();
   secondDispatch.join();
 
-  CHECK(context.firstShutdownStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
-  CHECK(context.secondShutdownStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(firstContext.crossShutdownStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(secondContext.crossShutdownStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
   CHECK(statuses[0] == IRFQ_INFINITE_STATUS_OK_V1);
   CHECK(statuses[1] == IRFQ_INFINITE_STATUS_OK_V1);
 
-  context.concurrentCrossShutdowns = false;
+  firstContext.concurrentCrossShutdowns = false;
+  secondContext.concurrentCrossShutdowns = false;
   closeConnection(first.response.connection);
   closeConnection(second.response.connection);
   shutdownEngine(firstEngine.engine);

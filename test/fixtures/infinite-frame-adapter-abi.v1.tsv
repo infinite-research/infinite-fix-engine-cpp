@@ -13,6 +13,7 @@ contract	fence_state	not_started>in_progress>acknowledged|failed
 contract	fence_quiescence	noncallback_waits>release_after_completion
 contract	callback_argument_lifetime	synchronous_only
 contract	callback_table_lifetime	copied_context_valid_until_quiescent_shutdown
+contract	token_handoff	exact_at_head_once_before_effects
 contract	acquisition	open_only_increments_in_flight
 contract	close_shutdown	stop_acquisition>fence_wake>drain>invalidate>release
 contract	release_quiescence	release_complete_before_shutdown
@@ -108,7 +109,7 @@ size	irfq_infinite_slice_v1	16
 align	irfq_infinite_slice_v1	8
 offset	irfq_infinite_slice_v1.data	0
 offset	irfq_infinite_slice_v1.length	8
-size	irfq_infinite_callback_table_v1	64
+size	irfq_infinite_callback_table_v1	72
 align	irfq_infinite_callback_table_v1	8
 offset	irfq_infinite_callback_table_v1.structure_size	0
 offset	irfq_infinite_callback_table_v1.abi_version	4
@@ -119,6 +120,7 @@ offset	irfq_infinite_callback_table_v1.wait_head	32
 offset	irfq_infinite_callback_table_v1.authorize	40
 offset	irfq_infinite_callback_table_v1.fence	48
 offset	irfq_infinite_callback_table_v1.release	56
+offset	irfq_infinite_callback_table_v1.handoff	64
 size	irfq_infinite_engine_init_request_v1	32
 align	irfq_infinite_engine_init_request_v1	8
 offset	irfq_infinite_engine_init_request_v1.structure_size	0

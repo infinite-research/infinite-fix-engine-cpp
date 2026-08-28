@@ -933,6 +933,8 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   RecordingResponder recordingResponder(plan, now);
   Log *const originalLog = session.m_state.m_pLog;
   Responder *const originalResponder = session.m_pResponder;
+  auto originalHeartBtInt = session.m_state.m_heartBtInt;
+  auto originalLogoutReason = session.m_state.m_logoutReason;
   decltype(session.m_state.m_queue) originalQueue;
   auto originalQueueGuard = sg::make_scope_guard([&originalQueue]() noexcept {
     for (auto &entry : originalQueue) {
@@ -942,15 +944,23 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
   for (const auto &entry : session.m_state.m_queue) {
     originalQueue[entry.first] = entry.second;
   }
-  const auto originalTimestamper = session.m_timestamper;
+  auto originalTimestamper = session.m_timestamper;
   auto originalTargetDefaultApplVerID = session.m_targetDefaultApplVerID;
-  auto targetDefaultGuard
-      = sg::make_scope_guard([&originalTargetDefaultApplVerID]() { cleanse(originalTargetDefaultApplVerID); });
+  auto sensitiveStateGuard = sg::make_scope_guard([&]() noexcept {
+    cleanse(originalLogoutReason);
+    cleanse(originalTargetDefaultApplVerID);
+  });
   const auto originalConfigurationRevision = session.m_infiniteConfigurationRevision;
   const auto originalResponderGeneration = session.m_infiniteResponderGeneration;
 
-  const auto restore = [&]() {
+  bool restored = false;
+  const auto restore = [&]() noexcept {
+    if (std::exchange(restored, true)) {
+      return;
+    }
     const auto &state = expected.mutableState;
+    session.m_infinitePlan = nullptr;
+    session.m_infiniteAction = nullptr;
     session.m_state.m_enabled = state.enabled;
     session.m_state.m_receivedLogon = state.receivedLogon;
     session.m_state.m_sentLogout = state.sentLogout;
@@ -962,11 +972,11 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     session.m_state.m_logoutTimeout = state.logoutTimeout;
     session.m_state.m_testRequest = state.testRequest;
     session.m_state.m_resendRange = std::make_pair(state.resendBegin, state.resendEnd);
-    session.m_state.m_heartBtInt = HeartBtInt(state.heartBtInt);
+    session.m_state.m_heartBtInt.swap(originalHeartBtInt);
     session.m_state.m_lastSentTime = state.lastSentTime;
     session.m_state.m_lastReceivedTime = state.lastReceivedTime;
     cleanse(session.m_state.m_logoutReason);
-    session.m_state.m_logoutReason = state.logoutReason;
+    session.m_state.m_logoutReason.swap(originalLogoutReason);
     for (auto &entry : session.m_state.m_queue) {
       cleanseInfiniteMessage(entry.second);
     }
@@ -974,13 +984,11 @@ InfiniteSessionClassification Session::classifyInfiniteFrame(
     session.m_state.m_pStore = originalStore;
     session.m_state.m_pLog = originalLog;
     session.m_pResponder = originalResponder;
-    session.m_timestamper = originalTimestamper;
+    session.m_timestamper.swap(originalTimestamper);
     cleanse(session.m_targetDefaultApplVerID);
-    session.m_targetDefaultApplVerID = originalTargetDefaultApplVerID;
+    session.m_targetDefaultApplVerID.swap(originalTargetDefaultApplVerID);
     session.m_infiniteConfigurationRevision = originalConfigurationRevision;
     session.m_infiniteResponderGeneration = originalResponderGeneration;
-    session.m_infinitePlan = nullptr;
-    session.m_infiniteAction = nullptr;
   };
   auto restoreGuard = sg::make_scope_guard(restore);
 
