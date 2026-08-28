@@ -352,7 +352,6 @@ std::uint64_t nextGeneration{1};
 
 using ActiveCallback = std::pair<const Engine *, const Connection *>;
 thread_local std::vector<ActiveCallback> activeCallbacks;
-thread_local Engine *activeCommitCallbackEngine{nullptr};
 
 bool activeCallbackContains(const Engine *engine) {
   return std::any_of(activeCallbacks.begin(), activeCallbacks.end(), [engine](const ActiveCallback &callback) {
@@ -367,19 +366,6 @@ bool activeCallbackContains(const Connection *connection) {
 }
 
 bool insideCallback() { return !activeCallbacks.empty(); }
-
-class CommitCallbackScope {
-public:
-  explicit CommitCallbackScope(Engine *engine)
-      : m_previous(activeCommitCallbackEngine) {
-    activeCommitCallbackEngine = engine;
-  }
-
-  ~CommitCallbackScope() { activeCommitCallbackEngine = m_previous; }
-
-private:
-  Engine *m_previous;
-};
 
 class CallbackScope {
 public:
@@ -430,6 +416,7 @@ struct Engine : std::enable_shared_from_this<Engine> {
   std::condition_variable condition;
   irfq_infinite_engine_lifecycle_v1 state{IRFQ_INFINITE_ENGINE_INITIALIZED_V1};
   std::atomic<bool> partitionFaulted{false};
+  std::atomic<bool> commitCallbackActive{false};
   bool terminalFailure{false};
   std::size_t inFlight{0};
   std::size_t lifecycleCallbacks{0};
@@ -439,6 +426,19 @@ struct Engine : std::enable_shared_from_this<Engine> {
   irfq_infinite_handle_v1 handle{};
   irfq_infinite_callback_table_v1 callbacks{};
   std::map<std::uint64_t, std::shared_ptr<Connection>> connections;
+};
+
+class CommitCallbackScope {
+public:
+  explicit CommitCallbackScope(Engine *engine)
+      : m_engine(engine) {
+    m_engine->commitCallbackActive.store(true, std::memory_order_release);
+  }
+
+  ~CommitCallbackScope() { m_engine->commitCallbackActive.store(false, std::memory_order_release); }
+
+private:
+  Engine *m_engine;
 };
 
 struct Connection : std::enable_shared_from_this<Connection> {
@@ -864,8 +864,7 @@ public:
     if (!m_connection || !m_engine.acquired()) {
       return;
     }
-    if (activeCommitCallbackEngine) {
-      activeCommitCallbackEngine->partitionFaulted.store(true, std::memory_order_release);
+    if (m_engine.engine()->commitCallbackActive.load(std::memory_order_acquire)) {
       m_engine.engine()->partitionFaulted.store(true, std::memory_order_release);
       m_connection->faulted.store(true, std::memory_order_release);
       terminateHeadTurnstile(m_connection);
@@ -974,8 +973,13 @@ void markConnectionTerminalFailure(const std::shared_ptr<Connection> &connection
   connection->lifecycleCondition.notify_all();
 }
 
-void markEngineTerminalFailure(const std::shared_ptr<Engine> &engine) noexcept {
+void serializePartitionFault(const std::shared_ptr<Engine> &engine) noexcept {
   engine->partitionFaulted.store(true, std::memory_order_release);
+  std::lock_guard<std::mutex> commit(engine->commitMutex);
+}
+
+void markEngineTerminalFailure(const std::shared_ptr<Engine> &engine) noexcept {
+  serializePartitionFault(engine);
   {
     std::lock_guard<std::mutex> lock(engine->mutex);
     if (engine->state != IRFQ_INFINITE_ENGINE_SHUTDOWN_V1) {
@@ -1025,14 +1029,19 @@ bool fenceConnection(
                    == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
   } catch (...) {}
   {
-    std::scoped_lock lock(connection->lifecycleMutex, connection->fenceMutex);
+    std::lock_guard<std::mutex> lock(connection->lifecycleMutex);
     acknowledged = acknowledged && !connection->terminalFailure;
+  }
+  if (!acknowledged) {
+    serializePartitionFault(engine);
+  }
+  {
+    std::lock_guard<std::mutex> lock(connection->fenceMutex);
     connection->fenceState = acknowledged ? FenceState::Acknowledged : FenceState::Failed;
   }
   connection->fenceCondition.notify_all();
   connection->lifecycleCondition.notify_all();
   if (!acknowledged) {
-    engine->partitionFaulted.store(true, std::memory_order_release);
     connection->identityQuarantined.store(true, std::memory_order_release);
     markConnectionTerminalFailure(connection);
     discardTerminalConnectionStateIfQuiescent(connection);
@@ -1172,6 +1181,7 @@ bool completeCloseConnection(
   discardConnectionState(connection);
   lane.unlock();
   if (!releaseConnection(engine, connection, reason)) {
+    markEngineTerminalFailure(engine);
     markConnectionTerminalFailure(connection);
     return false;
   }
@@ -2477,8 +2487,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_close_v1(
           outputCapacity,
           operationResponse(IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
-    if (activeCommitCallbackEngine) {
-      activeCommitCallbackEngine->partitionFaulted.store(true, std::memory_order_release);
+    if (engine->commitCallbackActive.load(std::memory_order_acquire)) {
       engine->partitionFaulted.store(true, std::memory_order_release);
       connection->faulted.store(true, std::memory_order_release);
       terminateHeadTurnstile(connection);
