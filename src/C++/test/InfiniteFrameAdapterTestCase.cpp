@@ -1774,6 +1774,41 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][partition-commit-gat
 #endif
 }
 
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][bootstrap-partition-commit-gate]") {
+#ifdef CLOCK_TAI
+  CallbackContext context;
+  const auto initialized = initializeEngine(context);
+  const auto live = bootstrapConnection(initialized.engine, "BOOTSTRAPGATEA", UINT64_C(2090));
+  REQUIRE(live.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  context.blockBootstrap = true;
+  BootstrapResult racing{};
+  std::thread bootstrap([&]() { racing = bootstrapConnection(initialized.engine, "BOOTSTRAPGATEB", UINT64_C(2092)); });
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    context.condition.wait(lock, [&context]() { return context.bootstrapEntered == 1; });
+  }
+
+  const irfq_infinite_handle_v1 unknownToken{UINT64_C(999999), UINT64_C(999999)};
+  CHECK(waitAtHead(live.response.connection, unknownToken) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.allowBootstrap = true;
+  }
+  context.condition.notify_all();
+  bootstrap.join();
+
+  CHECK(racing.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(racing.response.header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(racing.response.outcome == IRFQ_INFINITE_BOOTSTRAP_FENCED_V1);
+  CHECK(context.fenceCount == 2);
+  CHECK(context.releaseCount == 1);
+
+  closeConnection(live.response.connection);
+  shutdownEngine(initialized.engine);
+#endif
+}
+
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]") {
   CallbackContext context;
   context.blockRelease = true;

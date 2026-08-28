@@ -1630,11 +1630,20 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_bootstrap_v1(
           outputCapacity,
           bootstrapResponse(IRFQ_INFINITE_STATUS_STREAM_FENCED_V1, IRFQ_INFINITE_BOOTSTRAP_FENCED_V1));
     }
-    irfq_infinite_bootstrap_response_v1 response{};
-    response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
-    response.connection = connection->handle;
-    response.outcome = IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1;
-    return publishFixed(output, outputCapacity, response);
+    {
+      std::lock_guard<std::mutex> commit(engine->commitMutex);
+      if (!engine->partitionFaulted.load(std::memory_order_acquire)
+          && !connection->faulted.load(std::memory_order_acquire)) {
+        irfq_infinite_bootstrap_response_v1 response{};
+        response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
+        response.connection = connection->handle;
+        response.outcome = IRFQ_INFINITE_BOOTSTRAP_ACCEPTED_V1;
+        return publishFixed(output, outputCapacity, response);
+      }
+    }
+    const auto status = closeConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                               : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    return publishFixed(output, outputCapacity, bootstrapResponse(status, IRFQ_INFINITE_BOOTSTRAP_FENCED_V1));
   } catch (...) {
     return IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
   }
