@@ -255,10 +255,17 @@ struct CallbackContext {
   bool fenceThrows{false};
   bool releaseThrows{false};
   bool handoffThrows{false};
+  bool blockHandoff{false};
+  bool handoffEntered{false};
+  bool allowHandoff{false};
+  bool closeSameHandleOnHandoff{false};
+  bool callCrossConnectionOnHandoff{false};
   irfq_infinite_status_v1 fenceAcknowledgement{IRFQ_INFINITE_STATUS_STREAM_FENCED_V1};
   irfq_infinite_status_v1 releaseAcknowledgement{IRFQ_INFINITE_STATUS_CLOSED_V1};
   irfq_infinite_status_v1 handoffAcknowledgement{IRFQ_INFINITE_STATUS_OK_V1};
   std::size_t handoffCount{0};
+  irfq_infinite_status_v1 handoffCloseStatus{IRFQ_INFINITE_STATUS_OK_V1};
+  irfq_infinite_status_v1 handoffCrossStatus{IRFQ_INFINITE_STATUS_OK_V1};
   irfq_infinite_handle_v1 handedOffConnection{};
   irfq_infinite_handle_v1 handedOffToken{};
   std::atomic<std::size_t> completionOrder{0};
@@ -638,6 +645,18 @@ irfq_infinite_status_v1 handoffCallback(
   ++context.handoffCount;
   context.handedOffConnection = externalConnection;
   context.handedOffToken = externalToken;
+  {
+    std::unique_lock<std::mutex> lock(context.mutex);
+    context.handoffEntered = true;
+    context.condition.notify_all();
+    context.condition.wait(lock, [&context]() { return !context.blockHandoff || context.allowHandoff; });
+  }
+  if (context.closeSameHandleOnHandoff) {
+    context.handoffCloseStatus = nestedClose(context.adapterConnection, UINT32_C(74));
+  }
+  if (context.callCrossConnectionOnHandoff) {
+    context.handoffCrossStatus = nestedDispatch(context.crossConnection);
+  }
   if (context.handoffThrows) {
     throw std::runtime_error("handoff callback failure");
   }
@@ -1690,6 +1709,34 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][candidate-claim-appl
     CHECK(presentingContext.fenceCount == 1);
   }
 
+  SECTION("apply retirement remains final while handoff is in progress") {
+    ownerContext.blockHandoff = true;
+    irfq_infinite_status_v1 applyStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread applying([&]() { applyStatus = applyClassification(owner.response.connection, classified.second); });
+    {
+      std::unique_lock<std::mutex> lock(ownerContext.mutex);
+      ownerContext.condition.wait(lock, [&ownerContext]() { return ownerContext.handoffEntered; });
+    }
+
+    irfq_infinite_status_v1 presentingStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread presentingClaim(
+        [&]() { presentingStatus = waitAtHead(presenting.response.connection, dispatched.registration.token); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    {
+      std::lock_guard<std::mutex> lock(ownerContext.mutex);
+      ownerContext.allowHandoff = true;
+    }
+    ownerContext.condition.notify_all();
+
+    applying.join();
+    presentingClaim.join();
+    CHECK(applyStatus == IRFQ_INFINITE_STATUS_APPLIED_V1);
+    CHECK(presentingStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.fenceCount == 0);
+    CHECK(presentingContext.fenceCount == 1);
+  }
+
   SECTION("foreign claim wins before apply effects") {
     ownerContext.blockFence = true;
     irfq_infinite_status_v1 presentingStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
@@ -1737,6 +1784,27 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][candidate-claim-appl
     CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
     CHECK(ownerContext.handoffCount == 1);
     CHECK(ownerContext.fenceCount == 1);
+  }
+
+  SECTION("same-handle close during handoff fails closed without blocking") {
+    ownerContext.adapterConnection = owner.response.connection;
+    ownerContext.closeSameHandleOnHandoff = true;
+    CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCloseStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.fenceCount == 1);
+  }
+
+  SECTION("sibling operation during handoff fails closed without blocking") {
+    const auto sibling = bootstrapConnection(ownerEngine.engine, "CLAIMAPPLYSIBLING", UINT64_C(2074));
+    REQUIRE(sibling.status == IRFQ_INFINITE_STATUS_OK_V1);
+    ownerContext.crossConnection = sibling.response.connection;
+    ownerContext.callCrossConnectionOnHandoff = true;
+    CHECK(applyClassification(owner.response.connection, classified.second) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCrossStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    CHECK(ownerContext.handoffCount == 1);
+    CHECK(ownerContext.fenceCount == 1);
+    closeConnection(sibling.response.connection);
   }
 
   closeConnection(owner.response.connection);
@@ -1861,7 +1929,9 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence
   context.closeCrossConnectionOnBootstrap = true;
   context.closeSameHandleFromFence = true;
   const auto origin = bootstrapConnection(initialized.engine, "FENCEREENTRYORIGIN", UINT64_C(3300));
-  REQUIRE(origin.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(origin.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(origin.response.header.status == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  CHECK(origin.response.outcome == IRFQ_INFINITE_BOOTSTRAP_FENCED_V1);
 
   CHECK(context.bootstrapCloseStatus == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   CHECK(context.bootstrapCloseResponse.header.status == context.bootstrapCloseStatus);
@@ -1871,8 +1941,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence
   CHECK(context.fenceCloseResponse.header.status == context.fenceCloseStatus);
   CHECK(context.fenceCloseResponse.header.written_length == sizeof(context.fenceCloseResponse));
   CHECK(context.fenceCloseResponse.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
-  CHECK(context.fenceCount == 1);
-  CHECK(context.releaseCount == 0);
+  CHECK(context.fenceCount == 2);
+  CHECK(context.releaseCount == 1);
 
   const irfq_infinite_close_request_v1 close{
       sizeof(close),
@@ -1886,12 +1956,8 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][callback-close-fence
   CHECK(status != IRFQ_INFINITE_STATUS_CLOSED_V1);
   CHECK(response.header.status == IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1);
   CHECK(response.lifecycle == IRFQ_INFINITE_CONNECTION_CLOSING_V1);
-  CHECK(context.fenceCount == 1);
-  CHECK(context.releaseCount == 0);
-
-  context.closeCrossConnectionOnBootstrap = false;
-  context.closeSameHandleFromFence = false;
-  closeConnection(origin.response.connection);
+  CHECK(context.fenceCount == 2);
+  CHECK(context.releaseCount == 1);
 }
 
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][fence-quiescence]") {
