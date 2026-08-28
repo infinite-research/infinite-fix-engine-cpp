@@ -1558,6 +1558,81 @@ TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][connection-bound]") 
       == IRFQ_INFINITE_STATUS_SHUTDOWN_V1);
 }
 
+TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][cross-stream-token]") {
+#ifdef CLOCK_TAI
+  CallbackContext ownerContext;
+  CallbackContext presentingContext;
+  const auto ownerEngine = initializeEngine(ownerContext);
+  const auto presentingEngine = initializeEngine(presentingContext);
+  const auto owner = bootstrapConnection(ownerEngine.engine, "TOKENOWNER", UINT64_C(2050));
+  const auto presenting = bootstrapConnection(presentingEngine.engine, "TOKENPRESENTER", UINT64_C(2052));
+  REQUIRE(owner.status == IRFQ_INFINITE_STATUS_OK_V1);
+  REQUIRE(presenting.status == IRFQ_INFINITE_STATUS_OK_V1);
+
+  const auto lower = finishFix("35=0\00134=2\00149=TOKENOWNER\00156=VENUE\00152=20260826-08:08:09.000\001");
+  const auto later = finishFix("35=0\00134=3\00149=TOKENOWNER\00156=VENUE\00152=20260826-08:08:10.000\001");
+  const auto batch = lower + later;
+  const irfq_infinite_dispatch_request_v1 dispatch{
+      sizeof(dispatch),
+      IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V1,
+      {reinterpret_cast<const std::uint8_t *>(batch.data()), batch.size()},
+      {}};
+  auto dispatched = dispatchOutput();
+  REQUIRE(
+      irfq_infinite_connection_dispatch_v1(owner.response.connection, &dispatch, dispatched.data(), dispatched.size())
+      == IRFQ_INFINITE_STATUS_OK_V1);
+  const auto *dispatchResponse = reinterpret_cast<const irfq_infinite_dispatch_response_v1 *>(dispatched.data());
+  REQUIRE(dispatchResponse->result_count == 2);
+  const auto *registered
+      = reinterpret_cast<const irfq_infinite_registration_result_v1 *>(dispatched.data() + sizeof(*dispatchResponse));
+  const auto lowerToken = registered[0].token;
+  const auto laterToken = registered[1].token;
+
+  bool ownerWasFenced = false;
+  SECTION("foreign wait fences both streams and wakes the owner waiter") {
+    std::atomic<bool> waitStarting{false};
+    irfq_infinite_status_v1 ownerWaitStatus = IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+    std::thread ownerWait([&]() {
+      waitStarting.store(true, std::memory_order_release);
+      ownerWaitStatus = waitAtHead(owner.response.connection, laterToken);
+    });
+    while (!waitStarting.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    CHECK(waitAtHead(presenting.response.connection, laterToken) == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    {
+      std::lock_guard<std::mutex> lock(ownerContext.mutex);
+      ownerWasFenced = ownerContext.fenced;
+    }
+    if (!ownerWasFenced) {
+      closeConnection(owner.response.connection, UINT32_C(2054));
+    }
+    ownerWait.join();
+    CHECK(ownerWaitStatus == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+  }
+
+  SECTION("foreign classification of an at-head token fences both streams") {
+    REQUIRE(waitAtHead(owner.response.connection, lowerToken) == IRFQ_INFINITE_STATUS_AT_HEAD_V1);
+    CHECK(classifyAtHead(presenting.response.connection, lowerToken).first == IRFQ_INFINITE_STATUS_STREAM_FENCED_V1);
+    std::lock_guard<std::mutex> lock(ownerContext.mutex);
+    ownerWasFenced = ownerContext.fenced;
+  }
+
+  CHECK(presentingContext.fenced);
+  CHECK(presentingContext.fenceCount == 1);
+  CHECK(ownerWasFenced);
+  if (!ownerWasFenced) {
+    closeConnection(owner.response.connection, UINT32_C(2056));
+  }
+  closeConnection(owner.response.connection);
+  closeConnection(presenting.response.connection);
+  shutdownEngine(ownerEngine.engine);
+  shutdownEngine(presentingEngine.engine);
+#endif
+}
+
 TEST_CASE("InfiniteFrameAdapterTests", "[infinite][adapter][release-quiescence]") {
   CallbackContext context;
   context.blockRelease = true;

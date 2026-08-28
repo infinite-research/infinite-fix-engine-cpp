@@ -346,6 +346,7 @@ std::mutex registryMutex;
 // statics.
 auto &engines = *new std::map<std::uint64_t, std::shared_ptr<Engine>>;
 auto &connections = *new std::map<irfq_infinite_handle_v1, std::shared_ptr<Connection>, HandleLess>;
+auto &candidateOwners = *new std::map<irfq_infinite_handle_v1, std::weak_ptr<Connection>, HandleLess>;
 std::uint64_t nextObject{1};
 std::uint64_t nextGeneration{1};
 
@@ -617,6 +618,59 @@ std::shared_ptr<Connection> findConnection(irfq_infinite_handle_v1 handle) {
   std::lock_guard<std::mutex> lock(registryMutex);
   const auto found = connections.find(handle);
   return found != connections.end() ? found->second : nullptr;
+}
+
+void registerCandidateOwner(irfq_infinite_handle_v1 token, const std::shared_ptr<Connection> &connection) {
+  std::lock_guard<std::mutex> lock(registryMutex);
+  if (!candidateOwners.emplace(token, connection).second) {
+    throw std::logic_error("Duplicate Infinite adapter candidate owner");
+  }
+}
+
+std::shared_ptr<Connection> claimForeignCandidateOwner(
+    irfq_infinite_handle_v1 token,
+    const Connection *presenting) noexcept {
+  std::lock_guard<std::mutex> lock(registryMutex);
+  const auto found = candidateOwners.find(token);
+  if (found == candidateOwners.end()) {
+    return nullptr;
+  }
+  auto owner = found->second.lock();
+  if (!owner) {
+    candidateOwners.erase(found);
+    return nullptr;
+  }
+  if (owner.get() == presenting) {
+    return nullptr;
+  }
+  candidateOwners.erase(found);
+  return owner;
+}
+
+bool retireCandidateOwner(irfq_infinite_handle_v1 token, const Connection *owner) noexcept {
+  std::lock_guard<std::mutex> lock(registryMutex);
+  const auto found = candidateOwners.find(token);
+  if (found == candidateOwners.end()) {
+    return false;
+  }
+  const auto registered = found->second.lock();
+  if (!registered || registered.get() != owner) {
+    return false;
+  }
+  candidateOwners.erase(found);
+  return true;
+}
+
+void forgetCandidateOwner(irfq_infinite_handle_v1 token, const Connection *owner) noexcept {
+  std::lock_guard<std::mutex> lock(registryMutex);
+  const auto found = candidateOwners.find(token);
+  if (found == candidateOwners.end()) {
+    return;
+  }
+  const auto registered = found->second.lock();
+  if (!registered || registered.get() == owner) {
+    candidateOwners.erase(found);
+  }
 }
 
 bool isConnectionTombstone(irfq_infinite_handle_v1 handle) {
@@ -922,6 +976,20 @@ irfq_infinite_status_v1 fenceIfFaulted(
                                                      : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
 }
 
+irfq_infinite_status_v1 fenceCandidatePresentation(
+    const std::shared_ptr<Engine> &engine,
+    const std::shared_ptr<Connection> &presenting,
+    irfq_infinite_handle_v1 token) noexcept {
+  auto fenced = true;
+  const auto owner = claimForeignCandidateOwner(token, presenting.get());
+  if (owner) {
+    const auto ownerEngine = owner->engine.lock();
+    fenced = ownerEngine && fenceConnection(ownerEngine, owner, 0);
+  }
+  fenced = fenceConnection(engine, presenting, 0) && fenced;
+  return fenced ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1 : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+}
+
 bool releaseConnection(
     const std::shared_ptr<Engine> &engine,
     const std::shared_ptr<Connection> &connection,
@@ -973,6 +1041,7 @@ bool rejectAcceptedExternal(
 void discardConnectionState(const std::shared_ptr<Connection> &connection) noexcept {
   connection->classifications.clear();
   for (auto &entry : connection->candidates) {
+    forgetCandidateOwner(entry.first, connection.get());
     secureErase(entry.second.bytes);
   }
   connection->candidates.clear();
@@ -1709,6 +1778,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       for (const auto token : insertedCandidates) {
         const auto candidate = connection->candidates.find(token);
         if (candidate != connection->candidates.end()) {
+          forgetCandidateOwner(token, connection.get());
           secureErase(candidate->second.bytes);
           connection->candidates.erase(candidate);
         }
@@ -1725,6 +1795,7 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_dispatch_v1(
       inserted.first->second.registration = publishedResults[index];
       inserted.first->second.externalToken = results[index].token;
       inserted.first->second.bytes = std::move(dispatched.frames[index].bytes);
+      registerCandidateOwner(publishedResults[index].token, connection);
     }
     connection->lastRegisteredOrdinal = previousOrdinal;
     response.header.status = IRFQ_INFINITE_STATUS_OK_V1;
@@ -1786,11 +1857,8 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_wait_head_v1(
     auto engine = connection->engine.lock();
     auto candidate = connection->candidates.find(request->token);
     if (!engine || candidate == connection->candidates.end()) {
-      auto status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
-      if (engine && candidate == connection->candidates.end()) {
-        status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
-                                                        : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
-      }
+      const auto status = engine ? fenceCandidatePresentation(engine, connection, request->token)
+                                 : IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
     }
     auto faultStatus = fenceIfFaulted(engine, connection);
@@ -1951,8 +2019,10 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_classify_v1(
         || !connection->classifications.empty()) {
       auto status = IRFQ_INFINITE_STATUS_STREAM_FENCED_V1;
       if (engine) {
-        status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
-                                                        : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+        status = candidate == connection->candidates.end()
+                     ? fenceCandidatePresentation(engine, connection, request->token)
+                 : fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                          : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       }
       irfq_infinite_classification_response_v1 response{};
       response.header.status = status;
@@ -2167,6 +2237,11 @@ extern "C" irfq_infinite_status_v1 irfq_infinite_connection_apply_v1(
     connection->classifications.erase(selected);
     const auto candidate = connection->candidates.find(token);
     if (candidate == connection->candidates.end()) {
+      const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
+                                                                 : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
+      return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
+    }
+    if (!retireCandidateOwner(token, connection.get())) {
       const auto status = fenceConnection(engine, connection, 0) ? IRFQ_INFINITE_STATUS_STREAM_FENCED_V1
                                                                  : IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V1;
       return publishFixed(output, outputCapacity, operationResponse(status, IRFQ_INFINITE_CONNECTION_CLOSING_V1));
