@@ -4163,6 +4163,67 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "InfiniteFrameAdapterV2 invalid resume envelopes terminalize the live decision handle",
+    "[infinite][adapter][v2][stock-smoke][inbound-application][resume-envelope]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  for (const std::string variant :
+       {"request-null", "request-abi", "response-null", "response-misaligned", "response-abi"}) {
+    DYNAMIC_SECTION(variant) {
+      auto *session = stockLoggedOnSession(config);
+      REQUIRE(session != nullptr);
+      InboundCall inbound(session, participantFrame("AJ", 2, quoteResponseBody("RFQ-ENVELOPE")), 0x8d);
+      PlanBuffers pendingBuffers;
+      auto pending = pendingBuffers.response();
+      REQUIRE(
+          irfq_infinite_prepare_v2(session, &inbound.request, &pending)
+          == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+      irfq_infinite_resume_request_v2 resume{};
+      init(resume);
+      resume.prepare_id = pending.prepare_id;
+      resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+      resume.subject_sequence = pending.subject_sequence;
+      std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+      resume.decision = IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2;
+      resume.input_source = pending.input_source;
+      resume.input_source_bytes = {inbound.payload.data(), inbound.payload.size()};
+      PlanBuffers invalidBuffers;
+      auto invalid = invalidBuffers.response();
+      alignas(irfq_infinite_prepare_response_v2) std::array<std::uint8_t, sizeof(irfq_infinite_prepare_response_v2) + 1>
+          misaligned{};
+      auto *request = &resume;
+      auto *response = &invalid;
+      auto expected = IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+      if (variant == "request-null") {
+        request = nullptr;
+      } else if (variant == "request-abi") {
+        resume.header.abi_version = 1;
+        expected = IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2;
+      } else if (variant == "response-null") {
+        response = nullptr;
+      } else if (variant == "response-misaligned") {
+        response = reinterpret_cast<irfq_infinite_prepare_response_v2 *>(misaligned.data() + 1);
+      } else {
+        invalid.header.abi_version = 1;
+        expected = IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2;
+      }
+      CHECK(irfq_infinite_resume_v2(session, request, response) == expected);
+
+      resume.header.abi_version = IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V2;
+      PlanBuffers retryBuffers;
+      auto retry = retryBuffers.response();
+      CHECK(irfq_infinite_resume_v2(session, &resume, &retry) == IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+      InboundCall replacement(session, participantFrame("AJ", 2, quoteResponseBody("REPLACEMENT")), 0x8e);
+      PlanBuffers replacementBuffers;
+      auto replacementResult = replacementBuffers.response();
+      CHECK(
+          irfq_infinite_prepare_v2(session, &replacement.request, &replacementResult)
+          == IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+}
+
+TEST_CASE(
     "InfiniteFrameAdapterV2 application resume identity step alias and capacity failures consume the plan",
     "[infinite][adapter][v2][stock-smoke][inbound-application][resume-invalid]") {
   const auto config = otherwiseValidUnavailableProfile();

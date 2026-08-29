@@ -2348,6 +2348,13 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
     irfq_infinite_session_v2 *session,
     const irfq_infinite_resume_request_v2 *request,
     irfq_infinite_prepare_response_v2 *response) noexcept {
+  const auto failPending = [session, response](irfq_infinite_status_v2 status) noexcept {
+    if (session != nullptr) {
+      session->pending.reset();
+      session->terminal = true;
+    }
+    return publish(response, status);
+  };
   try {
     PrepareOutputView outputView;
     if (aligned(response)) {
@@ -2355,16 +2362,11 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
     }
     const auto envelope = validateEnvelope(request, response);
     if (envelope != IRFQ_INFINITE_STATUS_OK_V2) {
-      return envelope;
+      return failPending(envelope);
     }
     if (session == nullptr) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
-    const auto failPending = [&](irfq_infinite_status_v2 status) {
-      session->pending.reset();
-      session->terminal = true;
-      return publish(response, status);
-    };
     if (session->terminal) {
       return publish(response, IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
     }
@@ -2681,7 +2683,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
                ? status
                : failPending(status);
   } catch (...) {
-    return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
+    return failPending(IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
   }
 }
 
