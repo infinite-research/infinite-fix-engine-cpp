@@ -89,6 +89,7 @@ struct InfiniteInboundPlan {
   bool sequenceValid{false};
   bool identityMatches{false};
   bool timeMatches{false};
+  bool dictionaryValid{false};
   bool disconnected{false};
 };
 
@@ -218,7 +219,8 @@ public:
       const std::string &wire,
       const DataDictionaryProvider &dictionaries,
       const InfiniteSessionStaticProfile &profile,
-      bool finalizeResetLogon = false);
+      bool finalizeResetLogon = false,
+      bool queuedReplay = false);
 
   static InfiniteHeartbeatPlan timer(
       const std::string &beginString,

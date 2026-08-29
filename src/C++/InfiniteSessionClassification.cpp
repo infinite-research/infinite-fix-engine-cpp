@@ -316,21 +316,25 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::application(
   const auto &sessionDictionary = dictionaries.getSessionDataDictionary(BeginString(beginString));
   const auto &applicationDictionary = dictionaries.getApplicationDataDictionary(ApplVerID("10"));
   const auto parse = [&] {
-    const auto fakeBody = "35=" + msgType + "\00134=1\00149=" + senderCompId
-                          + "\00152=20260828-12:00:00.000000\00156=" + targetCompId + "\001" + body;
-    Message message(applicationParseEnvelope(beginString, fakeBody), sessionDictionary, applicationDictionary, false);
-    MsgType parsedType;
-    message.getHeader().getField(parsedType);
-    std::string canonicalBody;
-    message.calculateString(canonicalBody);
-    DataDictionary::validate(message, &sessionDictionary, &applicationDictionary);
-    if (!message.isApp() || parsedType.getValue() != msgType || canonicalBody != body) {
+    try {
+      const auto fakeBody = "35=" + msgType + "\00134=1\00149=" + senderCompId
+                            + "\00152=20260828-12:00:00.000000\00156=" + targetCompId + "\001" + body;
+      Message message(applicationParseEnvelope(beginString, fakeBody), sessionDictionary, applicationDictionary, false);
+      MsgType parsedType;
+      message.getHeader().getField(parsedType);
+      std::string canonicalBody;
+      message.calculateString(canonicalBody);
+      DataDictionary::validate(message, &sessionDictionary, &applicationDictionary);
+      if (!message.isApp() || parsedType.getValue() != msgType || canonicalBody != body) {
+        throw std::invalid_argument("Application body");
+      }
+      message.getHeader().clear();
+      message.getTrailer().clear();
+      message.getHeader().setField(parsedType);
+      return message;
+    } catch (const Exception &) {
       throw std::invalid_argument("Application body");
     }
-    message.getHeader().clear();
-    message.getTrailer().clear();
-    message.getHeader().setField(parsedType);
-    return message;
   };
   const auto render = [&](InfiniteApplicationRenderMode renderMode,
                           std::uint64_t sequence,
@@ -618,7 +622,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const std::string &wire,
     const DataDictionaryProvider &dictionaries,
     const InfiniteSessionStaticProfile &profile,
-    bool finalizeResetLogon) {
+    bool finalizeResetLogon,
+    bool queuedReplay) {
   constexpr std::uint64_t FLAGS_MASK = UINT64_C(0x1ff);
   const bool detached = sessionFlags == UINT64_C(1);
   const auto activeHeartbeat = heartbeatSeconds == 0 ? profile.minimumHeartbeat : heartbeatSeconds;
@@ -651,13 +656,13 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
   Session session([now] { return now; }, application, stores, sessionId, dictionaries, sessionTime, 0, nullptr, true);
   RecordingResponder responder;
   session.setLogonTime(logonTime);
-  session.setIsNonStopSession(profile.scheduleMode == 1);
+  session.setIsNonStopSession(queuedReplay || profile.scheduleMode == 1);
   session.setTimestampPrecision(static_cast<int>(profile.timestampPrecision));
   session.setSenderDefaultApplVerID("10");
   session.setTargetDefaultApplVerID("10");
   session.setSendRedundantResendRequests(profile.sendRedundantResendRequests);
   session.setCheckCompId(profile.checkCompId);
-  session.setCheckLatency(profile.checkLatency);
+  session.setCheckLatency(!queuedReplay && profile.checkLatency);
   session.setMaxLatency(static_cast<int>(profile.maximumLatency));
   session.setResetOnLogon(profile.resetOnLogon);
   session.setResetOnLogout(profile.resetOnLogout);
@@ -788,7 +793,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const bool safeToIntercept = dictionaryValid && headerSafe;
     bool intercepted = false;
     if (!identified) {
-      session.next(incoming, now);
+      session.next(incoming, now, queuedReplay);
       session.disconnect();
       intercepted = true;
     } else if (!sequenceValid) {
@@ -827,12 +832,12 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         intercepted = true;
       }
     } else if (!dictionaryValid && msgType == MsgType_Logon) {
-      session.next(incoming, now);
+      session.next(incoming, now, queuedReplay);
       session.generateLogout("Invalid Logon dictionary");
       session.disconnect();
       intercepted = true;
     } else if (!dictionaryValid && msgType == MsgType_SequenceReset) {
-      session.next(incoming, now);
+      session.next(incoming, now, queuedReplay);
       session.generateLogout("Invalid GapFill NewSeqNo");
       session.disconnect();
       intercepted = true;
@@ -872,7 +877,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       }
     }
     if (!intercepted) {
-      session.next(incoming, now);
+      session.next(incoming, now, queuedReplay);
     }
     if (sequenceValid && sequence < targetSequence && !responder.outputs.empty() && !responder.disconnected) {
       const auto sentLogout = std::any_of(responder.outputs.begin(), responder.outputs.end(), [](const auto &output) {
@@ -925,6 +930,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         sequenceValid,
         completeIdentity,
         timeMatches,
+        dictionaryValid,
         responder.disconnected};
   } catch (const Exception &error) {
     throw std::invalid_argument(error.what());

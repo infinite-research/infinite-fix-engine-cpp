@@ -1248,6 +1248,9 @@ std::unique_ptr<PendingPlan> applicationPlan(
                             && request.event == IRFQ_INFINITE_EVENT_CONTINUE_READ_RESULT_V2
                             && request.application_block_mode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
                             && continuation == CONTINUATION_READ_RESULT;
+  if ((original || replay || read) && continuation != CONTINUATION_NONE) {
+    throw std::invalid_argument("Application continuation active");
+  }
   if (!original && !replay && !read && !continueApplication && !continueRead) {
     throw std::invalid_argument("Application event");
   }
@@ -2796,10 +2799,12 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           read64(session->state.data() + 152),
           wire,
           session->dictionaries,
-          session->staticProfile);
+          session->staticProfile,
+          false,
+          true);
       const std::string declaredType(reinterpret_cast<const char *>(row.msg_type), row.msg_type_length);
       if (!inbound.identified || !inbound.sequenceValid || !inbound.identityMatches || !inbound.timeMatches
-          || !inbound.admin || inbound.application || inbound.resetLogon || inbound.disconnected
+          || !inbound.dictionaryValid || !inbound.admin || inbound.application || inbound.resetLogon
           || inbound.msgType == "A" || inbound.msgType != declaredType || inbound.sequence != row.sequence
           || inbound.bodyOffset > row.frame_length || inbound.bodyLength > row.frame_length - inbound.bodyOffset) {
         return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
@@ -2936,9 +2941,11 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             read64(session->state.data() + 152),
             wire,
             session->dictionaries,
-            session->staticProfile);
+            session->staticProfile,
+            false,
+            true);
         if (!inbound.identified || !inbound.sequenceValid || !inbound.identityMatches || !inbound.timeMatches
-            || !inbound.admin || inbound.application || inbound.resetLogon || inbound.disconnected
+            || !inbound.dictionaryValid || !inbound.admin || inbound.application || inbound.resetLogon
             || inbound.msgType != plan.msgType || inbound.msgType == "A" || inbound.sequence != plan.subjectSequence
             || inbound.bodyOffset != plan.inputOffset || inbound.bodyLength != plan.inputLength) {
           return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
@@ -3043,6 +3050,17 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           write64(plan.state.data() + 96, read64(plan.state.data() + 80));
           write64(plan.state.data() + 104, read64(plan.state.data() + 88));
           writeSenderSuccessor(plan.state, nextSender);
+        }
+        if (request->decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2 && inbound.disconnected) {
+          const auto sentLogout = std::find(outputTypes.begin(), outputTypes.end(), "5") != outputTypes.end();
+          const auto logoutFlags
+              = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
+          write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(256) | logoutFlags);
+          write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_PROTOCOL_V2);
+          irfq_infinite_declarative_action_v2 disconnect{};
+          disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+          disconnect.reason_code = IRFQ_INFINITE_REASON_PROTOCOL_V2;
+          plan.actions.push_back(disconnect);
         }
         const auto nextCursor = plan.storeEnd;
         if (nextCursor < read64(session->state.data() + 204)) {
