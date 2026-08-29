@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace FIX {
 class TimeRange;
@@ -30,6 +31,27 @@ struct InfiniteHeartbeatPlan {
   std::uint64_t nextSenderSequence{0};
   std::uint64_t nextTargetSequence{0};
   std::uint32_t testRequestCount{0};
+  bool disconnected{false};
+};
+
+struct InfiniteInboundPlan {
+  std::vector<std::string> outputs;
+  std::vector<std::string> outputMsgTypes;
+  std::vector<std::uint64_t> outputSequences;
+  std::string msgType;
+  std::uint64_t sequence{0};
+  std::uint64_t nextSenderSequence{0};
+  std::uint64_t nextTargetSequence{0};
+  std::uint32_t testRequestCount{0};
+  std::uint32_t heartbeatSeconds{0};
+  std::uint64_t bodyOffset{0};
+  std::uint64_t bodyLength{0};
+  bool application{false};
+  bool admin{false};
+  bool resetLogon{false};
+  bool identified{false};
+  bool identityMatches{false};
+  bool timeMatches{false};
   bool disconnected{false};
 };
 
@@ -83,6 +105,44 @@ public:
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
       bool resetSequenceNumbers);
+
+  static InfiniteHeartbeatPlan reject(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t nowUtcNanoseconds,
+      std::uint64_t refSequence,
+      std::uint32_t refTag,
+      std::uint32_t rejectReason,
+      const std::string &refMsgType);
+
+  static InfiniteHeartbeatPlan businessReject(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t nowUtcNanoseconds,
+      std::uint64_t refSequence,
+      const std::string &refMsgType);
+
+  static InfiniteInboundPlan inbound(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t nowUtcNanoseconds,
+      std::int64_t lastSentUtcNanoseconds,
+      std::int64_t lastReceivedUtcNanoseconds,
+      std::uint64_t sessionFlags,
+      std::uint32_t testRequestCount,
+      const std::string &wire);
 
   static InfiniteHeartbeatPlan timer(
       const std::string &beginString,
@@ -138,7 +198,9 @@ private:
     Logout,
     ResendRequest,
     Logon,
-    ResetLogon
+    ResetLogon,
+    Reject,
+    BusinessReject
   };
 
   static InfiniteHeartbeatPlan run(
@@ -150,6 +212,9 @@ private:
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
       Operation operation,
-      const std::string &text);
+      const std::string &text,
+      std::uint64_t refSequence = 0,
+      std::uint32_t refTag = 0,
+      std::uint32_t rejectReason = 0);
 };
 } // namespace FIX

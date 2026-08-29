@@ -47,6 +47,8 @@ constexpr char PROFILE_DOMAIN[] = "IRFQ-FIX-SESSION-PROFILE-V1";
 constexpr char NATIVE_STATE_DOMAIN[] = "IRFQ-FIX-NATIVE-STATE-V1";
 constexpr char EVENT_PAYLOAD_DOMAIN[] = "IRFQ-FIX-ABI-V2-EVENT-PAYLOAD-V1";
 constexpr char EVENT_IDENTITY_DOMAIN[] = "IRFQ-FIX-ABI-V2-EVENT-V1";
+constexpr char DECISION_SUBJECT_DOMAIN[] = "IRFQ-FIX-ABI-V2-DECISION-SUBJECT-V1";
+constexpr char REBORROW_DOMAIN[] = "IRFQ-FIX-ABI-V2-REBORROW-V1";
 constexpr std::uint64_t SESSION_FLAGS_MASK = UINT64_C(0x1ff);
 constexpr std::uint64_t SESSION_FLAG_ENABLED = UINT64_C(1);
 constexpr std::uint32_t RECOVERY_NONE = 0;
@@ -762,6 +764,19 @@ struct PendingPlan {
   std::array<std::uint8_t, 32> stateDigest{};
   std::vector<std::uint8_t> output;
   std::vector<irfq_infinite_declarative_action_v2> actions;
+  irfq_infinite_status_v2 pendingStatus{IRFQ_INFINITE_STATUS_READY_V2};
+  std::uint64_t subjectSequence{0};
+  std::uint64_t classifiedSequence{0};
+  std::array<std::uint8_t, 32> subject{};
+  std::string msgType;
+  irfq_infinite_input_source_v2 inputSource{IRFQ_INFINITE_INPUT_NONE_V2};
+  std::uint32_t inputItemIndex{0};
+  std::uint64_t inputOffset{0};
+  std::uint64_t inputLength{0};
+  std::uint64_t sourceLength{0};
+  std::array<std::uint8_t, 32> reborrowDigest{};
+  std::array<std::uint8_t, 32> contentDigest{};
+  bool applicationDispatch{false};
   bool materialized{false};
 };
 
@@ -877,6 +892,18 @@ irfq_infinite_status_v2 describePlan(
   std::copy(plan.eventIdentity.begin(), plan.eventIdentity.end(), response->event_identity_sha256);
   response->base_epoch = plan.baseEpoch;
   response->base_revision = plan.baseRevision;
+  if (plan.pendingStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2
+      || plan.pendingStatus == IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2) {
+    response->subject_sequence = plan.subjectSequence;
+    std::copy(plan.subject.begin(), plan.subject.end(), response->subject_sha256);
+    response->msg_type_length = static_cast<std::uint32_t>(plan.msgType.size());
+    std::copy(plan.msgType.begin(), plan.msgType.end(), response->msg_type);
+    response->input_source = plan.inputSource;
+    response->input_item_index = plan.inputItemIndex;
+    response->input_offset = plan.inputOffset;
+    response->input_length = plan.inputLength;
+    return publish(response, plan.pendingStatus);
+  }
   response->result_epoch = plan.resultEpoch;
   response->result_revision = plan.resultRevision;
   response->native_state = view.state;
@@ -1022,6 +1049,376 @@ std::unique_ptr<PendingPlan> adminTestRequestPlan(
       read64(session.state.data() + 144),
       request.now_utc_ns);
   return adminOutputPlan(session, request, output, '1', testRequestCount + 1, IRFQ_INFINITE_REASON_NONE_V2);
+}
+
+std::unique_ptr<PendingPlan> adminRejectPlan(
+    irfq_infinite_session_v2 &session,
+    const irfq_infinite_prepare_request_v2 &request) {
+  const auto refSequence = read64(request.payload.data + 32);
+  const auto refTag = read32(request.payload.data + 40);
+  const auto rejectReason = read32(request.payload.data + 44);
+  const auto refMsgTypeLength = read32(request.payload.data + 48);
+  if (!attachedForAdmin(session) || refSequence == 0
+      || refSequence >= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2)
+      || refTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+      || (rejectReason > 18 && rejectReason != 99) || refMsgTypeLength > IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2
+      || request.payload.length != 52 + refMsgTypeLength
+      || !std::all_of(request.payload.data + 52, request.payload.data + 52 + refMsgTypeLength, [](std::uint8_t byte) {
+           return byte >= 0x21 && byte <= 0x7e;
+         })) {
+    throw std::invalid_argument("Reject event");
+  }
+  const std::string refMsgType(
+      reinterpret_cast<const char *>(request.payload.data + 52),
+      static_cast<std::size_t>(refMsgTypeLength));
+  const auto output = FIX::InfiniteSessionPlanner::reject(
+      session.profile.beginString,
+      session.profile.venueCompId,
+      session.profile.participantCompId,
+      read32(session.state.data() + 188),
+      read64(session.state.data() + 132),
+      read64(session.state.data() + 144),
+      request.now_utc_ns,
+      refSequence,
+      refTag,
+      rejectReason,
+      refMsgType);
+  return adminOutputPlan(
+      session,
+      request,
+      output,
+      '3',
+      read32(session.state.data() + 192),
+      IRFQ_INFINITE_REASON_NONE_V2);
+}
+
+std::unique_ptr<PendingPlan> registeredInboundPlan(
+    irfq_infinite_session_v2 &session,
+    const irfq_infinite_prepare_request_v2 &request) {
+  const auto frameLength = read32(request.payload.data + 32);
+  const auto sessionFlags = read64(session.state.data() + 180);
+  const bool detached = sessionFlags == SESSION_FLAG_ENABLED;
+  if (request.payload.length < 68 || frameLength == 0 || frameLength > IRFQ_INFINITE_MAX_FRAME_BYTES_V2
+      || request.payload.length != 68 + frameLength || (!attachedForAdmin(session) && !detached)
+      || read32(session.state.data() + 128) != IRFQ_INFINITE_SEQUENCE_VALUE_V2
+      || read32(session.state.data() + 140) != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
+    throw std::invalid_argument("Inbound event");
+  }
+  const auto *frameBytes = request.payload.data + 68;
+  Sha256 sha;
+  sha.update(frameBytes, frameLength);
+  const auto frameDigest = sha.finish();
+  if (!std::equal(frameDigest.begin(), frameDigest.end(), request.payload.data + 36)) {
+    throw std::invalid_argument("Inbound frame digest");
+  }
+  FIX::InfiniteDeclaredFrameCursor cursor{};
+  std::size_t complete = 0;
+  if (FIX::scanInfiniteDeclaredFrame(reinterpret_cast<const char *>(frameBytes), frameLength, cursor, complete)
+          != FIX::InfiniteDeclaredFrameScanResult::Ready
+      || complete != frameLength) {
+    throw std::invalid_argument("Inbound complete frame");
+  }
+  const std::string wire(reinterpret_cast<const char *>(frameBytes), frameLength);
+  const auto inbound = FIX::InfiniteSessionPlanner::inbound(
+      session.profile.beginString,
+      session.profile.venueCompId,
+      session.profile.participantCompId,
+      read32(session.state.data() + 188),
+      read64(session.state.data() + 132),
+      read64(session.state.data() + 144),
+      request.now_utc_ns,
+      readI64(session.state.data() + 104) == 0 ? readI64(session.state.data() + 72)
+                                               : readI64(session.state.data() + 104),
+      readI64(session.state.data() + 120) == 0 ? readI64(session.state.data() + 72)
+                                               : readI64(session.state.data() + 120),
+      sessionFlags,
+      read32(session.state.data() + 192),
+      wire);
+  if ((!inbound.admin && !inbound.application) || (inbound.admin && inbound.application)
+      || inbound.outputs.size() != inbound.outputMsgTypes.size()
+      || inbound.outputs.size() != inbound.outputSequences.size()) {
+    throw std::invalid_argument("Inbound classification");
+  }
+
+  auto plan = std::make_unique<PendingPlan>();
+  plan->id = {session.identity, session.nextPlan++};
+  plan->kind = request.kind;
+  plan->stage = request.stage;
+  plan->event = request.event;
+  std::copy_n(request.event_identity_sha256, plan->eventIdentity.size(), plan->eventIdentity.begin());
+  plan->baseEpoch = session.epoch;
+  plan->baseRevision = session.revision;
+  plan->resultEpoch = session.epoch;
+  plan->resultRevision = session.revision + 1;
+  plan->state = session.state;
+  write64(plan->state.data() + 56, plan->resultRevision);
+  write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
+  write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
+  write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
+  write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
+  write32(plan->state.data() + 192, inbound.testRequestCount);
+  const auto expectedTarget = read64(session.state.data() + 144);
+  const auto appendOutputs = [&] {
+    std::uint64_t offset = 0;
+    for (std::size_t index = 0; index < inbound.outputs.size(); ++index) {
+      const auto &output = inbound.outputs[index];
+      if (output.empty() || output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2 - offset
+          || inbound.outputMsgTypes[index].empty()
+          || inbound.outputMsgTypes[index].size() > IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2) {
+        throw std::length_error("Inbound output");
+      }
+      plan->output.insert(plan->output.end(), output.begin(), output.end());
+      irfq_infinite_declarative_action_v2 action{};
+      action.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+      action.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+      action.msg_type_length = static_cast<std::uint32_t>(inbound.outputMsgTypes[index].size());
+      std::copy(inbound.outputMsgTypes[index].begin(), inbound.outputMsgTypes[index].end(), action.msg_type);
+      action.sequence_begin = inbound.outputSequences[index];
+      action.sequence_end_exclusive = inbound.outputSequences[index] + 1;
+      action.output_offset = offset;
+      action.output_length = output.size();
+      Sha256 outputSha;
+      outputSha.update(reinterpret_cast<const std::uint8_t *>(output.data()), output.size());
+      const auto outputDigest = outputSha.finish();
+      std::copy(outputDigest.begin(), outputDigest.end(), action.binding_sha256);
+      plan->actions.push_back(action);
+      offset += output.size();
+    }
+    if (!inbound.outputs.empty()) {
+      write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
+      write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
+      if (inbound.nextSenderSequence == static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2)) {
+        write32(plan->state.data() + 128, IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+        write64(plan->state.data() + 132, 0);
+      } else {
+        write64(plan->state.data() + 132, inbound.nextSenderSequence);
+      }
+    }
+  };
+  if (!inbound.identified) {
+    appendOutputs();
+    const auto sentLogout
+        = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5") != inbound.outputMsgTypes.end();
+    write64(
+        plan->state.data() + 180,
+        read64(plan->state.data() + 180) | UINT64_C(256) | (sentLogout ? UINT64_C(16) : UINT64_C(0)));
+    write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_PROTOCOL_V2);
+    irfq_infinite_declarative_action_v2 disconnect{};
+    disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+    disconnect.reason_code = IRFQ_INFINITE_REASON_PROTOCOL_V2;
+    plan->actions.push_back(disconnect);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (inbound.resetLogon && inbound.identityMatches && inbound.timeMatches) {
+    plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2;
+    std::copy_n(request.payload.data, plan->subject.size(), plan->subject.begin());
+    plan->inputSource = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    plan->inputOffset = 0;
+    plan->inputLength = request.payload.length;
+    plan->sourceLength = request.payload.length;
+    plan->classifiedSequence = inbound.sequence;
+    Sha256 reborrowSha;
+    reborrowSha.update(reinterpret_cast<const std::uint8_t *>(REBORROW_DOMAIN), sizeof(REBORROW_DOMAIN) - 1);
+    const std::uint8_t zero = 0;
+    reborrowSha.update(&zero, 1);
+    std::array<std::uint8_t, 16> reborrowFields{};
+    write32(reborrowFields.data(), plan->inputSource);
+    write32(reborrowFields.data() + 4, plan->inputItemIndex);
+    write64(reborrowFields.data() + 8, plan->sourceLength);
+    reborrowSha.update(reborrowFields.data(), reborrowFields.size());
+    reborrowSha.update(request.payload.data, static_cast<std::size_t>(request.payload.length));
+    plan->reborrowDigest = reborrowSha.finish();
+    return plan;
+  }
+  if (detached && inbound.identityMatches && inbound.timeMatches) {
+    if (!inbound.admin || inbound.application || inbound.msgType != "A" || inbound.sequence != expectedTarget
+        || inbound.outputs.size() != 1 || inbound.outputMsgTypes[0] != "A" || inbound.disconnected
+        || inbound.nextSenderSequence != read64(session.state.data() + 132) + 1
+        || inbound.nextTargetSequence != expectedTarget + 1) {
+      throw std::invalid_argument("Inbound attachment Logon");
+    }
+    irfq_infinite_declarative_action_v2 disposition{};
+    disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+    disposition.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2;
+    disposition.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    disposition.sequence_begin = inbound.sequence;
+    disposition.sequence_end_exclusive = inbound.sequence + 1;
+    disposition.input_offset = 68;
+    disposition.input_length = frameLength;
+    std::copy_n(request.payload.data, 32, disposition.binding_sha256);
+    plan->actions.push_back(disposition);
+    appendOutputs();
+    write64(plan->state.data() + 152, inbound.sequence);
+    write64(plan->state.data() + 180, UINT64_C(135));
+    write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+    write32(plan->state.data() + 288, 10);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (inbound.sequence > expectedTarget && inbound.identityMatches && inbound.timeMatches) {
+    if (inbound.outputs.size() != 1 || inbound.outputMsgTypes[0] != "2" || inbound.disconnected
+        || inbound.msgType == "A") {
+      throw std::invalid_argument("Inbound too high");
+    }
+    if (inbound.admin) {
+      irfq_infinite_declarative_action_v2 queue{};
+      queue.kind = IRFQ_INFINITE_ACTION_QUEUE_INSERT_V2;
+      queue.msg_type_length = static_cast<std::uint32_t>(inbound.msgType.size());
+      std::copy(inbound.msgType.begin(), inbound.msgType.end(), queue.msg_type);
+      queue.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+      queue.sequence_begin = inbound.sequence;
+      queue.sequence_end_exclusive = inbound.sequence + 1;
+      queue.input_offset = 68;
+      queue.input_length = frameLength;
+      std::copy(frameDigest.begin(), frameDigest.end(), queue.binding_sha256);
+      plan->actions.push_back(queue);
+      write64(plan->state.data() + 196, expectedTarget);
+      write64(plan->state.data() + 204, inbound.sequence + 1);
+      write64(plan->state.data() + 212, expectedTarget);
+    }
+    irfq_infinite_declarative_action_v2 disposition{};
+    disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+    disposition.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2;
+    disposition.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    disposition.sequence_begin = inbound.sequence;
+    disposition.sequence_end_exclusive = inbound.sequence + 1;
+    disposition.input_offset = 68;
+    disposition.input_length = frameLength;
+    std::copy_n(request.payload.data, 32, disposition.binding_sha256);
+    disposition.reason_code = IRFQ_INFINITE_REASON_SEQUENCE_V2;
+    plan->actions.push_back(disposition);
+    appendOutputs();
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (inbound.sequence < expectedTarget && inbound.identityMatches && inbound.timeMatches) {
+    irfq_infinite_declarative_action_v2 disposition{};
+    disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+    disposition.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2;
+    disposition.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    disposition.sequence_begin = inbound.sequence;
+    disposition.sequence_end_exclusive = inbound.sequence + 1;
+    disposition.input_offset = 68;
+    disposition.input_length = frameLength;
+    std::copy_n(request.payload.data, 32, disposition.binding_sha256);
+    disposition.reason_code
+        = inbound.disconnected ? IRFQ_INFINITE_REASON_PROTOCOL_V2 : IRFQ_INFINITE_REASON_SEQUENCE_V2;
+    plan->actions.push_back(disposition);
+    appendOutputs();
+    if (inbound.disconnected) {
+      const auto sentLogout = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5")
+                              != inbound.outputMsgTypes.end();
+      const auto logoutFlags
+          = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
+      write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256) | logoutFlags);
+      write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_PROTOCOL_V2);
+      irfq_infinite_declarative_action_v2 disconnect{};
+      disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+      disconnect.reason_code = IRFQ_INFINITE_REASON_PROTOCOL_V2;
+      plan->actions.push_back(disconnect);
+    }
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (inbound.application
+      || (inbound.msgType == "4" && inbound.outputs.empty() && !inbound.disconnected
+          && inbound.nextTargetSequence > expectedTarget)) {
+    if (inbound.bodyLength == 0 || inbound.bodyOffset + inbound.bodyLength > frameLength) {
+      throw std::invalid_argument("Inbound application body");
+    }
+    const auto bodyDigest = [&] {
+      Sha256 bodySha;
+      bodySha.update(frameBytes + inbound.bodyOffset, static_cast<std::size_t>(inbound.bodyLength));
+      return bodySha.finish();
+    }();
+    Sha256 subjectSha;
+    subjectSha.update(
+        reinterpret_cast<const std::uint8_t *>(DECISION_SUBJECT_DOMAIN),
+        sizeof(DECISION_SUBJECT_DOMAIN) - 1);
+    const std::uint8_t zero = 0;
+    subjectSha.update(&zero, 1);
+    subjectSha.update(session.profile.binding.data(), session.profile.binding.size());
+    std::array<std::uint8_t, 80> fields{};
+    write32(fields.data(), request.kind);
+    write32(fields.data() + 4, request.stage);
+    write32(fields.data() + 8, request.event);
+    write64(fields.data() + 12, request.expected_epoch);
+    write64(fields.data() + 20, request.expected_revision);
+    std::copy_n(request.payload.data, 32, fields.data() + 28);
+    write64(fields.data() + 60, inbound.sequence);
+    write32(fields.data() + 68, IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2);
+    write32(fields.data() + 72, 0);
+    subjectSha.update(fields.data(), 76);
+    std::array<std::uint8_t, 20> descriptor{};
+    write64(descriptor.data(), 68 + inbound.bodyOffset);
+    write64(descriptor.data() + 8, inbound.bodyLength);
+    write32(descriptor.data() + 16, static_cast<std::uint32_t>(inbound.msgType.size()));
+    subjectSha.update(descriptor.data(), descriptor.size());
+    subjectSha.update(
+        reinterpret_cast<const std::uint8_t *>(inbound.msgType.data()),
+        static_cast<std::size_t>(inbound.msgType.size()));
+    subjectSha.update(bodyDigest.data(), bodyDigest.size());
+    plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2;
+    plan->applicationDispatch = inbound.application;
+    plan->subjectSequence = inbound.sequence;
+    plan->subject = subjectSha.finish();
+    plan->msgType = inbound.msgType;
+    plan->inputSource = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    plan->inputOffset = 68 + inbound.bodyOffset;
+    plan->inputLength = inbound.bodyLength;
+    plan->sourceLength = request.payload.length;
+    plan->contentDigest = bodyDigest;
+    Sha256 reborrowSha;
+    reborrowSha.update(reinterpret_cast<const std::uint8_t *>(REBORROW_DOMAIN), sizeof(REBORROW_DOMAIN) - 1);
+    reborrowSha.update(&zero, 1);
+    std::array<std::uint8_t, 16> reborrowFields{};
+    write32(reborrowFields.data(), plan->inputSource);
+    write32(reborrowFields.data() + 4, plan->inputItemIndex);
+    write64(reborrowFields.data() + 8, plan->sourceLength);
+    reborrowSha.update(reborrowFields.data(), reborrowFields.size());
+    reborrowSha.update(request.payload.data, static_cast<std::size_t>(request.payload.length));
+    plan->reborrowDigest = reborrowSha.finish();
+    return plan;
+  }
+  irfq_infinite_declarative_action_v2 disposition{};
+  disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+  disposition.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2;
+  disposition.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+  disposition.sequence_begin = inbound.sequence;
+  disposition.sequence_end_exclusive = inbound.sequence + 1;
+  disposition.input_offset = 68;
+  disposition.input_length = frameLength;
+  std::copy_n(request.payload.data, 32, disposition.binding_sha256);
+  const auto dispositionReason
+      = !inbound.identityMatches ? IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2
+        : !inbound.timeMatches   ? IRFQ_INFINITE_REASON_LATENCY_V2
+        : std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "3") != inbound.outputMsgTypes.end()
+            ? IRFQ_INFINITE_REASON_PROTOCOL_V2
+            : IRFQ_INFINITE_REASON_NONE_V2;
+  disposition.reason_code = dispositionReason;
+  plan->actions.push_back(disposition);
+  appendOutputs();
+  if (inbound.disconnected || !inbound.identityMatches || !inbound.timeMatches) {
+    const auto sentLogout
+        = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5") != inbound.outputMsgTypes.end();
+    const auto logoutFlags
+        = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
+    write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256) | logoutFlags);
+    write32(
+        plan->state.data() + 308,
+        !inbound.identityMatches ? IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2
+        : !inbound.timeMatches   ? IRFQ_INFINITE_REASON_LATENCY_V2
+                                 : IRFQ_INFINITE_REASON_PROTOCOL_V2);
+    irfq_infinite_declarative_action_v2 disconnect{};
+    disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+    disconnect.reason_code = !inbound.identityMatches ? IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2
+                             : !inbound.timeMatches   ? IRFQ_INFINITE_REASON_LATENCY_V2
+                                                      : IRFQ_INFINITE_REASON_PROTOCOL_V2;
+    plan->actions.push_back(disconnect);
+  }
+  plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+  return plan;
 }
 
 const char *reasonText(std::uint32_t reason) {
@@ -1238,6 +1635,31 @@ std::unique_ptr<PendingPlan> transportClosedPlan(
   return plan;
 }
 
+std::unique_ptr<PendingPlan> scheduledResetDecisionPlan(
+    irfq_infinite_session_v2 &session,
+    const irfq_infinite_prepare_request_v2 &request) {
+  if (request.payload.length != 40 || readI64(request.payload.data + 32) <= 0) {
+    throw std::invalid_argument("Scheduled reset trigger");
+  }
+  auto plan = std::make_unique<PendingPlan>();
+  plan->id = {session.identity, session.nextPlan++};
+  plan->kind = request.kind;
+  plan->stage = request.stage;
+  plan->event = request.event;
+  std::copy_n(request.event_identity_sha256, plan->eventIdentity.size(), plan->eventIdentity.begin());
+  plan->baseEpoch = session.epoch;
+  plan->baseRevision = session.revision;
+  plan->resultEpoch = session.epoch;
+  plan->resultRevision = session.revision + 1;
+  plan->state = session.state;
+  write64(plan->state.data() + 56, plan->resultRevision);
+  write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
+  write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
+  plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2;
+  std::copy_n(request.payload.data, plan->subject.size(), plan->subject.begin());
+  return plan;
+}
+
 std::unique_ptr<PendingPlan> targetCasPlan(
     irfq_infinite_session_v2 &session,
     const irfq_infinite_prepare_request_v2 &request) {
@@ -1285,9 +1707,10 @@ std::unique_ptr<PendingPlan> targetCasPlan(
   return plan;
 }
 
-std::unique_ptr<PendingPlan> scheduledResetPlan(
+std::unique_ptr<PendingPlan> resetFinalPlan(
     irfq_infinite_session_v2 &session,
     const irfq_infinite_prepare_request_v2 &request) {
+  constexpr std::uint32_t RESET_LOGON = 1;
   constexpr std::uint32_t SCHEDULED = 2;
   const auto *payload = request.payload.data + 32;
   const auto responseMode = read32(payload + 32);
@@ -1295,10 +1718,13 @@ std::unique_ptr<PendingPlan> scheduledResetPlan(
   const auto creationTaiNs = readI64(payload + 44);
   const auto creationUtcNs = readI64(payload + 52);
   const auto heldLogonLength = read32(payload + 60);
-  if (!nonzero(payload, 32) || responseMode != SCHEDULED || session.epoch == UINT64_MAX || newEpoch != session.epoch + 1
-      || creationTaiNs <= 0 || creationUtcNs <= 0 || creationTaiNs > request.now_tai_ns
-      || creationUtcNs > request.now_utc_ns || heldLogonLength != 0 || nonzero(payload + 64, 32)) {
-    throw std::invalid_argument("Scheduled reset");
+  if (!nonzero(payload, 32) || (responseMode != RESET_LOGON && responseMode != SCHEDULED) || session.epoch == UINT64_MAX
+      || newEpoch != session.epoch + 1 || creationTaiNs <= 0 || creationUtcNs <= 0 || creationTaiNs > request.now_tai_ns
+      || creationUtcNs > request.now_utc_ns || heldLogonLength > IRFQ_INFINITE_MAX_FRAME_BYTES_V2
+      || request.payload.length != 128 + heldLogonLength
+      || (responseMode == SCHEDULED && (heldLogonLength != 0 || nonzero(payload + 64, 32)))
+      || (responseMode == RESET_LOGON && heldLogonLength == 0)) {
+    throw std::invalid_argument("Reset final");
   }
   auto plan = std::make_unique<PendingPlan>();
   plan->id = {session.identity, session.nextPlan++};
@@ -1314,6 +1740,71 @@ std::unique_ptr<PendingPlan> scheduledResetPlan(
   write64(plan->state.data() + 56, plan->resultRevision);
   write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
+  if (responseMode == RESET_LOGON) {
+    Sha256 heldSha;
+    heldSha.update(payload + 96, heldLogonLength);
+    const auto heldDigest = heldSha.finish();
+    FIX::InfiniteDeclaredFrameCursor cursor{};
+    std::size_t complete = 0;
+    if (!std::equal(heldDigest.begin(), heldDigest.end(), payload + 64)
+        || FIX::scanInfiniteDeclaredFrame(
+               reinterpret_cast<const char *>(payload + 96),
+               heldLogonLength,
+               cursor,
+               complete)
+               != FIX::InfiniteDeclaredFrameScanResult::Ready
+        || complete != heldLogonLength) {
+      throw std::invalid_argument("Held reset Logon");
+    }
+    const std::string held(reinterpret_cast<const char *>(payload + 96), heldLogonLength);
+    const auto inbound = FIX::InfiniteSessionPlanner::inbound(
+        session.profile.beginString,
+        session.profile.venueCompId,
+        session.profile.participantCompId,
+        session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : session.profile.minimumHeartbeat,
+        1,
+        1,
+        request.now_utc_ns,
+        creationUtcNs,
+        creationUtcNs,
+        SESSION_FLAG_ENABLED,
+        0,
+        held);
+    if (!inbound.admin || inbound.application || !inbound.resetLogon || inbound.msgType != "A" || inbound.sequence != 1
+        || inbound.outputs.size() != 1 || inbound.outputMsgTypes.size() != 1 || inbound.outputMsgTypes[0] != "A"
+        || inbound.outputSequences.size() != 1 || inbound.outputSequences[0] != 1 || inbound.nextSenderSequence != 2
+        || inbound.nextTargetSequence != 2 || inbound.disconnected
+        || (session.profile.heartbeatMode == 1 && inbound.heartbeatSeconds != session.profile.configuredHeartbeat)
+        || (session.profile.heartbeatMode == 2
+            && (inbound.heartbeatSeconds < session.profile.minimumHeartbeat
+                || inbound.heartbeatSeconds > session.profile.maximumHeartbeat))) {
+      throw std::invalid_argument("Reset Logon semantics");
+    }
+    write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
+    write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
+    write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
+    write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
+    write64(plan->state.data() + 132, 2);
+    write64(plan->state.data() + 144, 2);
+    write64(plan->state.data() + 152, 1);
+    write64(plan->state.data() + 180, UINT64_C(231));
+    write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+    write32(plan->state.data() + 288, 10);
+    plan->output.assign(inbound.outputs[0].begin(), inbound.outputs[0].end());
+    irfq_infinite_declarative_action_v2 action{};
+    action.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+    action.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+    action.msg_type_length = 1;
+    action.msg_type[0] = 'A';
+    action.sequence_begin = 1;
+    action.sequence_end_exclusive = 2;
+    action.output_length = plan->output.size();
+    Sha256 outputSha;
+    outputSha.update(plan->output.data(), plan->output.size());
+    const auto outputDigest = outputSha.finish();
+    std::copy(outputDigest.begin(), outputDigest.end(), action.binding_sha256);
+    plan->actions.push_back(action);
+  }
   plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
   return plan;
 }
@@ -1372,6 +1863,14 @@ bool computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
   const auto value = eventIdentity(session->profile, request);
   std::copy(value.begin(), value.end(), identity);
   return true;
+}
+
+std::array<std::uint8_t, 32> computeInfiniteFrameAdapterStockNonconformanceSmokeSha256(
+    const std::uint8_t *bytes,
+    std::size_t length) noexcept {
+  Sha256 sha;
+  sha.update(bytes, length);
+  return sha.finish();
 }
 } // namespace FIX
 
@@ -1532,20 +2031,34 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
     const bool timerEvent
         = request->kind == IRFQ_INFINITE_PREPARE_RUST_TIMER_V2 && request->event == IRFQ_INFINITE_EVENT_TIMER_TICK_V2;
     const bool controlEvent = request->kind == IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+    const bool inboundEvent = request->kind == IRFQ_INFINITE_PREPARE_REGISTERED_INBOUND_V2
+                              && request->stage == IRFQ_INFINITE_STAGE_HEAD_V2
+                              && request->event == IRFQ_INFINITE_EVENT_INBOUND_FRAME_V2;
     const bool logonNeedsOriginal = request->event == IRFQ_INFINITE_EVENT_ADMIN_LOGON_V2;
-    if ((!timerEvent && !controlEvent) || request->application_block_mode != IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
-        || (logonNeedsOriginal && request->next_original_state == IRFQ_INFINITE_SEQUENCE_ABSENT_V2)
-        || (!logonNeedsOriginal && request->next_original_state != IRFQ_INFINITE_SEQUENCE_ABSENT_V2)
+    const bool inboundNeedsOriginal = inboundEvent;
+    if ((!timerEvent && !controlEvent && !inboundEvent)
+        || request->application_block_mode != IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+        || ((logonNeedsOriginal || inboundNeedsOriginal)
+            && request->next_original_state == IRFQ_INFINITE_SEQUENCE_ABSENT_V2)
+        || (!logonNeedsOriginal && !inboundNeedsOriginal
+            && request->next_original_state != IRFQ_INFINITE_SEQUENCE_ABSENT_V2)
         || request->payload.length < 32 || !nonzero(request->payload.data, 32)) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
-    if (request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2
+    if (inboundEvent && request->payload.length >= 68) {
+      session->pending = registeredInboundPlan(*session, *request);
+    } else if (
+        request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2
         && request->payload.length == 32) {
       session->pending = transportClosedPlan(*session, *request);
     } else if (
         request->kind == IRFQ_INFINITE_PREPARE_RUST_TIMER_V2 && request->stage == IRFQ_INFINITE_STAGE_EVENT_V2
         && request->event == IRFQ_INFINITE_EVENT_TIMER_TICK_V2 && request->payload.length == 32) {
       session->pending = timerPlan(*session, *request);
+    } else if (
+        request->kind == IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2 && request->stage == IRFQ_INFINITE_STAGE_EVENT_V2
+        && request->event == IRFQ_INFINITE_EVENT_SCHEDULED_RESET_TRIGGER_V2 && request->payload.length == 40) {
+      session->pending = scheduledResetDecisionPlan(*session, *request);
     } else if (
         request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_ADMIN_HEARTBEAT_V2
         && request->payload.length >= 36) {
@@ -1554,6 +2067,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
         request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_ADMIN_TEST_REQUEST_V2
         && request->payload.length == 32) {
       session->pending = adminTestRequestPlan(*session, *request);
+    } else if (
+        request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_ADMIN_REJECT_V2
+        && request->payload.length >= 52) {
+      session->pending = adminRejectPlan(*session, *request);
     } else if (
         request->stage == IRFQ_INFINITE_STAGE_EVENT_V2 && request->event == IRFQ_INFINITE_EVENT_ADMIN_LOGOUT_V2
         && request->payload.length == 36) {
@@ -1572,8 +2089,8 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
       session->pending = targetCasPlan(*session, *request);
     } else if (
         request->stage == IRFQ_INFINITE_STAGE_RESET_FINAL_V2 && request->event == IRFQ_INFINITE_EVENT_FINALIZE_RESET_V2
-        && request->payload.length == 128) {
-      session->pending = scheduledResetPlan(*session, *request);
+        && request->payload.length >= 128) {
+      session->pending = resetFinalPlan(*session, *request);
     } else {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
@@ -1605,13 +2122,269 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
     if (session == nullptr) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
+    const auto failPending = [&](irfq_infinite_status_v2 status) {
+      session->pending.reset();
+      return publish(response, status);
+    };
     if (!validResumeOutput(*request, *response, outputView) || request->reserved != 0 || request->reserved2 != 0
         || request->kind < IRFQ_INFINITE_RESUME_STORE_RANGE_V2 || request->kind > IRFQ_INFINITE_RESUME_OUTPUT_V2) {
-      return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
-    if (!session->pending || request->prepare_id.high != session->pending->id.high
-        || request->prepare_id.low != session->pending->id.low || request->step != session->pending->step) {
+    if (!session->pending) {
       return publish(response, IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+    }
+    if (request->prepare_id.high != session->pending->id.high || request->prepare_id.low != session->pending->id.low
+        || request->step != session->pending->step) {
+      return failPending(IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+    }
+    if (session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2) {
+      auto &plan = *session->pending;
+      if (request->kind != IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2
+          || request->subject_sequence != plan.subjectSequence
+          || !std::equal(std::begin(request->subject_sha256), std::end(request->subject_sha256), plan.subject.begin())
+          || (request->decision != IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2
+              && request->decision != IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2)
+          || request->input_source != plan.inputSource || request->input_item_index != plan.inputItemIndex
+          || request->input_source_bytes.length != plan.sourceLength || request->store_range_begin != 0
+          || request->store_range_end_exclusive != 0 || request->store_rows != nullptr || request->store_row_count != 0
+          || plan.sourceLength < 68 || plan.inputOffset < 68
+          || plan.inputOffset + plan.inputLength > plan.sourceLength) {
+        return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      }
+      Sha256 reborrowSha;
+      reborrowSha.update(reinterpret_cast<const std::uint8_t *>(REBORROW_DOMAIN), sizeof(REBORROW_DOMAIN) - 1);
+      const std::uint8_t zero = 0;
+      reborrowSha.update(&zero, 1);
+      std::array<std::uint8_t, 16> reborrowFields{};
+      write32(reborrowFields.data(), request->input_source);
+      write32(reborrowFields.data() + 4, request->input_item_index);
+      write64(reborrowFields.data() + 8, request->input_source_bytes.length);
+      reborrowSha.update(reborrowFields.data(), reborrowFields.size());
+      reborrowSha.update(
+          request->input_source_bytes.data,
+          static_cast<std::size_t>(request->input_source_bytes.length));
+      if (reborrowSha.finish() != plan.reborrowDigest) {
+        return failPending(IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+      }
+      const auto *payload = request->input_source_bytes.data;
+      const auto frameLength = read32(payload + 32);
+      if (frameLength != plan.sourceLength - 68) {
+        return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      }
+      Sha256 frameSha;
+      frameSha.update(payload + 68, frameLength);
+      const auto frameDigest = frameSha.finish();
+      Sha256 bodySha;
+      bodySha.update(payload + plan.inputOffset, static_cast<std::size_t>(plan.inputLength));
+      FIX::InfiniteDeclaredFrameCursor cursor{};
+      std::size_t complete = 0;
+      if (!std::equal(frameDigest.begin(), frameDigest.end(), payload + 36) || bodySha.finish() != plan.contentDigest
+          || FIX::scanInfiniteDeclaredFrame(reinterpret_cast<const char *>(payload + 68), frameLength, cursor, complete)
+                 != FIX::InfiniteDeclaredFrameScanResult::Ready
+          || complete != frameLength) {
+        return failPending(IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+      }
+      if (plan.applicationDispatch) {
+        irfq_infinite_declarative_action_v2 dispatch{};
+        dispatch.kind = IRFQ_INFINITE_ACTION_APPLICATION_DISPATCH_V2;
+        dispatch.msg_type_length = static_cast<std::uint32_t>(plan.msgType.size());
+        std::copy(plan.msgType.begin(), plan.msgType.end(), dispatch.msg_type);
+        dispatch.input_source = plan.inputSource;
+        dispatch.input_item_index = plan.inputItemIndex;
+        dispatch.sequence_begin = plan.subjectSequence;
+        dispatch.sequence_end_exclusive = plan.subjectSequence + 1;
+        dispatch.input_offset = plan.inputOffset;
+        dispatch.input_length = plan.inputLength;
+        std::copy(plan.contentDigest.begin(), plan.contentDigest.end(), dispatch.binding_sha256);
+        plan.actions.push_back(dispatch);
+      }
+      irfq_infinite_declarative_action_v2 disposition{};
+      disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+      disposition.disposition = !plan.applicationDispatch ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
+                                : request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
+                                    ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
+                                : plan.msgType == "EC" ? IRFQ_INFINITE_DISPOSITION_PENDING_READ_V2
+                                                       : IRFQ_INFINITE_DISPOSITION_PENDING_CORE_V2;
+      disposition.input_source = plan.inputSource;
+      disposition.input_item_index = plan.inputItemIndex;
+      disposition.sequence_begin = plan.subjectSequence;
+      disposition.sequence_end_exclusive = plan.subjectSequence + 1;
+      disposition.input_offset = 68;
+      disposition.input_length = frameLength;
+      std::copy(plan.subject.begin(), plan.subject.end(), disposition.binding_sha256);
+      disposition.reason_code
+          = plan.applicationDispatch && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
+                ? IRFQ_INFINITE_REASON_PROTOCOL_V2
+                : IRFQ_INFINITE_REASON_NONE_V2;
+      plan.actions.push_back(disposition);
+      if (plan.applicationDispatch && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2) {
+        const auto reject = FIX::InfiniteSessionPlanner::businessReject(
+            session->profile.beginString,
+            session->profile.venueCompId,
+            session->profile.participantCompId,
+            read32(session->state.data() + 188),
+            read64(session->state.data() + 132),
+            read64(session->state.data() + 144),
+            readI64(plan.state.data() + 88),
+            plan.subjectSequence,
+            plan.msgType);
+        plan.output.assign(reject.output.begin(), reject.output.end());
+        write64(plan.state.data() + 96, read64(plan.state.data() + 80));
+        write64(plan.state.data() + 104, read64(plan.state.data() + 88));
+        write64(plan.state.data() + 132, reject.nextSenderSequence);
+        irfq_infinite_declarative_action_v2 output{};
+        output.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+        output.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+        output.msg_type_length = 1;
+        output.msg_type[0] = 'j';
+        output.sequence_begin = read64(session->state.data() + 132);
+        output.sequence_end_exclusive = output.sequence_begin + 1;
+        output.output_length = plan.output.size();
+        Sha256 outputSha;
+        outputSha.update(plan.output.data(), plan.output.size());
+        const auto outputDigest = outputSha.finish();
+        std::copy(outputDigest.begin(), outputDigest.end(), output.binding_sha256);
+        plan.actions.push_back(output);
+      }
+      plan.pendingStatus = IRFQ_INFINITE_STATUS_READY_V2;
+      plan.stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan.state.data(), plan.state.size());
+      if (plan.step >= IRFQ_INFINITE_MAX_RESUME_STEPS_V2) {
+        return publish(response, IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+      }
+      ++plan.step;
+      return describePlan(plan, outputView, response);
+    }
+    if (session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2) {
+      auto &plan = *session->pending;
+      if (request->kind != IRFQ_INFINITE_RESUME_EPOCH_RESET_DECISION_V2 || request->subject_sequence != 0
+          || !std::equal(std::begin(request->subject_sha256), std::end(request->subject_sha256), plan.subject.begin())
+          || (request->decision != IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2
+              && request->decision != IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2)
+          || request->input_source != plan.inputSource || request->input_item_index != plan.inputItemIndex
+          || request->input_source_bytes.length != plan.sourceLength || request->store_range_begin != 0
+          || request->store_range_end_exclusive != 0 || request->store_rows != nullptr
+          || request->store_row_count != 0) {
+        return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      }
+      if (plan.inputSource == IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2) {
+        Sha256 reborrowSha;
+        reborrowSha.update(reinterpret_cast<const std::uint8_t *>(REBORROW_DOMAIN), sizeof(REBORROW_DOMAIN) - 1);
+        const std::uint8_t zero = 0;
+        reborrowSha.update(&zero, 1);
+        std::array<std::uint8_t, 16> fields{};
+        write32(fields.data(), request->input_source);
+        write32(fields.data() + 4, request->input_item_index);
+        write64(fields.data() + 8, request->input_source_bytes.length);
+        reborrowSha.update(fields.data(), fields.size());
+        reborrowSha.update(
+            request->input_source_bytes.data,
+            static_cast<std::size_t>(request->input_source_bytes.length));
+        if (reborrowSha.finish() != plan.reborrowDigest || plan.sourceLength < 68) {
+          return failPending(IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+        }
+        const auto *payload = request->input_source_bytes.data;
+        const auto frameLength = read32(payload + 32);
+        if (frameLength != plan.sourceLength - 68) {
+          return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+        }
+        Sha256 frameSha;
+        frameSha.update(payload + 68, frameLength);
+        const auto frameDigest = frameSha.finish();
+        FIX::InfiniteDeclaredFrameCursor cursor{};
+        std::size_t complete = 0;
+        if (!std::equal(frameDigest.begin(), frameDigest.end(), payload + 36)
+            || FIX::scanInfiniteDeclaredFrame(
+                   reinterpret_cast<const char *>(payload + 68),
+                   frameLength,
+                   cursor,
+                   complete)
+                   != FIX::InfiniteDeclaredFrameScanResult::Ready
+            || complete != frameLength) {
+          return failPending(IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+        }
+        const std::string held(reinterpret_cast<const char *>(payload + 68), frameLength);
+        const auto inbound = FIX::InfiniteSessionPlanner::inbound(
+            session->profile.beginString,
+            session->profile.venueCompId,
+            session->profile.participantCompId,
+            read32(session->state.data() + 188),
+            read64(session->state.data() + 132),
+            read64(session->state.data() + 144),
+            readI64(plan.state.data() + 88),
+            readI64(session->state.data() + 104),
+            readI64(session->state.data() + 120),
+            read64(session->state.data() + 180),
+            read32(session->state.data() + 192),
+            held);
+        if (!inbound.resetLogon || inbound.msgType != "A" || inbound.sequence != plan.classifiedSequence) {
+          return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+        }
+        irfq_infinite_declarative_action_v2 disposition{};
+        disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+        disposition.disposition = request->decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2
+                                      ? IRFQ_INFINITE_DISPOSITION_PENDING_RESET_LOGON_V2
+                                      : IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2;
+        disposition.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+        disposition.sequence_begin = plan.classifiedSequence;
+        disposition.sequence_end_exclusive = plan.classifiedSequence + 1;
+        disposition.input_offset = 68;
+        disposition.input_length = frameLength;
+        std::copy(plan.subject.begin(), plan.subject.end(), disposition.binding_sha256);
+        disposition.reason_code = request->decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2
+                                      ? IRFQ_INFINITE_REASON_RESET_REJECTED_V2
+                                      : IRFQ_INFINITE_REASON_NONE_V2;
+        plan.actions.push_back(disposition);
+        if (request->decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2) {
+          const auto logout = FIX::InfiniteSessionPlanner::logout(
+              session->profile.beginString,
+              session->profile.venueCompId,
+              session->profile.participantCompId,
+              read32(session->state.data() + 188),
+              read64(session->state.data() + 132),
+              read64(session->state.data() + 144),
+              readI64(plan.state.data() + 88),
+              "Reset rejected");
+          plan.output.assign(logout.output.begin(), logout.output.end());
+          write64(plan.state.data() + 96, read64(plan.state.data() + 80));
+          write64(plan.state.data() + 104, read64(plan.state.data() + 88));
+          write64(plan.state.data() + 132, logout.nextSenderSequence);
+          write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(0x110));
+          write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+          irfq_infinite_declarative_action_v2 output{};
+          output.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+          output.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+          output.msg_type_length = 1;
+          output.msg_type[0] = '5';
+          output.sequence_begin = read64(session->state.data() + 132);
+          output.sequence_end_exclusive = output.sequence_begin + 1;
+          output.output_length = plan.output.size();
+          Sha256 outputSha;
+          outputSha.update(plan.output.data(), plan.output.size());
+          const auto outputDigest = outputSha.finish();
+          std::copy(outputDigest.begin(), outputDigest.end(), output.binding_sha256);
+          plan.actions.push_back(output);
+          irfq_infinite_declarative_action_v2 disconnect{};
+          disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+          disconnect.reason_code = IRFQ_INFINITE_REASON_RESET_REJECTED_V2;
+          plan.actions.push_back(disconnect);
+        }
+      } else if (plan.inputSource != IRFQ_INFINITE_INPUT_NONE_V2) {
+        return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      }
+      if (request->decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2) {
+        irfq_infinite_declarative_action_v2 trigger{};
+        trigger.kind = IRFQ_INFINITE_ACTION_RESET_TRIGGER_V2;
+        trigger.disposition = plan.inputSource == IRFQ_INFINITE_INPUT_NONE_V2 ? 2 : 1;
+        std::copy(plan.subject.begin(), plan.subject.end(), trigger.binding_sha256);
+        plan.actions.push_back(trigger);
+      }
+      plan.pendingStatus = IRFQ_INFINITE_STATUS_READY_V2;
+      plan.stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan.state.data(), plan.state.size());
+      if (plan.step >= IRFQ_INFINITE_MAX_RESUME_STEPS_V2) {
+        return publish(response, IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+      }
+      ++plan.step;
+      return describePlan(plan, outputView, response);
     }
     if (request->kind != IRFQ_INFINITE_RESUME_OUTPUT_V2 || request->decision != 0 || request->subject_sequence != 0
         || nonzero(request->subject_sha256, 32) || request->input_source != IRFQ_INFINITE_INPUT_NONE_V2

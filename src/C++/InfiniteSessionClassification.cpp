@@ -40,8 +40,9 @@ namespace FIX {
 namespace {
 class PlanningApplication : public Application {
 public:
-  explicit PlanningApplication(std::string testRequestId)
-      : m_testRequestId(std::move(testRequestId)) {}
+  explicit PlanningApplication(std::string testRequestId, bool allowApplicationOutput = false)
+      : m_testRequestId(std::move(testRequestId)),
+        m_allowApplicationOutput(allowApplicationOutput) {}
 
   void onCreate(const SessionID &) override { throw std::logic_error("Detached Session registered"); }
   void onLogon(const SessionID &) override {}
@@ -51,20 +52,26 @@ public:
       message.setField(TestReqID(m_testRequestId));
     }
   }
-  void toApp(Message &, const SessionID &) override { throw std::logic_error("Unexpected application output"); }
-  void fromAdmin(const Message &, const SessionID &) override {}
-  void fromApp(const Message &, const SessionID &) override { throw std::logic_error("Unexpected application input"); }
+  void toApp(Message &, const SessionID &) override {
+    if (!m_allowApplicationOutput) {
+      throw std::logic_error("Unexpected application output");
+    }
+  }
+  void fromAdmin(const Message &, const SessionID &) override { admin = true; }
+  void fromApp(const Message &, const SessionID &) override { application = true; }
+
+  bool application{false};
+  bool admin{false};
 
 private:
   std::string m_testRequestId;
+  bool m_allowApplicationOutput;
 };
 
 class RecordingResponder : public Responder {
 public:
   bool send(const std::string &wire) override {
-    if (!output.empty()) {
-      throw std::logic_error("Multiple planner outputs");
-    }
+    outputs.push_back(wire);
     output = wire;
     return true;
   }
@@ -72,6 +79,7 @@ public:
   void disconnect() override { disconnected = true; }
 
   std::string output;
+  std::vector<std::string> outputs;
   bool disconnected{false};
 };
 
@@ -192,6 +200,203 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::logon(
       nowUtcNanoseconds,
       resetSequenceNumbers ? Operation::ResetLogon : Operation::Logon,
       "");
+}
+
+InfiniteHeartbeatPlan InfiniteSessionPlanner::reject(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t nowUtcNanoseconds,
+    std::uint64_t refSequence,
+    std::uint32_t refTag,
+    std::uint32_t rejectReason,
+    const std::string &refMsgType) {
+  return run(
+      beginString,
+      senderCompId,
+      targetCompId,
+      heartbeatSeconds,
+      senderSequence,
+      targetSequence,
+      nowUtcNanoseconds,
+      Operation::Reject,
+      refMsgType,
+      refSequence,
+      refTag,
+      rejectReason);
+}
+
+InfiniteHeartbeatPlan InfiniteSessionPlanner::businessReject(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t nowUtcNanoseconds,
+    std::uint64_t refSequence,
+    const std::string &refMsgType) {
+  return run(
+      beginString,
+      senderCompId,
+      targetCompId,
+      heartbeatSeconds,
+      senderSequence,
+      targetSequence,
+      nowUtcNanoseconds,
+      Operation::BusinessReject,
+      refMsgType,
+      refSequence);
+}
+
+InfiniteInboundPlan InfiniteSessionPlanner::inbound(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t nowUtcNanoseconds,
+    std::int64_t lastSentUtcNanoseconds,
+    std::int64_t lastReceivedUtcNanoseconds,
+    std::uint64_t sessionFlags,
+    std::uint32_t testRequestCount,
+    const std::string &wire) {
+  constexpr std::uint64_t FLAGS_MASK = UINT64_C(0x1ff);
+  if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
+      || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
+      || targetSequence == 0 || nowUtcNanoseconds <= 0 || lastSentUtcNanoseconds <= 0 || lastReceivedUtcNanoseconds <= 0
+      || (sessionFlags & ~FLAGS_MASK) != 0 || wire.empty()) {
+    throw std::invalid_argument("Inbound planner input");
+  }
+  const auto now = utcTime(nowUtcNanoseconds);
+  PlanningApplication application("");
+  MemoryStoreFactory stores;
+  DataDictionaryProvider dictionaries;
+  const SessionID sessionId(beginString, senderCompId, targetCompId);
+  const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+  Session session([now] { return now; }, application, stores, sessionId, dictionaries, nonstop, 0, nullptr, true);
+  RecordingResponder responder;
+  session.setIsNonStopSession(true);
+  session.setTimestampPrecision(6);
+  session.setSenderDefaultApplVerID("10");
+  session.setTargetDefaultApplVerID("10");
+  session.setNextSenderMsgSeqNum(senderSequence);
+  session.setNextTargetMsgSeqNum(targetSequence);
+  session.m_state.heartBtInt(static_cast<int>(heartbeatSeconds));
+  session.m_state.enabled((sessionFlags & UINT64_C(1)) != 0);
+  session.m_state.receivedLogon((sessionFlags & UINT64_C(2)) != 0);
+  session.m_state.sentLogon((sessionFlags & UINT64_C(4)) != 0);
+  session.m_state.sentLogout((sessionFlags & UINT64_C(16)) != 0);
+  session.m_state.receivedReset((sessionFlags & UINT64_C(32)) != 0);
+  session.m_state.sentReset((sessionFlags & UINT64_C(64)) != 0);
+  session.m_state.initiate(false);
+  session.m_state.testRequest(static_cast<int>(testRequestCount));
+  session.m_state.lastSentTime(utcTime(lastSentUtcNanoseconds));
+  session.m_state.lastReceivedTime(utcTime(lastReceivedUtcNanoseconds));
+  session.setResponder(&responder);
+
+  try {
+    const auto &sessionDictionary = dictionaries.getSessionDataDictionary(BeginString(beginString));
+    const auto &applicationDictionary = dictionaries.getApplicationDataDictionary(ApplVerID("10"));
+    Message incoming(wire, sessionDictionary, applicationDictionary, true);
+    MsgType msgType;
+    MsgSeqNum sequence;
+    SenderCompID incomingSender;
+    TargetCompID incomingTarget;
+    SendingTime sendingTime;
+    incoming.getHeader().getField(msgType);
+    const auto identified = incoming.getHeader().getFieldIfSet(sequence);
+    incoming.getHeader().getField(incomingSender);
+    incoming.getHeader().getField(incomingTarget);
+    incoming.getHeader().getField(sendingTime);
+    std::string body;
+    incoming.calculateString(body);
+    const auto bodyOffset = wire.find(body);
+    if ((!body.empty() && (bodyOffset == std::string::npos || wire.find(body, bodyOffset + 1) != std::string::npos))
+        || (incoming.isApp() && body.empty())) {
+      throw std::invalid_argument("Inbound body range");
+    }
+    ResetSeqNumFlag reset(false);
+    incoming.getFieldIfSet(reset);
+    bool intercepted = false;
+    if (!identified) {
+      session.next(incoming, now);
+      session.disconnect();
+      intercepted = true;
+    } else if (msgType == MsgType_SequenceReset && static_cast<std::uint64_t>(sequence) < targetSequence) {
+      PossDupFlag possDup(false);
+      OrigSendingTime original;
+      SendingTime sending;
+      const auto validDuplicate = incoming.getHeader().getFieldIfSet(possDup) && static_cast<bool>(possDup)
+                                  && incoming.getHeader().getFieldIfSet(original)
+                                  && incoming.getHeader().getFieldIfSet(sending) && sending >= original;
+      if (!validDuplicate) {
+        session.generateLogout("Invalid stale GapFill");
+        session.disconnect();
+        intercepted = true;
+      }
+    } else if (msgType == MsgType_SequenceReset && static_cast<std::uint64_t>(sequence) == targetSequence) {
+      GapFillFlag gapFill(false);
+      NewSeqNo newSequence;
+      if (incoming.getFieldIfSet(gapFill) && static_cast<bool>(gapFill) && incoming.getFieldIfSet(newSequence)
+          && static_cast<std::uint64_t>(newSequence) <= targetSequence) {
+        session.generateReject(incoming, SessionRejectReason_VALUE_IS_INCORRECT, FIELD::NewSeqNo);
+        intercepted = true;
+      }
+    }
+    if (!intercepted) {
+      session.next(incoming, now);
+    }
+    if (identified && static_cast<std::uint64_t>(sequence) < targetSequence && !responder.outputs.empty()
+        && !responder.disconnected) {
+      const auto sentLogout = std::any_of(responder.outputs.begin(), responder.outputs.end(), [](const auto &output) {
+        Message parsed(output, true);
+        MsgType outputMsgType;
+        parsed.getHeader().getField(outputMsgType);
+        return outputMsgType == MsgType_Logout;
+      });
+      if (!sentLogout) {
+        session.generateLogout("Invalid stale PossDup");
+      }
+      session.disconnect();
+    }
+    std::vector<std::string> outputMsgTypes;
+    std::vector<std::uint64_t> outputSequences;
+    for (const auto &output : responder.outputs) {
+      Message parsed(output, true);
+      MsgType outputMsgType;
+      MsgSeqNum outputSequence;
+      parsed.getHeader().getField(outputMsgType);
+      parsed.getHeader().getField(outputSequence);
+      outputMsgTypes.push_back(outputMsgType);
+      outputSequences.push_back(outputSequence);
+    }
+    return {
+        std::move(responder.outputs),
+        std::move(outputMsgTypes),
+        std::move(outputSequences),
+        msgType,
+        identified ? static_cast<std::uint64_t>(sequence) : 0,
+        session.getExpectedSenderNum(),
+        session.getExpectedTargetNum(),
+        static_cast<std::uint32_t>(session.m_state.testRequest()),
+        static_cast<std::uint32_t>(session.m_state.heartBtInt()),
+        body.empty() ? 0 : static_cast<std::uint64_t>(bodyOffset),
+        static_cast<std::uint64_t>(body.size()),
+        incoming.isApp(),
+        incoming.isAdmin(),
+        msgType == MsgType_Logon && reset,
+        identified,
+        incomingSender == targetCompId && incomingTarget == senderCompId,
+        session.isGoodTime(sendingTime),
+        responder.disconnected};
+  } catch (const Exception &error) {
+    throw std::invalid_argument(error.what());
+  }
 }
 
 InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
@@ -388,10 +593,18 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
     std::uint64_t targetSequence,
     std::int64_t nowUtcNanoseconds,
     Operation operation,
-    const std::string &text) {
+    const std::string &text,
+    std::uint64_t refSequence,
+    std::uint32_t refTag,
+    std::uint32_t rejectReason) {
   if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
       || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
-      || targetSequence == 0 || nowUtcNanoseconds <= 0 || text.size() > 64) {
+      || targetSequence == 0 || nowUtcNanoseconds <= 0 || text.size() > 64
+      || ((operation == Operation::Reject || operation == Operation::BusinessReject)
+          && (text.size() > 8 || refSequence == 0 || refSequence >= INT64_MAX
+              || (operation == Operation::Reject
+                  && (refTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+                      || (rejectReason > 18 && rejectReason != 99)))))) {
     throw std::invalid_argument("Heartbeat planner input");
   }
   const auto now = utcTime(nowUtcNanoseconds);
@@ -399,7 +612,9 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
       = utcTime(nowUtcNanoseconds - static_cast<std::int64_t>(heartbeatSeconds) * INT64_C(1000000000));
   const auto twoHeartbeatsAgo
       = utcTime(nowUtcNanoseconds - static_cast<std::int64_t>(heartbeatSeconds) * INT64_C(2000000000));
-  PlanningApplication application(operation == Operation::Heartbeat ? text : "");
+  PlanningApplication application(
+      operation == Operation::Heartbeat ? text : "",
+      operation == Operation::BusinessReject);
   MemoryStoreFactory stores;
   DataDictionaryProvider dictionaries;
   const SessionID sessionId(beginString, senderCompId, targetCompId);
@@ -447,6 +662,24 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
       incoming.setField(ResetSeqNumFlag(true));
     }
     session.next(incoming, now);
+  } else if (operation == Operation::Reject) {
+    Message incoming;
+    incoming.getHeader().setField(BeginString(beginString));
+    incoming.getHeader().setField(MsgType(text));
+    incoming.getHeader().setField(SenderCompID(targetCompId));
+    incoming.getHeader().setField(TargetCompID(senderCompId));
+    incoming.getHeader().setField(MsgSeqNum(refSequence));
+    incoming.getHeader().setField(SendingTime(now, 6));
+    session.generateReject(incoming, static_cast<int>(rejectReason), static_cast<int>(refTag));
+  } else if (operation == Operation::BusinessReject) {
+    Message incoming;
+    incoming.getHeader().setField(BeginString(beginString));
+    incoming.getHeader().setField(MsgType(text));
+    incoming.getHeader().setField(SenderCompID(targetCompId));
+    incoming.getHeader().setField(TargetCompID(senderCompId));
+    incoming.getHeader().setField(MsgSeqNum(refSequence));
+    incoming.getHeader().setField(SendingTime(now, 6));
+    session.generateBusinessReject(incoming, BusinessRejectReason_UNSUPPORTED_MESSAGE_TYPE);
   } else {
     session.next(now);
   }
