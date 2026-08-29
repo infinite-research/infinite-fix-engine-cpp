@@ -31,6 +31,8 @@
 #include "MessageStore.h"
 #include "Mutex.h"
 
+#include <cmath>
+
 namespace FIX {
 /// Maintains all of state for the Session class.
 class SessionState : public MessageStore, public Log {
@@ -109,19 +111,29 @@ public:
 
   bool shouldSendLogon() const { return initiate() && !sentLogon(); }
   bool alreadySentLogon() const { return initiate() && sentLogon(); }
-  bool logonTimedOut(const UtcTimeStamp &now) const { return now - lastReceivedTime() >= logonTimeout(); }
+  static bool deadlineReached(const UtcTimeStamp &now, UtcTimeStamp since, double seconds) {
+    since += static_cast<int>(std::ceil(seconds));
+    return now >= since;
+  }
+  bool logonTimedOut(const UtcTimeStamp &now) const { return deadlineReached(now, lastSentTime(), logonTimeout()); }
   bool logoutTimedOut(const UtcTimeStamp &now) const {
-    return sentLogout() && ((now - lastSentTime()) >= logoutTimeout());
+    return sentLogout() && deadlineReached(now, lastSentTime(), logoutTimeout());
   }
   bool withinHeartBeat(const UtcTimeStamp &now) const {
-    return ((now - lastSentTime()) < heartBtInt()) && ((now - lastReceivedTime()) < heartBtInt());
+    return !deadlineReached(now, lastSentTime(), heartBtInt())
+           && !deadlineReached(now, lastReceivedTime(), heartBtInt());
   }
-  bool timedOut(const UtcTimeStamp &now) const { return (now - lastReceivedTime()) >= (2.4 * (double)heartBtInt()); }
+  bool timedOut(const UtcTimeStamp &now) const {
+    return deadlineReached(now, lastReceivedTime(), 2.4 * static_cast<double>(heartBtInt()));
+  }
   bool needHeartbeat(const UtcTimeStamp &now) const {
-    return ((now - lastSentTime()) >= heartBtInt()) && !testRequest();
+    return deadlineReached(now, lastSentTime(), heartBtInt()) && !testRequest();
   }
   bool needTestRequest(const UtcTimeStamp &now) const {
-    return (now - lastReceivedTime()) >= ((1.2 * ((double)testRequest() + 1)) * (double)heartBtInt());
+    return deadlineReached(
+        now,
+        lastReceivedTime(),
+        1.2 * (static_cast<double>(testRequest()) + 1) * static_cast<double>(heartBtInt()));
   }
 
   std::string logoutReason() const {

@@ -40,6 +40,16 @@ int main(void) {
       = "8=FIXT.1.1\0019=57\00135=0\00149=CLIENT\00156=VENUE\00134=1\00152=20260828-12:00:00.000000\00110=243\001";
   irfq_infinite_scan_request_v2 request;
   irfq_infinite_scan_response_v2 response;
+  irfq_infinite_session_create_request_v2 create_request;
+  irfq_infinite_session_create_response_v2 create_response;
+  irfq_infinite_prepare_request_v2 prepare_request;
+  irfq_infinite_prepare_response_v2 prepare_response;
+  irfq_infinite_resume_request_v2 resume_request;
+  irfq_infinite_prepare_response_v2 resume_response;
+  irfq_infinite_apply_committed_request_v2 apply_request;
+  irfq_infinite_operation_response_v2 apply_response;
+  irfq_infinite_abort_request_v2 abort_request;
+  irfq_infinite_operation_response_v2 abort_response;
 
   irfq_infinite_status_v2 (*scan_call)(const irfq_infinite_scan_request_v2 *, irfq_infinite_scan_response_v2 *)
       = irfq_infinite_scan_v2;
@@ -64,18 +74,43 @@ int main(void) {
       irfq_infinite_operation_response_v2 *) = irfq_infinite_abort_v2;
   irfq_infinite_status_v2 (*destroy_call)(irfq_infinite_session_v2 *) = irfq_infinite_destroy_v2;
 
-  (void)create_call;
-  (void)prepare_call;
-  (void)resume_call;
-  (void)apply_call;
-  (void)abort_call;
-  (void)destroy_call;
   initialize_input(&request.header, (uint32_t)sizeof(request));
   request.input.data = heartbeat;
   request.input.length = sizeof(heartbeat) - 1;
   initialize_output(&response.header, (uint32_t)sizeof(response));
-  return scan_call(&request, &response) == IRFQ_INFINITE_STATUS_FRAME_READY_V2
-                 && response.complete_prefix_length == sizeof(heartbeat) - 1
-             ? 0
-             : 1;
+  if (scan_call(&request, &response) != IRFQ_INFINITE_STATUS_FRAME_READY_V2
+      || response.complete_prefix_length != sizeof(heartbeat) - 1) {
+    return 1;
+  }
+
+  initialize_input(&create_request.header, (uint32_t)sizeof(create_request));
+  initialize_output(&create_response.header, (uint32_t)sizeof(create_response));
+  if (create_call(&create_request, &create_response) != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+    return 2;
+  }
+
+  initialize_input(&prepare_request.header, (uint32_t)sizeof(prepare_request));
+  initialize_output(&prepare_response.header, (uint32_t)sizeof(prepare_response));
+  if (prepare_call(NULL, &prepare_request, &prepare_response) != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+    return 3;
+  }
+
+  initialize_input(&resume_request.header, (uint32_t)sizeof(resume_request));
+  initialize_output(&resume_response.header, (uint32_t)sizeof(resume_response));
+  if (resume_call(NULL, &resume_request, &resume_response) != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+    return 4;
+  }
+
+  initialize_input(&apply_request.header, (uint32_t)sizeof(apply_request));
+  initialize_output(&apply_response.header, (uint32_t)sizeof(apply_response));
+  if (apply_call(NULL, &apply_request, &apply_response) != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+    return 5;
+  }
+
+  initialize_input(&abort_request.header, (uint32_t)sizeof(abort_request));
+  initialize_output(&abort_response.header, (uint32_t)sizeof(abort_response));
+  if (abort_call(NULL, &abort_request, &abort_response) != IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+    return 6;
+  }
+  return destroy_call(NULL) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2 ? 0 : 7;
 }

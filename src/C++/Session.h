@@ -42,6 +42,8 @@
 #include <utility>
 
 namespace FIX {
+class InfiniteSessionPlanner;
+
 /// Maintains the state and implements the logic of a %FIX %session.
 class Session {
 public:
@@ -224,6 +226,19 @@ public:
   const MessageStore *getStore() { return &m_state; }
 
 private:
+  friend class InfiniteSessionPlanner;
+
+  Session(
+      std::function<UtcTimeStamp()> timestamper,
+      Application &,
+      MessageStoreFactory &,
+      const SessionID &,
+      const DataDictionaryProvider &,
+      const TimeRange &,
+      int heartBtInt,
+      LogFactory *pLogFactory,
+      bool detached);
+
   typedef std::map<SessionID, Session *> Sessions;
   typedef std::set<SessionID> SessionIDs;
 
@@ -331,6 +346,7 @@ private:
   MessageStoreFactory &m_messageStoreFactory;
   LogFactory *m_pLogFactory;
   Responder *m_pResponder;
+  bool m_detached;
   Mutex m_mutex;
 
   static Sessions s_sessions;

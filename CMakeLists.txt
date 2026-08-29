@@ -89,6 +89,8 @@ if (QUICKFIX_TESTS)
 endif()
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+  message(FATAL_ERROR
+    "IRFQ_INFINITE_EMBED_DICTIONARIES is unavailable: the approved custom Infinite FIXT.1.1 and FIX Latest EP299 dictionaries, exact SHA-256 pins, license, and provenance are not present. Stock QuickFIX dictionaries are prohibited production substitutes.")
   if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires CMAKE_BUILD_TYPE=Release")
   endif()
