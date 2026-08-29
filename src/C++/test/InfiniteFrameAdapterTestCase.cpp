@@ -335,7 +335,8 @@ struct PlanBuffers {
 irfq_infinite_session_v2 *stockLoggedOnSession(
     const std::vector<std::uint8_t> &config,
     std::uint64_t senderSequence = 2,
-    const FIX::DataDictionaryProvider *dictionaries = nullptr) {
+    const FIX::DataDictionaryProvider *dictionaries = nullptr,
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> *restoredState = nullptr) {
   const auto create = [&](const std::uint8_t *state,
                           std::size_t stateLength,
                           std::uint64_t revision,
@@ -398,6 +399,9 @@ irfq_infinite_session_v2 *stockLoggedOnSession(
   write64(result.native_state.data + 132, senderSequence);
   write64(result.native_state.data + 144, 2);
   write64(result.native_state.data + 152, 1);
+  if (restoredState != nullptr) {
+    std::copy_n(result.native_state.data, result.native_state.length, restoredState->begin());
+  }
   return create(result.native_state.data, result.native_state.length, 1, 0, 0);
 }
 
@@ -514,7 +518,8 @@ TEST_CASE(
           expectedOriginal}};
   for (const auto &[kind, stage, event, mode, outputClass, expected] : variants) {
     INFO(event);
-    auto *session = stockLoggedOnSession(config);
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseState{};
+    auto *session = stockLoggedOnSession(config, 2, nullptr, &baseState);
     REQUIRE(session != nullptr);
     ApplicationCall call(session, kind, stage, event, mode, "AJ", body);
     PlanBuffers buffers;
@@ -547,6 +552,18 @@ TEST_CASE(
     CHECK(read32(result.native_state.data + 292) == 0);
     CHECK(read32(result.native_state.data + 296) == 0);
     CHECK(read64(result.native_state.data + 300) == 0);
+    auto expectedState = baseState;
+    write64(expectedState.data() + 56, 2);
+    write64(expectedState.data() + 80, call.request.now_tai_ns);
+    write64(expectedState.data() + 88, call.request.now_utc_ns);
+    write64(expectedState.data() + 96, call.request.now_tai_ns);
+    write64(expectedState.data() + 104, call.request.now_utc_ns);
+    write64(expectedState.data() + 132, 3);
+    write32(expectedState.data() + 292, 0);
+    write32(expectedState.data() + 296, 0);
+    write64(expectedState.data() + 300, 0);
+    REQUIRE(result.native_state.length == expectedState.size());
+    CHECK(std::equal(expectedState.begin(), expectedState.end(), result.native_state.data));
     CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
   }
 }
@@ -881,7 +898,8 @@ TEST_CASE(
     "[infinite][adapter][v2][task2c][application][pagination]") {
   const auto config = otherwiseValidUnavailableProfile();
   const auto dictionaries = applicationBlockDictionaries();
-  auto *session = stockLoggedOnSession(config, 2, &dictionaries);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseState{};
+  auto *session = stockLoggedOnSession(config, 2, &dictionaries, &baseState);
   REQUIRE(session != nullptr);
   const std::string quoteBody = "58=" + std::string(65311, 'Q') + "\001131=REQ\001";
   const std::string completionBody = "644=REQ\00120003=OUT\00120006=1\001";
@@ -918,6 +936,18 @@ TEST_CASE(
   CHECK(read32(first.native_state.data + 292) == 3);
   CHECK(read32(first.native_state.data + 296) == IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2);
   CHECK(read64(first.native_state.data + 300) == 1);
+  auto expectedFirstState = baseState;
+  write64(expectedFirstState.data() + 56, 2);
+  write64(expectedFirstState.data() + 80, request.now_tai_ns);
+  write64(expectedFirstState.data() + 88, request.now_utc_ns);
+  write64(expectedFirstState.data() + 96, request.now_tai_ns);
+  write64(expectedFirstState.data() + 104, request.now_utc_ns);
+  write64(expectedFirstState.data() + 132, 3);
+  write32(expectedFirstState.data() + 292, 3);
+  write32(expectedFirstState.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2);
+  write64(expectedFirstState.data() + 300, 1);
+  REQUIRE(first.native_state.length == expectedFirstState.size());
+  CHECK(std::equal(expectedFirstState.begin(), expectedFirstState.end(), first.native_state.data));
   irfq_infinite_apply_committed_request_v2 apply{};
   init(apply);
   apply.prepare_id = first.prepare_id;
@@ -971,6 +1001,18 @@ TEST_CASE(
   CHECK(second.has_more == IRFQ_INFINITE_NO_V2);
   CHECK(read32(second.native_state.data + 292) == 0);
   CHECK(read64(second.native_state.data + 132) == 4);
+  auto expectedSecondState = expectedFirstState;
+  write64(expectedSecondState.data() + 56, 3);
+  write64(expectedSecondState.data() + 80, request.now_tai_ns);
+  write64(expectedSecondState.data() + 88, request.now_utc_ns);
+  write64(expectedSecondState.data() + 96, request.now_tai_ns);
+  write64(expectedSecondState.data() + 104, request.now_utc_ns);
+  write64(expectedSecondState.data() + 132, 4);
+  write32(expectedSecondState.data() + 292, 0);
+  write32(expectedSecondState.data() + 296, 0);
+  write64(expectedSecondState.data() + 300, 0);
+  REQUIRE(second.native_state.length == expectedSecondState.size());
+  CHECK(std::equal(expectedSecondState.begin(), expectedSecondState.end(), second.native_state.data));
   CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
 }
 
@@ -1207,6 +1249,18 @@ TEST_CASE(
         CHECK(result.actions[0].sequence_begin == 3);
         CHECK(result.has_more == IRFQ_INFINITE_NO_V2);
         CHECK(read32(result.native_state.data + 292) == 0);
+        auto expectedState = state;
+        write64(expectedState.data() + 56, 3);
+        write64(expectedState.data() + 80, request.now_tai_ns);
+        write64(expectedState.data() + 88, request.now_utc_ns);
+        write64(expectedState.data() + 96, request.now_tai_ns);
+        write64(expectedState.data() + 104, request.now_utc_ns);
+        write64(expectedState.data() + 132, 4);
+        write32(expectedState.data() + 292, 0);
+        write32(expectedState.data() + 296, 0);
+        write64(expectedState.data() + 300, 0);
+        REQUIRE(result.native_state.length == expectedState.size());
+        CHECK(std::equal(expectedState.begin(), expectedState.end(), result.native_state.data));
       } else {
         CHECK(status == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
       }
