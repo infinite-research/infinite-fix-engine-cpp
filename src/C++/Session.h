@@ -39,6 +39,7 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <stdexcept>
 #include <utility>
 
 namespace FIX {
@@ -73,6 +74,9 @@ public:
   bool receivedLogon() { return m_state.receivedLogon(); }
   bool isLoggedOn() { return receivedLogon() && sentLogon(); }
   void reset() EXCEPT(IOException) {
+    if (m_detached) {
+      throw std::logic_error("Detached Session reset");
+    }
     generateLogout();
     disconnect();
     m_state.reset(m_timestamper());
@@ -207,7 +211,7 @@ public:
     if (m_refreshOnLogon) {
       refresh();
     }
-    if (!checkSessionTime(m_timestamper())) {
+    if (!m_detached && !checkSessionTime(m_timestamper())) {
       reset();
     }
     m_pResponder = pR;

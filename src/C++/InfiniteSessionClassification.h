@@ -19,12 +19,41 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace FIX {
+class DataDictionaryProvider;
 class TimeRange;
+
+struct InfiniteSessionStaticProfile {
+  std::string senderSubId;
+  std::string senderLocationId;
+  std::string targetSubId;
+  std::string targetLocationId;
+  std::string qualifier;
+  std::string defaultCustomApplicationVersion;
+  std::uint32_t scheduleMode{0};
+  std::array<std::uint32_t, 8> schedule{};
+  std::uint32_t heartbeatMode{0};
+  std::uint32_t configuredHeartbeat{0};
+  std::uint32_t minimumHeartbeat{0};
+  std::uint32_t maximumHeartbeat{0};
+  std::uint32_t timestampPrecision{0};
+  std::uint32_t maximumLatency{0};
+  bool sendRedundantResendRequests{false};
+  bool checkCompId{false};
+  bool checkLatency{false};
+  bool resetOnLogon{false};
+  bool resetOnLogout{false};
+  bool resetOnDisconnect{false};
+  bool refreshOnLogon{false};
+  bool persistMessages{false};
+  bool validateLengthAndChecksum{false};
+  bool sendNextExpectedMsgSeqNum{false};
+};
 
 struct InfiniteHeartbeatPlan {
   std::string output;
@@ -50,6 +79,7 @@ struct InfiniteInboundPlan {
   bool admin{false};
   bool resetLogon{false};
   bool identified{false};
+  bool sequenceValid{false};
   bool identityMatches{false};
   bool timeMatches{false};
   bool disconnected{false};
@@ -66,7 +96,10 @@ public:
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
-      const std::string &testRequestId);
+      const std::string &testRequestId,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan testRequest(
       const std::string &beginString,
@@ -75,7 +108,10 @@ public:
       std::uint32_t heartbeatSeconds,
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
-      std::int64_t nowUtcNanoseconds);
+      std::int64_t nowUtcNanoseconds,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan logout(
       const std::string &beginString,
@@ -85,7 +121,10 @@ public:
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
-      const std::string &reason);
+      const std::string &reason,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan resendRequest(
       const std::string &beginString,
@@ -94,7 +133,10 @@ public:
       std::uint32_t heartbeatSeconds,
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
-      std::int64_t nowUtcNanoseconds);
+      std::int64_t nowUtcNanoseconds,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan logon(
       const std::string &beginString,
@@ -104,7 +146,9 @@ public:
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
-      bool resetSequenceNumbers);
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan reject(
       const std::string &beginString,
@@ -117,7 +161,10 @@ public:
       std::uint64_t refSequence,
       std::uint32_t refTag,
       std::uint32_t rejectReason,
-      const std::string &refMsgType);
+      const std::string &refMsgType,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan businessReject(
       const std::string &beginString,
@@ -128,7 +175,10 @@ public:
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
       std::uint64_t refSequence,
-      const std::string &refMsgType);
+      const std::string &refMsgType,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteInboundPlan inbound(
       const std::string &beginString,
@@ -142,7 +192,11 @@ public:
       std::int64_t lastReceivedUtcNanoseconds,
       std::uint64_t sessionFlags,
       std::uint32_t testRequestCount,
-      const std::string &wire);
+      std::uint64_t lastProcessedSequence,
+      const std::string &wire,
+      const DataDictionaryProvider &dictionaries,
+      const InfiniteSessionStaticProfile &profile,
+      bool finalizeResetLogon = false);
 
   static InfiniteHeartbeatPlan timer(
       const std::string &beginString,
@@ -158,7 +212,10 @@ public:
       std::uint64_t sessionFlags,
       std::uint32_t testRequestCount,
       std::uint32_t logonTimeoutSeconds,
-      std::uint32_t logoutTimeoutSeconds);
+      std::uint32_t logoutTimeoutSeconds,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan timer(
       const std::string &beginString,
@@ -178,7 +235,10 @@ public:
       std::uint32_t logoutTimeoutSeconds,
       const TimeRange &sessionTime,
       const TimeRange &logonTime,
-      bool nonStop);
+      bool nonStop,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
   static InfiniteHeartbeatPlan gapFill(
       const std::string &beginString,
@@ -189,7 +249,10 @@ public:
       std::uint64_t targetSequence,
       std::int64_t nowUtcNanoseconds,
       std::uint64_t beginSequence,
-      std::uint64_t endSequenceInclusive);
+      std::uint64_t endSequenceInclusive,
+      std::uint64_t lastProcessedSequence = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 
 private:
   enum class Operation {
@@ -198,7 +261,6 @@ private:
     Logout,
     ResendRequest,
     Logon,
-    ResetLogon,
     Reject,
     BusinessReject
   };
@@ -213,8 +275,11 @@ private:
       std::int64_t nowUtcNanoseconds,
       Operation operation,
       const std::string &text,
+      std::uint64_t lastProcessedSequence,
       std::uint64_t refSequence = 0,
       std::uint32_t refTag = 0,
-      std::uint32_t rejectReason = 0);
+      std::uint32_t rejectReason = 0,
+      const DataDictionaryProvider *dictionaries = nullptr,
+      const InfiniteSessionStaticProfile *profile = nullptr);
 };
 } // namespace FIX

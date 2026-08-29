@@ -126,8 +126,8 @@ void DataDictionary::validate(
     const DataDictionary *const pSessionDD,
     const DataDictionary *const pAppDD) EXCEPT(FIX::Exception) {
   const Header &header = message.getHeader();
-  const BeginString &beginString = FIELD_GET_REF(header, BeginString);
-  const MsgType &msgType = FIELD_GET_REF(header, MsgType);
+  const BeginString beginString(header.getField(FIELD::BeginString));
+  const MsgType msgType(header.getField(FIELD::MsgType));
 
   if (pSessionDD != 0 && pSessionDD->m_hasVersion) {
     if (pSessionDD->getVersion() != beginString) {

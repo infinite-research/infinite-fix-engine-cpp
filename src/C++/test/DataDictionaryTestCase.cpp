@@ -797,7 +797,7 @@ TEST_CASE("DataDictionaryTests") {
   }
 
   SECTION("readFromStream") {
-    std::fstream stream(FIX::TestSettings::pathForSpec("FIX43"));
+    std::ifstream stream(FIX::TestSettings::pathForSpec("FIX43"));
     DataDictionary object(stream);
   }
 

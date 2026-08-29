@@ -104,7 +104,7 @@ Session::Session(
     m_state.log(m_pLogFactory->create(m_sessionID));
   }
 
-  if (!checkSessionTime(m_timestamper())) {
+  if (!m_detached && !checkSessionTime(m_timestamper())) {
     m_state.reset(m_timestamper());
   }
 
@@ -147,7 +147,9 @@ void Session::next(const UtcTimeStamp &now) { next(now, now); }
 void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
   try {
     if (!checkSessionTime(scheduleNow)) {
-      reset();
+      if (!m_detached) {
+        reset();
+      }
       return;
     }
 
@@ -232,7 +234,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
 
   if (m_state.receivedReset()) {
     m_state.onEvent("Logon contains ResetSeqNumFlag=Y, reseting sequence numbers to 1");
-    if (!m_state.sentReset()) {
+    if (!m_detached && !m_state.sentReset()) {
       m_state.reset(m_timestamper());
     }
   }
@@ -243,7 +245,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
     return;
   }
 
-  if (!m_state.initiate() && m_resetOnLogon) {
+  if (!m_detached && !m_state.initiate() && m_resetOnLogon) {
     m_state.reset(m_timestamper());
   }
 
@@ -353,7 +355,7 @@ void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
   }
 
   m_state.incrNextTargetMsgSeqNum();
-  if (m_resetOnLogout) {
+  if (!m_detached && m_resetOnLogout) {
     m_state.reset(m_timestamper());
   }
   disconnect();
@@ -597,7 +599,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
         ResetSeqNumFlag resetSeqNumFlag(false);
         message.getFieldIfSet(resetSeqNumFlag);
 
-        if (resetSeqNumFlag) {
+        if (!m_detached && resetSeqNumFlag) {
           m_state.reset(m_timestamper());
           message.getHeader().setField(MsgSeqNum(getExpectedSenderNum()));
         }
@@ -611,7 +613,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       }
 
       if (msgType == MsgType_Logon || msgType == MsgType_Logout || msgType == MsgType_ResendRequest
-          || msgType == MsgType_SequenceReset || isLoggedOn()) {
+          || msgType == MsgType_SequenceReset || (m_detached && msgType == MsgType_Reject) || isLoggedOn()) {
         send(messageString);
       }
     } else {
@@ -672,7 +674,7 @@ void Session::disconnect() {
   m_state.sentReset(false);
   m_state.clearQueue();
   m_state.logoutReason();
-  if (m_resetOnDisconnect) {
+  if (!m_detached && m_resetOnDisconnect) {
     m_state.reset(m_timestamper());
   }
 
@@ -717,7 +719,7 @@ void Session::generateLogon() {
   if (m_refreshOnLogon) {
     refresh();
   }
-  if (m_resetOnLogon) {
+  if (!m_detached && m_resetOnLogon) {
     m_state.reset(m_timestamper());
   }
   if (shouldSendReset()) {
@@ -759,7 +761,7 @@ void Session::generateLogon(const Message &aLogon) {
 void Session::generateResendRequest(const BeginString &beginString, const MsgSeqNum &msgSeqNum) {
   Message resendRequest = newMessage(MsgType(MsgType_ResendRequest));
 
-  BeginSeqNo beginSeqNo((int)getExpectedTargetNum());
+  BeginSeqNo beginSeqNo(getExpectedTargetNum());
   EndSeqNo endSeqNo(msgSeqNum - 1);
   if (beginString >= FIX::BeginString_FIX42) {
     endSeqNo = 0;
@@ -894,6 +896,11 @@ void Session::generateReject(const Message &message, int err, int field) {
   case SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP:
     reason = SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP_TEXT;
     break;
+  case SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION:
+    if (m_detached) {
+      reason = "Invalid or unsupported application version";
+    }
+    break;
   };
 
   if (reason && (field || err == SessionRejectReason_INVALID_TAG_NUMBER)) {
@@ -907,7 +914,7 @@ void Session::generateReject(const Message &message, int err, int field) {
     m_state.onEvent("Message " + msgSeqNum.getString() + " Rejected");
   }
 
-  if (!m_state.receivedLogon()) {
+  if (!m_state.receivedLogon() && !m_detached) {
     throw std::runtime_error("Tried to send a reject while not logged on");
   }
 
@@ -1254,7 +1261,9 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
 
   try {
     if (!checkSessionTime(now)) {
-      reset();
+      if (!m_detached) {
+        reset();
+      }
       return;
     }
 
