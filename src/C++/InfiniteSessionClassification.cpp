@@ -27,11 +27,13 @@
 
 #include "Application.h"
 #include "DataDictionaryProvider.h"
+#include "Message.h"
 #include "MessageStore.h"
 #include "Responder.h"
 #include "Session.h"
 #include "TimeRange.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -282,7 +284,112 @@ void configureStaticProfile(Session &session, const InfiniteSessionStaticProfile
   session.setSendNextExpectedMsgSeqNum(profile->sendNextExpectedMsgSeqNum);
 }
 
+std::string applicationParseEnvelope(const std::string &beginString, const std::string &body) {
+  return "8=" + beginString + "\0019=" + std::to_string(body.size()) + "\001" + body + "10=000\001";
+}
+
 } // namespace
+
+InfiniteHeartbeatPlan InfiniteSessionPlanner::application(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t nowUtcNanoseconds,
+    const std::string &msgType,
+    const std::string &body,
+    InfiniteApplicationRenderMode mode,
+    std::uint64_t lastProcessedSequence,
+    const DataDictionaryProvider &dictionaries,
+    const InfiniteSessionStaticProfile &profile) {
+  if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
+      || senderSequence == 0 || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0
+      || targetSequence >= FIX_SEQUENCE_BOUND || nowUtcNanoseconds <= 0 || lastProcessedSequence >= FIX_SEQUENCE_BOUND
+      || msgType.empty() || msgType.size() > 8 || body.empty() || body.size() > 65536
+      || !std::all_of(msgType.begin(), msgType.end(), [](unsigned char byte) {
+           return byte >= 0x21 && byte <= 0x7e;
+         })) {
+    throw std::invalid_argument("Application planner input");
+  }
+  const auto &sessionDictionary = dictionaries.getSessionDataDictionary(BeginString(beginString));
+  const auto &applicationDictionary = dictionaries.getApplicationDataDictionary(ApplVerID("10"));
+  const auto parse = [&] {
+    const auto fakeBody = "35=" + msgType + "\00134=1\00149=" + senderCompId
+                          + "\00152=20260828-12:00:00.000000\00156=" + targetCompId + "\001" + body;
+    Message message(applicationParseEnvelope(beginString, fakeBody), sessionDictionary, applicationDictionary, false);
+    MsgType parsedType;
+    message.getHeader().getField(parsedType);
+    std::string canonicalBody;
+    message.calculateString(canonicalBody);
+    DataDictionary::validate(message, &sessionDictionary, &applicationDictionary);
+    if (!message.isApp() || parsedType.getValue() != msgType || canonicalBody != body) {
+      throw std::invalid_argument("Application body");
+    }
+    message.getHeader().clear();
+    message.getTrailer().clear();
+    message.getHeader().setField(parsedType);
+    return message;
+  };
+  const auto render = [&](InfiniteApplicationRenderMode renderMode,
+                          std::uint64_t sequence,
+                          std::uint64_t frontier,
+                          std::int64_t utcNanoseconds) {
+    auto message = parse();
+    const auto now = utcTime(utcNanoseconds);
+    PlanningApplication application("", &profile, frontier, true);
+    PlanningStoreFactory stores;
+    const SessionID sessionId(beginString, senderCompId, targetCompId, profile.qualifier);
+    const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+    const auto sessionTime = profile.scheduleMode == 1 ? nonstop : governedRange(profile, 0);
+    const auto logonTime = profile.scheduleMode == 1 ? nonstop : governedRange(profile, 4);
+    Session session([now] { return now; }, application, stores, sessionId, dictionaries, sessionTime, 0, nullptr, true);
+    RecordingResponder responder;
+    session.setLogonTime(logonTime);
+    session.setIsNonStopSession(profile.scheduleMode == 1);
+    configureStaticProfile(session, &profile);
+    session.setNextSenderMsgSeqNum(sequence);
+    session.setNextTargetMsgSeqNum(targetSequence);
+    session.m_state.heartBtInt(static_cast<int>(heartbeatSeconds));
+    session.m_state.enabled(true);
+    session.m_state.receivedLogon(true);
+    session.m_state.sentLogon(true);
+    session.m_state.lastSentTime(now);
+    session.m_state.lastReceivedTime(now);
+    session.setResponder(&responder);
+    if (renderMode == InfiniteApplicationRenderMode::SemanticReplay) {
+      message.getHeader().setField(PossResend(true));
+      session.send(message);
+    } else if (renderMode == InfiniteApplicationRenderMode::SessionRetransmission) {
+      message.getHeader().setField(PossDupFlag(true));
+      message.getHeader().setField(OrigSendingTime(now, static_cast<int>(profile.timestampPrecision)));
+      session.sendRaw(message, sequence);
+    } else {
+      session.send(message);
+    }
+    if (responder.output.empty() || responder.disconnected) {
+      throw std::logic_error("Application planner produced no output");
+    }
+    return std::pair<std::string, std::uint64_t>{std::move(responder.output), stores.nextSender()};
+  };
+  constexpr auto maximumSequence = FIX_SEQUENCE_BOUND - 1;
+  const auto maximumOriginal
+      = render(InfiniteApplicationRenderMode::Original, maximumSequence, maximumSequence, INT64_MAX).first.size();
+  const auto maximumRetransmission
+      = render(InfiniteApplicationRenderMode::SessionRetransmission, maximumSequence, maximumSequence, INT64_MAX)
+            .first.size();
+  const auto maximumSemantic
+      = render(InfiniteApplicationRenderMode::SemanticReplay, maximumSequence, maximumSequence, INT64_MAX).first.size();
+  const auto rendered = render(mode, senderSequence, lastProcessedSequence, nowUtcNanoseconds);
+  return {
+      rendered.first,
+      rendered.second,
+      targetSequence,
+      0,
+      false,
+      std::max({maximumOriginal, maximumRetransmission, maximumSemantic})};
+}
 
 InfiniteHeartbeatPlan InfiniteSessionPlanner::heartbeat(
     const std::string &beginString,
@@ -655,9 +762,11 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     }
     std::string body;
     incoming.calculateString(body);
-    const auto bodyOffset = wire.find(body);
+    const auto trailerOffset = wire.rfind("\00110=");
+    const auto bodyOffset
+        = body.empty() ? (trailerOffset == std::string::npos ? trailerOffset : trailerOffset + 1) : wire.find(body);
     if ((!body.empty() && (bodyOffset == std::string::npos || wire.find(body, bodyOffset + 1) != std::string::npos))
-        || (incoming.isApp() && body.empty())) {
+        || (body.empty() && bodyOffset == std::string::npos) || (incoming.isApp() && body.empty())) {
       throw std::invalid_argument("Inbound body range");
     }
     ResetSeqNumFlag reset(false);

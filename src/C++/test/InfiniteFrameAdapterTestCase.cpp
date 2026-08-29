@@ -19,6 +19,7 @@
 
 #include "InfiniteFrameAdapter.h"
 
+#include "DataDictionary.h"
 #include "DataDictionaryProvider.h"
 #include "InfiniteSessionClassification.h"
 #include "Session.h"
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -145,6 +147,25 @@ std::string participantFrame(char type, std::uint64_t sequence, std::string fiel
 
 std::string quoteResponseBody(const std::string &id) { return "693=" + id + "\001694=1\001"; }
 
+FIX::DataDictionaryProvider applicationBlockDictionaries() {
+  FIX::DataDictionaryProvider dictionaries;
+  dictionaries.addTransportDataDictionary(FIX::BeginString("FIXT.1.1"), FIX::TestSettings::pathForSpec("FIXT11"));
+  auto application = std::make_shared<FIX::DataDictionary>(FIX::TestSettings::pathForSpec("FIX50SP2"));
+  application->addField(20003);
+  application->addFieldName(20003, "InfiniteOutcomeRef");
+  application->addFieldType(20003, FIX::TYPE::String);
+  application->addField(20006);
+  application->addFieldName(20006, "InfiniteAH0ResultCount");
+  application->addFieldType(20006, FIX::TYPE::Int);
+  application->addMsgType("UAH0");
+  for (const auto field : {644, 20003, 20006}) {
+    application->addMsgField("UAH0", field);
+    application->addRequiredField("UAH0", field);
+  }
+  dictionaries.addApplicationDataDictionary(FIX::ApplVerID("10"), std::move(application));
+  return dictionaries;
+}
+
 irfq_infinite_slice_v2 slice(const std::string &value) {
   return {reinterpret_cast<const std::uint8_t *>(value.data()), value.size()};
 }
@@ -254,6 +275,28 @@ void write64(std::uint8_t *bytes, std::uint64_t value) {
   }
 }
 
+void append32(std::vector<std::uint8_t> &bytes, std::uint32_t value) {
+  const auto offset = bytes.size();
+  bytes.resize(offset + 4);
+  write32(bytes.data() + offset, value);
+}
+
+void appendApplicationUnit(
+    std::vector<std::uint8_t> &bytes,
+    std::uint32_t index,
+    const std::string &msgType,
+    const std::string &body) {
+  append32(bytes, index);
+  append32(bytes, msgType.size());
+  append32(bytes, body.size());
+  const auto digest = FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeSha256(
+      reinterpret_cast<const std::uint8_t *>(body.data()),
+      body.size());
+  bytes.insert(bytes.end(), digest.begin(), digest.end());
+  bytes.insert(bytes.end(), msgType.begin(), msgType.end());
+  bytes.insert(bytes.end(), body.begin(), body.end());
+}
+
 std::uint32_t read32(const std::uint8_t *bytes) {
   return static_cast<std::uint32_t>(bytes[0]) << 24 | static_cast<std::uint32_t>(bytes[1]) << 16
          | static_cast<std::uint32_t>(bytes[2]) << 8 | bytes[3];
@@ -285,16 +328,34 @@ struct PlanBuffers {
 
 irfq_infinite_session_v2 *stockLoggedOnSession(
     const std::vector<std::uint8_t> &config,
-    std::uint64_t senderSequence = 2) {
-  auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-      config.data(),
-      config.size(),
-      nullptr,
-      0,
-      1,
-      0,
-      1,
-      1);
+    std::uint64_t senderSequence = 2,
+    const FIX::DataDictionaryProvider *dictionaries = nullptr) {
+  const auto create = [&](const std::uint8_t *state,
+                          std::size_t stateLength,
+                          std::uint64_t revision,
+                          std::int64_t creationTai,
+                          std::int64_t creationUtc) {
+    return dictionaries == nullptr ? FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+                                         config.data(),
+                                         config.size(),
+                                         state,
+                                         stateLength,
+                                         1,
+                                         revision,
+                                         creationTai,
+                                         creationUtc)
+                                   : FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSessionWithDataDictionaries(
+                                         config.data(),
+                                         config.size(),
+                                         state,
+                                         stateLength,
+                                         1,
+                                         revision,
+                                         creationTai,
+                                         creationUtc,
+                                         *dictionaries);
+  };
+  auto *session = create(nullptr, 0, 0, 1, 1);
   if (session == nullptr) {
     return nullptr;
   }
@@ -331,15 +392,7 @@ irfq_infinite_session_v2 *stockLoggedOnSession(
   write64(result.native_state.data + 132, senderSequence);
   write64(result.native_state.data + 144, 2);
   write64(result.native_state.data + 152, 1);
-  return FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-      config.data(),
-      config.size(),
-      result.native_state.data,
-      result.native_state.length,
-      1,
-      1,
-      0,
-      0);
+  return create(result.native_state.data, result.native_state.length, 1, 0, 0);
 }
 
 struct InboundCall {
@@ -376,7 +429,387 @@ struct InboundCall {
     }
   }
 };
+
+struct ApplicationCall {
+  std::vector<std::uint8_t> payload;
+  irfq_infinite_prepare_request_v2 request{};
+
+  ApplicationCall(
+      irfq_infinite_session_v2 *session,
+      irfq_infinite_prepare_kind_v2 kind,
+      irfq_infinite_stage_v2 stage,
+      irfq_infinite_event_v2 event,
+      irfq_infinite_application_block_mode_v2 mode,
+      const std::string &msgType,
+      const std::string &body)
+      : payload(32, 0x91) {
+    if (event == IRFQ_INFINITE_EVENT_APPLICATION_REPLAY_BEGIN_V2) {
+      payload.insert(payload.end(), 32, 0x92);
+    } else if (event == IRFQ_INFINITE_EVENT_READ_RESULT_BEGIN_V2) {
+      payload.insert(payload.end(), 32, 0x93);
+      payload.insert(payload.end(), 32, 0x94);
+    }
+    append32(payload, 1);
+    append32(payload, 1);
+    append32(payload, 1);
+    append32(payload, 0);
+    append32(payload, 1);
+    appendApplicationUnit(payload, 0, msgType, body);
+    init(request);
+    request.kind = kind;
+    request.stage = stage;
+    request.event = event;
+    request.application_block_mode = mode;
+    request.expected_epoch = 1;
+    request.expected_revision = 1;
+    request.now_tai_ns = INT64_C(1700000000123456001);
+    request.now_utc_ns = INT64_C(1700000000123456001);
+    request.payload = {payload.data(), payload.size()};
+    if (!FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            request,
+            request.event_identity_sha256)) {
+      throw std::logic_error("Application identity");
+    }
+  }
+};
 } // namespace
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 renders authorized original replay and read application batches",
+    "[infinite][adapter][v2][task2c][application]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  const auto body = quoteResponseBody("TASK-2C");
+  const auto expectedOriginal
+      = finishFix("35=AJ\00134=2\00149=VENUE\00152=20231114-22:13:20.123456\00156=PARTICIPANT\001369=1\001" + body);
+  const auto expectedReplay = finishFix(
+      "35=AJ\00134=2\00149=VENUE\00152=20231114-22:13:20.123456\00156=PARTICIPANT\00197=Y\001369=1\001" + body);
+  const std::array variants{
+      std::tuple{
+          IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2,
+          IRFQ_INFINITE_STAGE_EVENT_V2,
+          IRFQ_INFINITE_EVENT_ORIGINAL_APPLICATION_V2,
+          IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2,
+          IRFQ_INFINITE_OUTPUT_ORIGINAL_APPLICATION_V2,
+          expectedOriginal},
+      std::tuple{
+          IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2,
+          IRFQ_INFINITE_STAGE_EVENT_V2,
+          IRFQ_INFINITE_EVENT_APPLICATION_REPLAY_BEGIN_V2,
+          IRFQ_INFINITE_APPLICATION_BLOCK_SEMANTIC_REPLAY_V2,
+          IRFQ_INFINITE_OUTPUT_SEMANTIC_REPLAY_V2,
+          expectedReplay},
+      std::tuple{
+          IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2,
+          IRFQ_INFINITE_STAGE_READ_R2_V2,
+          IRFQ_INFINITE_EVENT_READ_RESULT_BEGIN_V2,
+          IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2,
+          IRFQ_INFINITE_OUTPUT_ORIGINAL_APPLICATION_V2,
+          expectedOriginal}};
+  for (const auto &[kind, stage, event, mode, outputClass, expected] : variants) {
+    INFO(event);
+    auto *session = stockLoggedOnSession(config);
+    REQUIRE(session != nullptr);
+    ApplicationCall call(session, kind, stage, event, mode, "AJ", body);
+    PlanBuffers buffers;
+    auto result = buffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &call.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+    CHECK(result.output.length == expected.size());
+    CHECK(std::string(reinterpret_cast<const char *>(result.output.data), result.output.length) == expected);
+    REQUIRE(result.action_count == 1);
+    CHECK(result.output_frame_count == 1);
+    CHECK(result.has_more == IRFQ_INFINITE_NO_V2);
+    CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+    CHECK(result.actions[0].output_class == outputClass);
+    CHECK(result.actions[0].sequence_begin == 2);
+    CHECK(result.actions[0].sequence_end_exclusive == 3);
+    CHECK(read64(result.native_state.data + 132) == 3);
+    CHECK(read32(result.native_state.data + 292) == 0);
+    CHECK(read32(result.native_state.data + 296) == 0);
+    CHECK(read64(result.native_state.data + 300) == 0);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 releases one typed queued admin row through allow or reject",
+    "[infinite][adapter][v2][task2c][queued]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  for (const std::string variant : {"allow", "reject", "bad-store-digest"}) {
+    INFO(variant);
+    const auto decision = variant == "reject" ? IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
+                                              : IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2;
+    auto *session = stockLoggedOnSession(config);
+    REQUIRE(session != nullptr);
+    InboundCall future(session, participantFrame('0', 3), 0xa1);
+    PlanBuffers queueBuffers;
+    auto queued = queueBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &future.request, &queued) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(read32(queued.native_state.data + 292) == 2);
+    CHECK(read64(queued.native_state.data + 300) == 2);
+    irfq_infinite_apply_committed_request_v2 apply{};
+    init(apply);
+    apply.prepare_id = queued.prepare_id;
+    apply.result_revision = queued.result_revision;
+    std::copy_n(queued.native_state_sha256, 32, apply.native_state_sha256);
+    irfq_infinite_operation_response_v2 applied{};
+    init(applied);
+    REQUIRE(irfq_infinite_apply_committed_v2(session, &apply, &applied) == IRFQ_INFINITE_STATUS_OK_V2);
+
+    std::vector<std::uint8_t> payload(56, 0xa2);
+    write64(payload.data() + 32, 2);
+    write64(payload.data() + 40, 4);
+    write64(payload.data() + 48, 2);
+    irfq_infinite_prepare_request_v2 request{};
+    init(request);
+    request.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+    request.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+    request.event = IRFQ_INFINITE_EVENT_CONTINUE_QUEUED_INBOUND_V2;
+    request.expected_epoch = 1;
+    request.expected_revision = 2;
+    request.now_tai_ns = INT64_C(1700000000123456002);
+    request.now_utc_ns = INT64_C(1700000000123456002);
+    request.payload = {payload.data(), payload.size()};
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            request,
+            request.event_identity_sha256));
+    PlanBuffers storeBuffers;
+    auto store = storeBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &request, &store) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+    CHECK(store.store_range_begin == 2);
+    CHECK(store.store_range_end_exclusive == 3);
+
+    const auto wire = participantFrame('0', 2);
+    irfq_infinite_store_row_v2 row{};
+    row.sequence = 2;
+    row.store_class = IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2;
+    row.msg_type_length = 1;
+    row.msg_type[0] = '0';
+    row.frame_length = wire.size();
+    row.frame = slice(wire);
+    const auto frameDigest = FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeSha256(
+        reinterpret_cast<const std::uint8_t *>(wire.data()),
+        wire.size());
+    const auto bodyDigest = FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeSha256(nullptr, 0);
+    std::copy(frameDigest.begin(), frameDigest.end(), row.frame_sha256);
+    std::copy(bodyDigest.begin(), bodyDigest.end(), row.body_sha256);
+    if (variant == "bad-store-digest") {
+      row.frame_sha256[0] ^= 1;
+    }
+    irfq_infinite_resume_request_v2 resume{};
+    init(resume);
+    resume.prepare_id = store.prepare_id;
+    resume.step = store.step;
+    resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+    resume.store_range_begin = 2;
+    resume.store_range_end_exclusive = 3;
+    resume.store_rows = &row;
+    resume.store_row_count = 1;
+    PlanBuffers decisionBuffers;
+    auto pending = decisionBuffers.response();
+    const auto storeStatus = irfq_infinite_resume_v2(session, &resume, &pending);
+    if (variant == "bad-store-digest") {
+      REQUIRE(storeStatus == IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+      CHECK(irfq_infinite_resume_v2(session, &resume, &pending) == IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+      continue;
+    }
+    REQUIRE(storeStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+    CHECK(pending.step == 1);
+    CHECK(pending.subject_sequence == 2);
+    CHECK(pending.input_source == IRFQ_INFINITE_INPUT_STORE_ROW_V2);
+    CHECK(pending.msg_type_length == 1);
+    CHECK(pending.msg_type[0] == '0');
+
+    init(resume);
+    resume.prepare_id = pending.prepare_id;
+    resume.step = pending.step;
+    resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+    resume.subject_sequence = pending.subject_sequence;
+    std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+    resume.decision = decision;
+    resume.input_source = pending.input_source;
+    resume.input_item_index = pending.input_item_index;
+    resume.input_source_bytes = slice(wire);
+    PlanBuffers resultBuffers;
+    auto result = resultBuffers.response();
+    if (decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2) {
+      result.output.capacity = 0;
+      result.output.data = nullptr;
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2);
+      CHECK(result.step == 2);
+      CHECK(result.required_output_capacity > 0);
+      const auto pendingId = result.prepare_id;
+      const auto pendingStep = result.step;
+      init(resume);
+      resume.prepare_id = pendingId;
+      resume.step = pendingStep;
+      resume.kind = IRFQ_INFINITE_RESUME_OUTPUT_V2;
+      result = resultBuffers.response();
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+      CHECK(result.step == 3);
+    } else {
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+    }
+    REQUIRE(result.action_count == (decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2 ? 2 : 3));
+    CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+    CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+    CHECK(
+        result.actions[0].reason_code
+        == (decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2 ? IRFQ_INFINITE_REASON_NONE_V2
+                                                                    : IRFQ_INFINITE_REASON_PROTOCOL_V2));
+    CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_QUEUE_ERASE_RANGE_V2);
+    CHECK(read64(result.native_state.data + 144) == 2);
+    CHECK(read64(result.native_state.data + 212) == 3);
+    CHECK(read32(result.native_state.data + 292) == 2);
+    if (decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2) {
+      CHECK(result.actions[2].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+      CHECK(result.actions[2].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+      CHECK(result.actions[2].msg_type[0] == '3');
+      CHECK(
+          std::string(reinterpret_cast<const char *>(result.output.data), result.output.length).find("\00135=3\001")
+          != std::string::npos);
+    } else {
+      CHECK(result.output.length == 0);
+    }
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 paginates and restores an original AH0 application block",
+    "[infinite][adapter][v2][task2c][application][pagination]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  const auto dictionaries = applicationBlockDictionaries();
+  auto *session = stockLoggedOnSession(config, 2, &dictionaries);
+  REQUIRE(session != nullptr);
+  const std::string quoteBody = "58=" + std::string(65311, 'Q') + "\001131=REQ\001";
+  const std::string completionBody = "644=REQ\00120003=OUT\00120006=1\001";
+  std::vector<std::uint8_t> payload(32, 0xb1);
+  append32(payload, 2);
+  append32(payload, 1);
+  append32(payload, 2);
+  append32(payload, 0);
+  append32(payload, 2);
+  appendApplicationUnit(payload, 0, "R", quoteBody);
+  appendApplicationUnit(payload, 1, "UAH0", completionBody);
+  irfq_infinite_prepare_request_v2 request{};
+  init(request);
+  request.kind = IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2;
+  request.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+  request.event = IRFQ_INFINITE_EVENT_ORIGINAL_APPLICATION_V2;
+  request.application_block_mode = IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2;
+  request.expected_epoch = 1;
+  request.expected_revision = 1;
+  request.now_tai_ns = INT64_C(1700000000123456001);
+  request.now_utc_ns = INT64_C(1700000000123456001);
+  request.payload = {payload.data(), payload.size()};
+  REQUIRE(
+      FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+          session,
+          request,
+          request.event_identity_sha256));
+  PlanBuffers firstBuffers;
+  auto first = firstBuffers.response();
+  REQUIRE(irfq_infinite_prepare_v2(session, &request, &first) == IRFQ_INFINITE_STATUS_READY_V2);
+  REQUIRE(first.action_count == 1);
+  CHECK(first.actions[0].msg_type[0] == 'R');
+  CHECK(first.has_more == IRFQ_INFINITE_YES_V2);
+  CHECK(read32(first.native_state.data + 292) == 3);
+  CHECK(read32(first.native_state.data + 296) == IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2);
+  CHECK(read64(first.native_state.data + 300) == 1);
+  irfq_infinite_apply_committed_request_v2 apply{};
+  init(apply);
+  apply.prepare_id = first.prepare_id;
+  apply.result_revision = first.result_revision;
+  std::copy_n(first.native_state_sha256, 32, apply.native_state_sha256);
+  irfq_infinite_operation_response_v2 applied{};
+  init(applied);
+  REQUIRE(irfq_infinite_apply_committed_v2(session, &apply, &applied) == IRFQ_INFINITE_STATUS_OK_V2);
+  REQUIRE(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSessionWithDataDictionaries(
+      config.data(),
+      config.size(),
+      first.native_state.data,
+      first.native_state.length,
+      1,
+      2,
+      0,
+      0,
+      dictionaries);
+  REQUIRE(session != nullptr);
+
+  payload.assign(32, 0xb1);
+  append32(payload, 2);
+  append32(payload, 1);
+  append32(payload, 2);
+  append32(payload, 1);
+  append32(payload, 1);
+  appendApplicationUnit(payload, 1, "UAH0", completionBody);
+  init(request);
+  request.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+  request.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+  request.event = IRFQ_INFINITE_EVENT_CONTINUE_APPLICATION_BLOCK_V2;
+  request.application_block_mode = IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2;
+  request.expected_epoch = 1;
+  request.expected_revision = 2;
+  request.now_tai_ns = INT64_C(1700000000123456002);
+  request.now_utc_ns = INT64_C(1700000000123456002);
+  request.payload = {payload.data(), payload.size()};
+  REQUIRE(
+      FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+          session,
+          request,
+          request.event_identity_sha256));
+  PlanBuffers secondBuffers;
+  auto second = secondBuffers.response();
+  REQUIRE(irfq_infinite_prepare_v2(session, &request, &second) == IRFQ_INFINITE_STATUS_READY_V2);
+  REQUIRE(second.action_count == 1);
+  CHECK(second.actions[0].msg_type_length == 4);
+  CHECK(std::equal(second.actions[0].msg_type, second.actions[0].msg_type + 4, "UAH0"));
+  CHECK(second.actions[0].sequence_begin == 3);
+  CHECK(second.has_more == IRFQ_INFINITE_NO_V2);
+  CHECK(read32(second.native_state.data + 292) == 0);
+  CHECK(read64(second.native_state.data + 132) == 4);
+  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 rejects altered application mode body digest and canonical order before planning",
+    "[infinite][adapter][v2][task2c][application][invalid]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  for (const std::string variant : {"mode", "digest", "order"}) {
+    INFO(variant);
+    auto *session = stockLoggedOnSession(config);
+    REQUIRE(session != nullptr);
+    const auto body = variant == "order" ? std::string("694=1\001693=INVALID\001") : quoteResponseBody("INVALID");
+    ApplicationCall call(
+        session,
+        IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2,
+        IRFQ_INFINITE_STAGE_EVENT_V2,
+        IRFQ_INFINITE_EVENT_ORIGINAL_APPLICATION_V2,
+        IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2,
+        "AJ",
+        body);
+    if (variant == "mode") {
+      call.request.application_block_mode = IRFQ_INFINITE_APPLICATION_BLOCK_SEMANTIC_REPLAY_V2;
+    } else if (variant == "digest") {
+      call.payload[64] ^= 1;
+      call.request.payload = {call.payload.data(), call.payload.size()};
+    }
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            call.request,
+            call.request.event_identity_sha256));
+    PlanBuffers buffers;
+    auto result = buffers.response();
+    CHECK(irfq_infinite_prepare_v2(session, &call.request, &result) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+}
 
 TEST_CASE("InfiniteFrameAdapterV2 fixture pins C ABI layout with LF bytes", "[infinite][adapter][v2][abi]") {
   std::ifstream stream(INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH, std::ios::binary);

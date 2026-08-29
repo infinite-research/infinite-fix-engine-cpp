@@ -61,6 +61,13 @@ struct InfiniteHeartbeatPlan {
   std::uint64_t nextTargetSequence{0};
   std::uint32_t testRequestCount{0};
   bool disconnected{false};
+  std::uint64_t maximumWireSize{0};
+};
+
+enum class InfiniteApplicationRenderMode {
+  Original,
+  SessionRetransmission,
+  SemanticReplay
 };
 
 struct InfiniteInboundPlan {
@@ -88,6 +95,21 @@ struct InfiniteInboundPlan {
 /// Drives an isolated ordinary QuickFIX Session to classify and render native session work.
 class InfiniteSessionPlanner {
 public:
+  static InfiniteHeartbeatPlan application(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t nowUtcNanoseconds,
+      const std::string &msgType,
+      const std::string &body,
+      InfiniteApplicationRenderMode mode,
+      std::uint64_t lastProcessedSequence,
+      const DataDictionaryProvider &dictionaries,
+      const InfiniteSessionStaticProfile &profile);
+
   static InfiniteHeartbeatPlan heartbeat(
       const std::string &beginString,
       const std::string &senderCompId,
