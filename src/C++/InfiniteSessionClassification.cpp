@@ -209,26 +209,79 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
     std::uint32_t testRequestCount,
     std::uint32_t logonTimeoutSeconds,
     std::uint32_t logoutTimeoutSeconds) {
+  const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+  return timer(
+      beginString,
+      senderCompId,
+      targetCompId,
+      heartbeatSeconds,
+      senderSequence,
+      targetSequence,
+      nowUtcNanoseconds,
+      nowTaiNanoseconds,
+      nowUtcNanoseconds,
+      lastSentTaiNanoseconds,
+      lastReceivedTaiNanoseconds,
+      sessionFlags,
+      testRequestCount,
+      logonTimeoutSeconds,
+      logoutTimeoutSeconds,
+      nonstop,
+      nonstop,
+      true);
+}
+
+InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t creationUtcNanoseconds,
+    std::int64_t nowTaiNanoseconds,
+    std::int64_t nowUtcNanoseconds,
+    std::int64_t lastSentTaiNanoseconds,
+    std::int64_t lastReceivedTaiNanoseconds,
+    std::uint64_t sessionFlags,
+    std::uint32_t testRequestCount,
+    std::uint32_t logonTimeoutSeconds,
+    std::uint32_t logoutTimeoutSeconds,
+    const TimeRange &sessionTime,
+    const TimeRange &logonTime,
+    bool nonStop) {
   constexpr std::uint64_t FLAGS_MASK = UINT64_C(0x1ff);
   if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
       || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
-      || targetSequence == 0 || nowTaiNanoseconds <= 0 || nowUtcNanoseconds <= 0 || lastSentTaiNanoseconds <= 0
-      || lastReceivedTaiNanoseconds <= 0 || lastSentTaiNanoseconds > nowTaiNanoseconds
-      || lastReceivedTaiNanoseconds > nowTaiNanoseconds || (sessionFlags & ~FLAGS_MASK) != 0 || logonTimeoutSeconds == 0
-      || logoutTimeoutSeconds == 0 || logonTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+      || targetSequence == 0 || creationUtcNanoseconds <= 0 || nowTaiNanoseconds <= 0 || nowUtcNanoseconds <= 0
+      || creationUtcNanoseconds > nowUtcNanoseconds || lastSentTaiNanoseconds <= 0 || lastReceivedTaiNanoseconds <= 0
+      || lastSentTaiNanoseconds > nowTaiNanoseconds || lastReceivedTaiNanoseconds > nowTaiNanoseconds
+      || (sessionFlags & ~FLAGS_MASK) != 0 || logonTimeoutSeconds == 0 || logoutTimeoutSeconds == 0
+      || logonTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
       || logoutTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("Timer planner input");
   }
+  auto scratchUtc = utcTime(creationUtcNanoseconds);
   const auto nowTai = utcTime(nowTaiNanoseconds);
   const auto nowUtc = utcTime(nowUtcNanoseconds);
   PlanningApplication application("");
   MemoryStoreFactory stores;
   DataDictionaryProvider dictionaries;
   const SessionID sessionId(beginString, senderCompId, targetCompId);
-  const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
-  Session session([nowUtc] { return nowUtc; }, application, stores, sessionId, dictionaries, nonstop, 0, nullptr, true);
+  Session session(
+      [&scratchUtc] { return scratchUtc; },
+      application,
+      stores,
+      sessionId,
+      dictionaries,
+      sessionTime,
+      0,
+      nullptr,
+      true);
+  scratchUtc = nowUtc;
   RecordingResponder responder;
-  session.setIsNonStopSession(true);
+  session.setLogonTime(logonTime);
+  session.setIsNonStopSession(nonStop);
   session.setTimestampPrecision(6);
   session.setNextSenderMsgSeqNum(senderSequence);
   session.setNextTargetMsgSeqNum(targetSequence);
@@ -247,7 +300,7 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
   session.m_state.lastReceivedTime(utcTime(lastReceivedTaiNanoseconds));
   session.setResponder(&responder);
 
-  session.next(nowTai);
+  session.next(nowTai, nowUtc);
   return {
       std::move(responder.output),
       session.getExpectedSenderNum(),

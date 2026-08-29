@@ -244,6 +244,7 @@ private:
 
   static bool addSession(Session &);
   static void removeSession(Session &);
+  void next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow);
 
   bool send(const std::string &);
   bool sendRaw(Message &, SEQNUM msgSeqNum = 0);

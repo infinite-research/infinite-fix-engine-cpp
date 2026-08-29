@@ -142,14 +142,16 @@ void Session::fill(Header &header) {
   insertSendingTime(header);
 }
 
-void Session::next(const UtcTimeStamp &now) {
+void Session::next(const UtcTimeStamp &now) { next(now, now); }
+
+void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
   try {
-    if (!checkSessionTime(now)) {
+    if (!checkSessionTime(scheduleNow)) {
       reset();
       return;
     }
 
-    if (!isEnabled() || !isLogonTime(now)) {
+    if (!isEnabled() || !isLogonTime(scheduleNow)) {
       if (isLoggedOn()) {
         if (!m_state.sentLogout()) {
           m_state.onEvent("Initiated logout request");
@@ -161,7 +163,7 @@ void Session::next(const UtcTimeStamp &now) {
     }
 
     if (!m_state.receivedLogon()) {
-      if (m_state.shouldSendLogon() && isLogonTime(now)) {
+      if (m_state.shouldSendLogon() && isLogonTime(scheduleNow)) {
         generateLogon();
         m_state.onEvent("Initiated logon request");
       } else if (m_state.alreadySentLogon() && m_state.logonTimedOut(now)) {

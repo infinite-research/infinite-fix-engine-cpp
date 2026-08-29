@@ -27,6 +27,7 @@
 
 #include "InfiniteCompleteFrame.h"
 #include "InfiniteSessionClassification.h"
+#include "TimeRange.h"
 
 #include <algorithm>
 #include <array>
@@ -375,6 +376,8 @@ struct Profile {
   std::string venueCompId;
   std::string participantCompId;
   std::uint32_t heartbeatMode{0};
+  std::uint32_t scheduleMode{0};
+  std::array<std::uint32_t, 8> schedule{};
   std::uint32_t configuredHeartbeat{0};
   std::uint32_t minimumHeartbeat{0};
   std::uint32_t maximumHeartbeat{0};
@@ -399,6 +402,21 @@ bool bytesEqual(const CborValue &value, const char *expected) noexcept {
 
 bool unsigned32(const CborValue &value) noexcept {
   return value.type == CborValue::Type::Unsigned && value.number <= UINT32_MAX;
+}
+
+bool weeklyLogonContained(const std::array<CborValue, 50> &fields) noexcept {
+  constexpr std::uint64_t WEEK_SECONDS = UINT64_C(7) * 86400;
+  const auto position
+      = [&fields](std::size_t day) { return fields[day].number * UINT64_C(86400) + fields[day + 1].number; };
+  const auto distance = [](std::uint64_t start, std::uint64_t value) {
+    return value >= start ? value - start : WEEK_SECONDS - start + value;
+  };
+  const auto sessionStart = position(12);
+  const auto sessionEnd = position(14);
+  const auto logonStart = distance(sessionStart, position(16));
+  const auto logonEnd = distance(sessionStart, position(18));
+  const auto sessionEndOffset = distance(sessionStart, sessionEnd);
+  return logonStart <= logonEnd && logonEnd <= sessionEndOffset;
 }
 
 bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) noexcept {
@@ -458,8 +476,12 @@ bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) noexce
       || (scheduleMode == 2
           && (fields[12].number > 6 || fields[14].number > 6 || fields[16].number > 6 || fields[18].number > 6
               || fields[13].number > 86399 || fields[15].number > 86399 || fields[17].number > 86399
-              || fields[19].number > 86399))) {
+              || fields[19].number > 86399 || !weeklyLogonContained(fields)))) {
     return false;
+  }
+  profile.scheduleMode = static_cast<std::uint32_t>(scheduleMode);
+  for (std::size_t index = 0; index < profile.schedule.size(); ++index) {
+    profile.schedule[index] = static_cast<std::uint32_t>(fields[index + 12].number);
   }
   profile.heartbeatMode = static_cast<std::uint32_t>(fields[20].number);
   profile.configuredHeartbeat = static_cast<std::uint32_t>(fields[21].number);
@@ -484,6 +506,19 @@ bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) noexce
   sha.update(reinterpret_cast<const std::uint8_t *>(PROFILE_DOMAIN), sizeof(PROFILE_DOMAIN) - 1);
   const std::uint8_t prefix[]{0, 0x83, 0x01, 0x02};
   sha.update(prefix, sizeof(prefix));
+  if (config.length < 24) {
+    const auto header = static_cast<std::uint8_t>(0x40 | config.length);
+    sha.update(&header, 1);
+  } else if (config.length <= UINT8_MAX) {
+    const std::uint8_t header[]{0x58, static_cast<std::uint8_t>(config.length)};
+    sha.update(header, sizeof(header));
+  } else {
+    const std::uint8_t header[]{
+        0x59,
+        static_cast<std::uint8_t>(config.length >> 8),
+        static_cast<std::uint8_t>(config.length)};
+    sha.update(header, sizeof(header));
+  }
   sha.update(config.data, static_cast<std::size_t>(config.length));
   profile.digest = sha.finish();
   std::copy_n(fields[9].bytes, profile.binding.size(), profile.binding.begin());
@@ -898,7 +933,12 @@ std::unique_ptr<PendingPlan> adminOutputPlan(
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
   write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
-  write64(plan->state.data() + 132, output.nextSenderSequence);
+  if (output.nextSenderSequence == static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2)) {
+    write32(plan->state.data() + 128, IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+    write64(plan->state.data() + 132, 0);
+  } else {
+    write64(plan->state.data() + 132, output.nextSenderSequence);
+  }
   write64(plan->state.data() + 144, output.nextTargetSequence);
   write32(plan->state.data() + 192, testRequestCount);
   if (disconnectReason != IRFQ_INFINITE_REASON_NONE_V2) {
@@ -914,7 +954,9 @@ std::unique_ptr<PendingPlan> adminOutputPlan(
   action.sequence_begin = senderSequence;
   action.sequence_end_exclusive = senderSequence + 1;
   action.output_length = plan->output.size();
-  const auto wireDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->output.data(), plan->output.size());
+  Sha256 wireSha;
+  wireSha.update(plan->output.data(), plan->output.size());
+  const auto wireDigest = wireSha.finish();
   std::copy(wireDigest.begin(), wireDigest.end(), action.binding_sha256);
   plan->actions.push_back(action);
   if (disconnectReason != IRFQ_INFINITE_REASON_NONE_V2) {
@@ -1082,21 +1124,45 @@ std::unique_ptr<PendingPlan> timerPlan(
   if (request.payload.length != 32 || lastSentTai <= 0 || lastReceivedTai <= 0) {
     throw std::invalid_argument("Timer event");
   }
-  const auto output = FIX::InfiniteSessionPlanner::timer(
-      session.profile.beginString,
-      session.profile.venueCompId,
-      session.profile.participantCompId,
-      read32(session.state.data() + 188),
-      read64(session.state.data() + 132),
-      read64(session.state.data() + 144),
-      request.now_tai_ns,
-      request.now_utc_ns,
-      lastSentTai,
-      lastReceivedTai,
-      read64(session.state.data() + 180),
-      read32(session.state.data() + 192),
-      session.profile.logonTimeout,
-      session.profile.logoutTimeout);
+  const auto planTimer = [&](const FIX::TimeRange &sessionTime, const FIX::TimeRange &logonTime, bool nonStop) {
+    return FIX::InfiniteSessionPlanner::timer(
+        session.profile.beginString,
+        session.profile.venueCompId,
+        session.profile.participantCompId,
+        read32(session.state.data() + 188),
+        read64(session.state.data() + 132),
+        read64(session.state.data() + 144),
+        readI64(session.state.data() + 72),
+        request.now_tai_ns,
+        request.now_utc_ns,
+        lastSentTai,
+        lastReceivedTai,
+        read64(session.state.data() + 180),
+        read32(session.state.data() + 192),
+        session.profile.logonTimeout,
+        session.profile.logoutTimeout,
+        sessionTime,
+        logonTime,
+        nonStop);
+  };
+  const auto seconds = [](std::uint32_t value) {
+    return FIX::UtcTimeOnly(
+        static_cast<int>(value / 3600),
+        static_cast<int>(value / 60 % 60),
+        static_cast<int>(value % 60));
+  };
+  const auto &schedule = session.profile.schedule;
+  const FIX::TimeRange sessionTime(
+      seconds(schedule[1]),
+      seconds(schedule[3]),
+      static_cast<int>(schedule[0] + 1),
+      static_cast<int>(schedule[2] + 1));
+  const FIX::TimeRange logonTime(
+      seconds(schedule[5]),
+      seconds(schedule[7]),
+      static_cast<int>(schedule[4] + 1),
+      static_cast<int>(schedule[6] + 1));
+  const auto output = planTimer(sessionTime, logonTime, session.profile.scheduleMode == 1);
   const auto disconnectReason
       = output.disconnected ? IRFQ_INFINITE_REASON_HEARTBEAT_TIMEOUT_V2 : IRFQ_INFINITE_REASON_NONE_V2;
   if (!output.output.empty()) {
@@ -1182,10 +1248,15 @@ std::unique_ptr<PendingPlan> targetCasPlan(
   const auto expectedValue = read64(request.payload.data + 36);
   const auto successorState = read32(request.payload.data + 44);
   const auto successorValue = read64(request.payload.data + 48);
+  const auto lastLegal = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
+  const bool ordinarySuccessor
+      = expectedState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+        && ((expectedValue < lastLegal && successorState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+             && successorValue == expectedValue + 1)
+            || (expectedValue == lastLegal && successorState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2
+                && successorValue == 0));
   if (expectedState != read32(session.state.data() + 140) || expectedValue != read64(session.state.data() + 144)
-      || !validSequence(successorState, successorValue)
-      || (expectedState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
-          && (successorState != IRFQ_INFINITE_SEQUENCE_VALUE_V2 || successorValue <= expectedValue))) {
+      || !validSequence(successorState, successorValue) || !ordinarySuccessor) {
     throw std::invalid_argument("target CAS transition");
   }
   auto plan = std::make_unique<PendingPlan>();
@@ -1206,12 +1277,9 @@ std::unique_ptr<PendingPlan> targetCasPlan(
   write64(plan->state.data() + 144, successorValue);
   irfq_infinite_declarative_action_v2 action{};
   action.kind = IRFQ_INFINITE_ACTION_TARGET_ADVANCE_V2;
-  action.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2;
   action.sequence_begin = expectedValue;
   action.sequence_end_exclusive = successorValue;
-  const auto subjectDigest
-      = domainDigest(EVENT_PAYLOAD_DOMAIN, request.payload.data, static_cast<std::size_t>(request.payload.length));
-  std::copy(subjectDigest.begin(), subjectDigest.end(), action.binding_sha256);
+  std::copy_n(request.payload.data, 32, action.binding_sha256);
   plan->actions.push_back(action);
   plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
   return plan;
@@ -1509,7 +1577,13 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
     } else {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
-    return describePlan(*session->pending, outputView, response);
+    const auto status = describePlan(*session->pending, outputView, response);
+    if (status == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2) {
+      session->pending.reset();
+    }
+    return status;
+  } catch (const std::invalid_argument &) {
+    return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
   } catch (...) {
     return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
   }

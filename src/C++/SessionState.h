@@ -31,7 +31,9 @@
 #include "MessageStore.h"
 #include "Mutex.h"
 
-#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <type_traits>
 
 namespace FIX {
 /// Maintains all of state for the Session class.
@@ -111,29 +113,70 @@ public:
 
   bool shouldSendLogon() const { return initiate() && !sentLogon(); }
   bool alreadySentLogon() const { return initiate() && sentLogon(); }
-  static bool deadlineReached(const UtcTimeStamp &now, UtcTimeStamp since, double seconds) {
-    since += static_cast<int>(std::ceil(seconds));
-    return now >= since;
+  static bool deadlineReached(const UtcTimeStamp &now, const UtcTimeStamp &since, std::uint64_t seconds) {
+    const auto nowSeconds = now.getTimeT();
+    const auto sinceSeconds = since.getTimeT();
+    if (nowSeconds < sinceSeconds) {
+      return false;
+    }
+    using UnsignedTime = std::make_unsigned_t<time_t>;
+    UnsignedTime elapsed;
+    if constexpr (std::numeric_limits<time_t>::is_signed) {
+      if (sinceSeconds < 0 && nowSeconds >= 0) {
+        elapsed = static_cast<UnsignedTime>(nowSeconds) + static_cast<UnsignedTime>(-(sinceSeconds + 1)) + 1;
+      } else {
+        elapsed = static_cast<UnsignedTime>(nowSeconds - sinceSeconds);
+      }
+    } else {
+      elapsed = nowSeconds - sinceSeconds;
+    }
+    return elapsed >= seconds;
   }
-  bool logonTimedOut(const UtcTimeStamp &now) const { return deadlineReached(now, lastSentTime(), logonTimeout()); }
+  static bool scaledDeadlineReached(
+      const UtcTimeStamp &now,
+      const UtcTimeStamp &since,
+      std::uint64_t value,
+      std::uint64_t numerator,
+      std::uint64_t denominator) {
+    if (value > (std::numeric_limits<std::uint64_t>::max() - (denominator - 1)) / numerator) {
+      return false;
+    }
+    return deadlineReached(now, since, (value * numerator + denominator - 1) / denominator);
+  }
+  bool logonTimedOut(const UtcTimeStamp &now) const {
+    const auto timeout = logonTimeout();
+    return timeout < 0 || deadlineReached(now, lastSentTime(), static_cast<std::uint64_t>(timeout));
+  }
   bool logoutTimedOut(const UtcTimeStamp &now) const {
-    return sentLogout() && deadlineReached(now, lastSentTime(), logoutTimeout());
+    const auto timeout = logoutTimeout();
+    return sentLogout() && (timeout < 0 || deadlineReached(now, lastSentTime(), static_cast<std::uint64_t>(timeout)));
   }
   bool withinHeartBeat(const UtcTimeStamp &now) const {
-    return !deadlineReached(now, lastSentTime(), heartBtInt())
-           && !deadlineReached(now, lastReceivedTime(), heartBtInt());
+    const auto heartbeat = static_cast<int>(heartBtInt());
+    return heartbeat > 0 && !deadlineReached(now, lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+           && !deadlineReached(now, lastReceivedTime(), static_cast<std::uint64_t>(heartbeat));
   }
   bool timedOut(const UtcTimeStamp &now) const {
-    return deadlineReached(now, lastReceivedTime(), 2.4 * static_cast<double>(heartBtInt()));
+    const auto heartbeat = static_cast<int>(heartBtInt());
+    return heartbeat > 0
+           && scaledDeadlineReached(now, lastReceivedTime(), static_cast<std::uint64_t>(heartbeat), 12, 5);
   }
   bool needHeartbeat(const UtcTimeStamp &now) const {
-    return deadlineReached(now, lastSentTime(), heartBtInt()) && !testRequest();
+    const auto heartbeat = static_cast<int>(heartBtInt());
+    return heartbeat > 0 && deadlineReached(now, lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+           && !testRequest();
   }
   bool needTestRequest(const UtcTimeStamp &now) const {
-    return deadlineReached(
-        now,
-        lastReceivedTime(),
-        1.2 * (static_cast<double>(testRequest()) + 1) * static_cast<double>(heartBtInt()));
+    const auto count = testRequest();
+    const auto heartbeat = static_cast<int>(heartBtInt());
+    if (count < 0 || heartbeat <= 0) {
+      return false;
+    }
+    const auto requests = static_cast<std::uint64_t>(count) + 1;
+    if (requests > std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(heartbeat)) {
+      return false;
+    }
+    return scaledDeadlineReached(now, lastReceivedTime(), requests * static_cast<std::uint64_t>(heartbeat), 6, 5);
   }
 
   std::string logoutReason() const {

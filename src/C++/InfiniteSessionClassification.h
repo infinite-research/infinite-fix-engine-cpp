@@ -23,6 +23,8 @@
 #include <string>
 
 namespace FIX {
+class TimeRange;
+
 struct InfiniteHeartbeatPlan {
   std::string output;
   std::uint64_t nextSenderSequence{0};
@@ -97,6 +99,26 @@ public:
       std::uint32_t testRequestCount,
       std::uint32_t logonTimeoutSeconds,
       std::uint32_t logoutTimeoutSeconds);
+
+  static InfiniteHeartbeatPlan timer(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t creationUtcNanoseconds,
+      std::int64_t nowTaiNanoseconds,
+      std::int64_t nowUtcNanoseconds,
+      std::int64_t lastSentTaiNanoseconds,
+      std::int64_t lastReceivedTaiNanoseconds,
+      std::uint64_t sessionFlags,
+      std::uint32_t testRequestCount,
+      std::uint32_t logonTimeoutSeconds,
+      std::uint32_t logoutTimeoutSeconds,
+      const TimeRange &sessionTime,
+      const TimeRange &logonTime,
+      bool nonStop);
 
   static InfiniteHeartbeatPlan gapFill(
       const std::string &beginString,
