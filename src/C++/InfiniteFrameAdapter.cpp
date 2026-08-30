@@ -971,6 +971,14 @@ bool validStage(std::uint32_t stage) noexcept {
 bool validEvent(std::uint32_t event) noexcept {
   return event >= IRFQ_INFINITE_EVENT_INBOUND_FRAME_V2 && event <= IRFQ_INFINITE_EVENT_ADVANCE_PROCESSING_FRONTIER_V2;
 }
+
+void scrubBytes(void *data, std::size_t size) noexcept {
+  auto *byte = static_cast<volatile std::uint8_t *>(data);
+  while (size != 0) {
+    *byte++ = 0;
+    --size;
+  }
+}
 } // namespace
 
 struct PendingPlan {
@@ -1008,6 +1016,45 @@ struct PendingPlan {
   std::uint64_t storeEnd{0};
   bool applicationDispatch{false};
   bool materialized{false};
+
+  void scrub() noexcept {
+    scrubBytes(&id, sizeof(id));
+    scrubBytes(&step, sizeof(step));
+    scrubBytes(&kind, sizeof(kind));
+    scrubBytes(&stage, sizeof(stage));
+    scrubBytes(&event, sizeof(event));
+    scrubBytes(eventIdentity.data(), eventIdentity.size());
+    scrubBytes(&baseEpoch, sizeof(baseEpoch));
+    scrubBytes(&baseRevision, sizeof(baseRevision));
+    scrubBytes(&resultEpoch, sizeof(resultEpoch));
+    scrubBytes(&resultRevision, sizeof(resultRevision));
+    scrubBytes(state.data(), state.size());
+    scrubBytes(stateDigest.data(), stateDigest.size());
+    scrubBytes(output.data(), output.size());
+    scrubBytes(actions.data(), actions.size() * sizeof(actions.front()));
+    scrubBytes(&pendingStatus, sizeof(pendingStatus));
+    scrubBytes(&subjectSequence, sizeof(subjectSequence));
+    scrubBytes(&classifiedSequence, sizeof(classifiedSequence));
+    scrubBytes(subject.data(), subject.size());
+    scrubBytes(msgType.data(), msgType.size());
+    scrubBytes(businessRejectRefId.data(), businessRejectRefId.size());
+    scrubBytes(&inputSource, sizeof(inputSource));
+    scrubBytes(&inputItemIndex, sizeof(inputItemIndex));
+    scrubBytes(&inputOffset, sizeof(inputOffset));
+    scrubBytes(&inputLength, sizeof(inputLength));
+    scrubBytes(&sourceLength, sizeof(sourceLength));
+    scrubBytes(reborrowDigest.data(), reborrowDigest.size());
+    scrubBytes(contentDigest.data(), contentDigest.size());
+    scrubBytes(eventSubject.data(), eventSubject.size());
+    scrubBytes(frameDigest.data(), frameDigest.size());
+    scrubBytes(queueRowSubject.data(), queueRowSubject.size());
+    scrubBytes(&storeBegin, sizeof(storeBegin));
+    scrubBytes(&storeEnd, sizeof(storeEnd));
+    scrubBytes(&applicationDispatch, sizeof(applicationDispatch));
+    scrubBytes(&materialized, sizeof(materialized));
+  }
+
+  ~PendingPlan() noexcept { scrub(); }
 };
 
 struct irfq_infinite_session_v2 {
@@ -1021,6 +1068,13 @@ struct irfq_infinite_session_v2 {
   std::uint64_t nextPlan{1};
   std::unique_ptr<PendingPlan> pending;
   bool terminal{false};
+
+  void scrub() noexcept {
+    pending.reset();
+    scrubBytes(state.data(), state.size());
+  }
+
+  ~irfq_infinite_session_v2() noexcept { scrub(); }
 };
 
 namespace {
@@ -3587,6 +3641,60 @@ std::array<std::uint8_t, 32> computeInfiniteFrameAdapterStockNonconformanceSmoke
 void forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow(irfq_infinite_session_v2 *session) noexcept {
   if (session != nullptr) {
     session->nextPlan = UINT64_MAX;
+  }
+}
+
+bool verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract() noexcept {
+  try {
+    const auto allZero = [](const void *data, std::size_t size) noexcept {
+      const auto *bytes = static_cast<const std::uint8_t *>(data);
+      for (std::size_t index = 0; index < size; ++index) {
+        if (bytes[index] != 0) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    PendingPlan plan;
+    plan.eventIdentity.fill(0xa5);
+    plan.state.fill(0xa5);
+    plan.stateDigest.fill(0xa5);
+    plan.subject.fill(0xa5);
+    plan.reborrowDigest.fill(0xa5);
+    plan.contentDigest.fill(0xa5);
+    plan.eventSubject.fill(0xa5);
+    plan.frameDigest.fill(0xa5);
+    plan.queueRowSubject.fill(0xa5);
+    plan.output.assign(17, 0xa5);
+    plan.actions.resize(2);
+    std::memset(plan.actions.data(), 0xa5, plan.actions.size() * sizeof(plan.actions.front()));
+    plan.msgType = "SCRUB-MESSAGE";
+    plan.businessRejectRefId = "SCRUB-BUSINESS-REFERENCE";
+    plan.scrub();
+    if (!allZero(plan.eventIdentity.data(), plan.eventIdentity.size()) || !allZero(plan.state.data(), plan.state.size())
+        || !allZero(plan.stateDigest.data(), plan.stateDigest.size())
+        || !allZero(plan.subject.data(), plan.subject.size())
+        || !allZero(plan.reborrowDigest.data(), plan.reborrowDigest.size())
+        || !allZero(plan.contentDigest.data(), plan.contentDigest.size())
+        || !allZero(plan.eventSubject.data(), plan.eventSubject.size())
+        || !allZero(plan.frameDigest.data(), plan.frameDigest.size())
+        || !allZero(plan.queueRowSubject.data(), plan.queueRowSubject.size())
+        || !allZero(plan.output.data(), plan.output.size())
+        || !allZero(plan.actions.data(), plan.actions.size() * sizeof(plan.actions.front()))
+        || !allZero(plan.msgType.data(), plan.msgType.size())
+        || !allZero(plan.businessRejectRefId.data(), plan.businessRejectRefId.size())) {
+      return false;
+    }
+
+    irfq_infinite_session_v2 session;
+    session.state.fill(0xa5);
+    session.pending = std::make_unique<PendingPlan>();
+    session.pending->output.assign(17, 0xa5);
+    session.scrub();
+    return !session.pending && allZero(session.state.data(), session.state.size());
+  } catch (...) {
+    return false;
   }
 }
 } // namespace FIX

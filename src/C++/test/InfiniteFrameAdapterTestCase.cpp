@@ -84,6 +84,7 @@ std::array<std::uint8_t, 32> computeInfiniteFrameAdapterStockNonconformanceSmoke
     const std::uint8_t *bytes,
     std::size_t length) noexcept;
 void forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow(irfq_infinite_session_v2 *session) noexcept;
+bool verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract() noexcept;
 } // namespace FIX
 
 namespace {
@@ -6365,6 +6366,12 @@ TEST_CASE("InfiniteFrameAdapterV2 exports and executes exactly seven calls", "[i
   init(abortResponse);
   CHECK(irfq_infinite_abort_v2(nullptr, &abortRequest, &abortResponse) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
   CHECK(irfq_infinite_destroy_v2(nullptr) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 scrubs retained plan and native-state bytes before release",
+    "[infinite][adapter][v2][scrub]") {
+  CHECK(FIX::verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract());
 }
 
 TEST_CASE(
