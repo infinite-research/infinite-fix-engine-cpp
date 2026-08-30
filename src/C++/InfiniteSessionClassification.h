@@ -87,6 +87,7 @@ struct InfiniteInboundPlan {
   bool resetLogon{false};
   bool identified{false};
   bool sequenceValid{false};
+  bool sequenceFieldsValid{false};
   bool identityMatches{false};
   bool timeMatches{false};
   bool dictionaryValid{false};
@@ -94,6 +95,10 @@ struct InfiniteInboundPlan {
   std::uint64_t resendBegin{0};
   std::uint64_t resendEndInclusive{0};
   bool resendRangeValid{false};
+  std::uint64_t nextExpectedSequence{0};
+  bool nextExpectedPresent{false};
+  bool nextExpectedInvalid{false};
+  bool logonProfileValid{false};
 };
 
 struct InfiniteStoredFramePlan {

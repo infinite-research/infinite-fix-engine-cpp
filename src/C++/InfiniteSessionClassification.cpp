@@ -426,6 +426,10 @@ InfiniteStoredFramePlan InfiniteSessionPlanner::storedFrame(
     header.getField(sender);
     header.getField(target);
     header.getField(originalSendingTime);
+    if (header.isSetField(FIELD::PossDupFlag) || header.isSetField(FIELD::OrigSendingTime)
+        || header.isSetField(FIELD::PossResend)) {
+      throw std::invalid_argument("Stored recovery header");
+    }
     std::uint64_t sequence = 0;
     const auto matchesOptional = [&header](int tag, const std::string &expected) {
       StringField actual(tag);
@@ -475,7 +479,6 @@ InfiniteStoredFramePlan InfiniteSessionPlanner::storedFrame(
     session.m_state.lastSentTime(now);
     session.m_state.lastReceivedTime(now);
     session.setResponder(&responder);
-    header.removeField(FIELD::PossResend);
     header.setField(PossDupFlag(true));
     header.setField(OrigSendingTime(originalSendingTime, static_cast<int>(profile.timestampPrecision)));
     if (!session.sendRaw(message, sequence) || responder.output.empty() || responder.disconnected
@@ -831,6 +834,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     }
     int invalidLogonProfileTag = 0;
     int heartbeatRejectReason = 0;
+    std::uint32_t validatedLogonHeartbeat = heartbeatSeconds;
     if (msgType == MsgType_Logon) {
       const auto matches = [&incoming](int tag, const std::string &expected) {
         StringField actual(tag);
@@ -862,6 +866,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
             || (profile.heartbeatMode == 2
                 && (requestedHeartbeat < profile.minimumHeartbeat || requestedHeartbeat > profile.maximumHeartbeat))) {
           heartbeatRejectReason = SessionRejectReason_VALUE_IS_INCORRECT;
+        } else {
+          validatedLogonHeartbeat = static_cast<std::uint32_t>(requestedHeartbeat);
         }
       }
     }
@@ -888,6 +894,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const auto nextExpectedStatus = wireSequence(incoming, FIELD::NextExpectedMsgSeqNum, false, nextExpectedSequence);
     const bool invalidNextExpectedSequence
         = msgType == MsgType_Logon && nextExpectedStatus == WireSequenceStatus::Invalid;
+    const bool sequenceFieldsValid = lastProcessedStatus != WireSequenceStatus::Invalid
+                                     && (!requiresLastProcessed || lastProcessedStatus == WireSequenceStatus::Valid)
+                                     && !invalidReferencedSequence && !invalidNextExpectedSequence;
     std::uint64_t resendBegin = 0;
     std::uint64_t resendEndInclusive = 0;
     const auto resendBeginStatus = wireSequence(incoming, FIELD::BeginSeqNo, false, resendBegin);
@@ -929,6 +938,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       intercepted = true;
     } else if (!finalizeResetLogon && safeToIntercept && msgType == MsgType_Logon && static_cast<bool>(reset)) {
       application.admin = true;
+      intercepted = true;
+    } else if (safeToIntercept && msgType == MsgType_Logon && !static_cast<bool>(reset)) {
       intercepted = true;
     } else if (headerSafe && msgType == MsgType_ResendRequest) {
       if (!resendRangeValid) {
@@ -1025,7 +1036,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         stores.nextSender(),
         stores.nextTarget(),
         static_cast<std::uint32_t>(session.m_state.testRequest()),
-        static_cast<std::uint32_t>(session.m_state.heartBtInt()),
+        msgType == MsgType_Logon && heartbeatRejectReason == 0
+            ? validatedLogonHeartbeat
+            : static_cast<std::uint32_t>(session.m_state.heartBtInt()),
         body.empty() ? 0 : static_cast<std::uint64_t>(bodyOffset),
         static_cast<std::uint64_t>(body.size()),
         application.application,
@@ -1033,13 +1046,18 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         msgType == MsgType_Logon && reset && application.admin,
         identified,
         sequenceValid,
+        sequenceFieldsValid,
         completeIdentity,
         timeMatches,
         dictionaryValid,
         responder.disconnected,
         resendBegin,
         resendEndInclusive,
-        resendRangeValid};
+        resendRangeValid,
+        nextExpectedSequence,
+        nextExpectedStatus == WireSequenceStatus::Valid,
+        nextExpectedStatus == WireSequenceStatus::Invalid,
+        msgType == MsgType_Logon && invalidLogonProfileTag == 0 && heartbeatRejectReason == 0};
   } catch (const Exception &error) {
     throw std::invalid_argument(error.what());
   }
@@ -1289,8 +1307,7 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
       || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
       || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0 || targetSequence >= FIX_SEQUENCE_BOUND
       || lastProcessedSequence >= FIX_SEQUENCE_BOUND || nowUtcNanoseconds <= 0 || text.size() > 64
-      || ((operation == Operation::Logon || operation == Operation::ResendRequest)
-          && targetSequence == FIX_SEQUENCE_BOUND - 1)
+      || (operation == Operation::ResendRequest && targetSequence == FIX_SEQUENCE_BOUND - 1)
       || ((operation == Operation::Reject || operation == Operation::BusinessReject)
           && (text.size() > 8 || refSequence == 0 || refSequence >= INT64_MAX
               || (operation == Operation::Reject

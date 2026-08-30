@@ -679,6 +679,15 @@ bool validSequence(std::uint32_t state, std::uint64_t value) noexcept {
          || (state == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 && value == 0);
 }
 
+std::uint64_t nonallocatingRecoveryClassificationScratch(std::uint32_t state, std::uint64_t value) {
+  if (!validSequence(state, value)) {
+    throw std::invalid_argument("Recovery classification sequence");
+  }
+  return state == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2
+             ? static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1
+             : value;
+}
+
 bool validRangeTriple(std::uint64_t begin, std::uint64_t end, std::uint64_t cursor, bool active) noexcept {
   if (!active) {
     return begin == 0 && end == 0 && cursor == 0;
@@ -751,10 +760,14 @@ bool validNativeState(
       || (profile.scheduleMode == 2 && !scheduledBoundary(profile, creationUtc, boundary))) {
     return false;
   }
+  constexpr std::uint64_t pendingDisconnect = UINT64_C(256);
+  const auto lifecycleFlags = flags & ~pendingDisconnect;
+  const bool detachedConnection
+      = lifecycleFlags == SESSION_FLAG_ENABLED && (!recoveryActive || continuation == CONTINUATION_NONE);
   if ((profile.heartbeatMode == 1 && heartbeat != profile.configuredHeartbeat)
       || (profile.heartbeatMode == 2
-          && ((flags == SESSION_FLAG_ENABLED && heartbeat != 0)
-              || (flags != SESSION_FLAG_ENABLED
+          && ((detachedConnection && heartbeat != 0)
+              || (!detachedConnection
                   && (heartbeat < profile.minimumHeartbeat || heartbeat > profile.maximumHeartbeat))))) {
     return false;
   }
@@ -780,52 +793,59 @@ bool validNativeState(
   }
   constexpr std::uint64_t attached = UINT64_C(135);
   constexpr std::uint64_t attachedReset = UINT64_C(231);
-  constexpr std::uint64_t pendingDisconnect = UINT64_C(256);
   if ((reason != IRFQ_INFINITE_REASON_NONE_V2) != ((flags & pendingDisconnect) != 0)) {
     return false;
   }
   if (recoveryActive) {
-    const auto lifecycleFlags = flags & ~pendingDisconnect;
-    const bool integrityFence
-        = (flags & pendingDisconnect) != 0 && reason == IRFQ_INFINITE_REASON_INTEGRITY_V2
-          && (recoveryPhase == RECOVERY_PHASE_STORED_RANGE || recoveryPhase == RECOVERY_PHASE_FINAL_GAP_FILL);
     const bool detached = lifecycleFlags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_NONE
                           && continuationCursor == 0 && targetApplicationVersion == 0;
     const bool directAttached = (lifecycleFlags == attached || lifecycleFlags == attachedReset)
                                 && continuation == CONTINUATION_RESEND && continuationCursor == recoveryCursor
                                 && targetApplicationVersion == 10;
+    const bool directResponseBarrier = lifecycleFlags == attached && continuation == CONTINUATION_NONE
+                                       && continuationCursor == 0 && targetApplicationVersion == 10
+                                       && (senderState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2
+                                           || (senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && senderValue > 1));
     const bool logonAttached = lifecycleFlags == attached && targetApplicationVersion == 10;
-    if (testRequestCount != 0 || ((flags & pendingDisconnect) != 0 && !integrityFence)) {
+    if (testRequestCount != 0 || (flags & pendingDisconnect) != 0) {
       return false;
     }
     if (recoveryKind == RECOVERY_RESEND_REQUEST) {
-      if (peerPresence != 0 || peerValue != 0 || (!detached && !directAttached)) {
+      if (peerPresence != 0 || peerValue != 0 || (!detached && !directAttached && !directResponseBarrier)) {
         return false;
       }
     } else {
-      if (peerPresence != 1 || peerValue == 0 || senderState != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
+      if (peerPresence != 1 || peerValue == 0 || senderState != IRFQ_INFINITE_SEQUENCE_VALUE_V2
+          || targetState != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
         return false;
       }
       if (recoveryPhase == RECOVERY_PHASE_PEER_PREFIX) {
-        if (flags != SESSION_FLAG_ENABLED || continuation != CONTINUATION_RESEND || continuationCursor != recoveryCursor
-            || targetApplicationVersion != 0 || recoveryEnd != peerValue || peerValue > senderValue) {
+        const bool attachedPeerPrefix = flags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_RESEND
+                                        && continuationCursor == recoveryCursor && targetApplicationVersion == 0;
+        if ((!detached && !attachedPeerPrefix) || recoveryEnd != peerValue || peerValue > senderValue
+            || (peerValue < senderValue
+                && senderValue > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2)) {
           return false;
         }
       } else if (recoveryPhase == RECOVERY_PHASE_LOGON_RESPONSE) {
         if ((!detached && (!logonAttached || continuation != CONTINUATION_NONE || continuationCursor != 0))
             || recoveryBegin + 1 != recoveryEnd || recoveryCursor != recoveryBegin || peerValue >= recoveryBegin
+            || recoveryBegin > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
             || senderValue != recoveryEnd) {
           return false;
         }
       } else if (recoveryPhase == RECOVERY_PHASE_STORED_RANGE) {
         if ((!detached
              && (!logonAttached || continuation != CONTINUATION_RESEND || continuationCursor != recoveryCursor))
-            || recoveryBegin != peerValue || recoveryEnd + 1 != senderValue) {
+            || recoveryBegin != peerValue
+            || recoveryEnd > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
+            || recoveryEnd + 1 != senderValue) {
           return false;
         }
       } else if (
           (!detached && (!logonAttached || continuation != CONTINUATION_RESEND || continuationCursor != recoveryCursor))
           || recoveryBegin + 1 != recoveryEnd || recoveryCursor != recoveryBegin || recoveryEnd != senderValue
+          || recoveryBegin > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
           || peerValue > recoveryBegin) {
         return false;
       }
@@ -1203,12 +1223,16 @@ std::unique_ptr<PendingPlan> adminOutputPlan(
   return plan;
 }
 
-bool attachedForAdmin(const irfq_infinite_session_v2 &session) noexcept {
+bool attachedSession(const irfq_infinite_session_v2 &session) noexcept {
   constexpr std::uint64_t attached = UINT64_C(1) | UINT64_C(2) | UINT64_C(4) | UINT64_C(128);
   const auto senderSequence = read64(session.state.data() + 132);
   return (read64(session.state.data() + 180) & attached) == attached
          && read32(session.state.data() + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && senderSequence != 0
          && senderSequence < static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2);
+}
+
+bool attachedForAdmin(const irfq_infinite_session_v2 &session) noexcept {
+  return attachedSession(session) && read32(session.state.data() + 220) == RECOVERY_NONE;
 }
 
 struct ApplicationUnit {
@@ -1535,9 +1559,14 @@ std::unique_ptr<PendingPlan> continueResendPlan(
   const bool storedRange = recoveryPhase == RECOVERY_PHASE_STORED_RANGE
                            && (recoveryKind == RECOVERY_RESEND_REQUEST || recoveryKind == RECOVERY_LOGON_789);
   const bool finalGapFill = recoveryKind == RECOVERY_LOGON_789 && recoveryPhase == RECOVERY_PHASE_FINAL_GAP_FILL;
-  const bool attached
-      = peerPrefix ? read64(session.state.data() + 180) == SESSION_FLAG_ENABLED : attachedForAdmin(session);
-  const bool continuationRequired = !logonResponse;
+  const auto flags = read64(session.state.data() + 180);
+  const bool directResponseBarrier = recoveryKind == RECOVERY_RESEND_REQUEST && flags == UINT64_C(135)
+                                     && read32(session.state.data() + 292) == CONTINUATION_NONE;
+  const bool attached = peerPrefix
+                            ? flags == SESSION_FLAG_ENABLED && read32(session.state.data() + 292) == CONTINUATION_RESEND
+                        : recoveryKind == RECOVERY_RESEND_REQUEST ? (flags == UINT64_C(135) || flags == UINT64_C(231))
+                                                                  : flags == UINT64_C(135);
+  const bool continuationRequired = !logonResponse && !directResponseBarrier;
   if (!attached || request.payload.length != 56
       || read32(session.state.data() + 292) != CONTINUATION_RESEND && continuationRequired
       || read32(session.state.data() + 296) != IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
@@ -1548,6 +1577,15 @@ std::unique_ptr<PendingPlan> continueResendPlan(
       || cursor >= end || read64(request.payload.data + 32) != begin || read64(request.payload.data + 40) != end
       || read64(request.payload.data + 48) != cursor) {
     throw std::invalid_argument("Resend continuation");
+  }
+  if (directResponseBarrier
+      && (request.next_original_state != read32(session.state.data() + 128)
+          || request.next_original_value != read64(session.state.data() + 132))) {
+    throw std::invalid_argument("Direct Logon response handoff");
+  }
+  if (!directResponseBarrier && recoveryKind == RECOVERY_RESEND_REQUEST
+      && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && request.next_original_value < cursor) {
+    throw std::invalid_argument("Held ResendRequest");
   }
   auto plan = std::make_unique<PendingPlan>();
   plan->id = {session.identity, session.nextPlan++};
@@ -1563,6 +1601,12 @@ std::unique_ptr<PendingPlan> continueResendPlan(
   write64(plan->state.data() + 56, plan->resultRevision);
   write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
+  if (directResponseBarrier) {
+    write32(plan->state.data() + 292, CONTINUATION_RESEND);
+    write64(plan->state.data() + 300, cursor);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
   if (peerPrefix) {
     if (request.next_original_state != IRFQ_INFINITE_SEQUENCE_VALUE_V2 || request.next_original_value <= cursor
         || request.next_original_value > end
@@ -1685,7 +1729,30 @@ std::unique_ptr<PendingPlan> storedRetransmitPlan(
   if (frameLength > IRFQ_INFINITE_MAX_FRAME_BYTES_V2) {
     throw DeclaredLimit{};
   }
-  if (!attachedForAdmin(session) || request.payload.length < 72 || frameLength == 0
+  const auto recoveryKind = read32(session.state.data() + 220);
+  const bool logonResponseRetry = recoveryKind == RECOVERY_LOGON_789
+                                  && read32(session.state.data() + 224) == RECOVERY_PHASE_LOGON_RESPONSE
+                                  && read64(session.state.data() + 180) == UINT64_C(135);
+  const bool directResponseRetry = recoveryKind == RECOVERY_RESEND_REQUEST
+                                   && read32(session.state.data() + 224) == RECOVERY_PHASE_STORED_RANGE
+                                   && read64(session.state.data() + 180) == UINT64_C(135)
+                                   && read32(session.state.data() + 292) == CONTINUATION_NONE;
+  std::uint64_t expectedResponseSequence = 0;
+  if (logonResponseRetry) {
+    expectedResponseSequence = read64(session.state.data() + 228);
+  } else if (directResponseRetry) {
+    const auto senderState = read32(session.state.data() + 128);
+    const auto senderValue = read64(session.state.data() + 132);
+    if (senderState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2) {
+      expectedResponseSequence = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
+    } else if (senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && senderValue > 1) {
+      expectedResponseSequence = senderValue - 1;
+    } else {
+      throw std::invalid_argument("Stored Logon response predecessor");
+    }
+  }
+  const bool responseRetry = logonResponseRetry || directResponseRetry;
+  if ((!attachedForAdmin(session) && !responseRetry) || request.payload.length < 72 || frameLength == 0
       || request.payload.length != 72 + frameLength
       || (storeClass != IRFQ_INFINITE_STORE_CLASS_MANDATORY_APPLICATION_V2
           && storeClass != IRFQ_INFINITE_STORE_CLASS_AH0_RESULT_BLOCK_V2
@@ -1704,8 +1771,12 @@ std::unique_ptr<PendingPlan> storedRetransmitPlan(
       session.profile.venueCompId,
       session.profile.participantCompId,
       read32(session.state.data() + 188),
-      read64(session.state.data() + 132),
-      read64(session.state.data() + 144),
+      nonallocatingRecoveryClassificationScratch(
+          read32(session.state.data() + 128),
+          read64(session.state.data() + 132)),
+      nonallocatingRecoveryClassificationScratch(
+          read32(session.state.data() + 140),
+          read64(session.state.data() + 144)),
       request.now_utc_ns,
       read64(session.state.data() + 152),
       std::string(reinterpret_cast<const char *>(frameBytes), frameLength),
@@ -1719,7 +1790,10 @@ std::unique_ptr<PendingPlan> storedRetransmitPlan(
   if (retained.output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2) {
     throw DeclaredLimit{};
   }
-  if (!classCompatible || retained.output.empty()) {
+  if (!classCompatible || retained.output.empty()
+      || (responseRetry
+          && (storeClass != IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2 || !retained.admin || retained.msgType != "A"
+              || retained.sequence != expectedResponseSequence))) {
     throw std::invalid_argument("Stored retransmit class");
   }
   auto plan = std::make_unique<PendingPlan>();
@@ -1827,11 +1901,23 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     const irfq_infinite_prepare_request_v2 &request) {
   const auto frameLength = read32(request.payload.data + 32);
   const auto sessionFlags = read64(session.state.data() + 180);
-  const bool detached = sessionFlags == SESSION_FLAG_ENABLED;
+  const auto recoveryKind = read32(session.state.data() + 220);
+  const auto recoveryPhase = read32(session.state.data() + 224);
+  const bool recoveryActive = recoveryKind != RECOVERY_NONE;
+  const bool detached = sessionFlags == SESSION_FLAG_ENABLED
+                        && (!recoveryActive || read32(session.state.data() + 292) == CONTINUATION_NONE);
+  const auto senderState = read32(session.state.data() + 128);
+  const bool senderExhausted = senderState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2;
+  const auto senderSequence
+      = nonallocatingRecoveryClassificationScratch(senderState, read64(session.state.data() + 132));
+  const auto targetState = read32(session.state.data() + 140);
+  const bool targetExhausted = targetState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2;
+  const auto targetSequence
+      = nonallocatingRecoveryClassificationScratch(targetState, read64(session.state.data() + 144));
+  constexpr std::uint64_t attached = UINT64_C(135);
+  const bool heldAttached = (sessionFlags & attached) == attached;
   if (request.payload.length < 68 || frameLength == 0 || frameLength > IRFQ_INFINITE_MAX_FRAME_BYTES_V2
-      || request.payload.length != 68 + frameLength || (!attachedForAdmin(session) && !detached)
-      || read32(session.state.data() + 128) != IRFQ_INFINITE_SEQUENCE_VALUE_V2
-      || read32(session.state.data() + 140) != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
+      || request.payload.length != 68 + frameLength || (!heldAttached && !detached)) {
     throw std::invalid_argument("Inbound event");
   }
   const auto *frameBytes = request.payload.data + 68;
@@ -1854,8 +1940,8 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       session.profile.venueCompId,
       session.profile.participantCompId,
       read32(session.state.data() + 188),
-      read64(session.state.data() + 132),
-      read64(session.state.data() + 144),
+      senderSequence,
+      targetSequence,
       request.now_utc_ns,
       readI64(session.state.data() + 104) == 0 ? readI64(session.state.data() + 72)
                                                : readI64(session.state.data() + 104),
@@ -1872,6 +1958,61 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       || (inbound.admin && inbound.application) || inbound.outputs.size() != inbound.outputMsgTypes.size()
       || inbound.outputs.size() != inbound.outputSequences.size()) {
     throw std::invalid_argument("Inbound classification");
+  }
+  const bool validResetLogon = inbound.resetLogon && inbound.admin && !inbound.application && inbound.msgType == "A"
+                               && inbound.identified && inbound.sequenceValid && inbound.sequenceFieldsValid
+                               && inbound.identityMatches && inbound.timeMatches && inbound.dictionaryValid
+                               && inbound.logonProfileValid && !inbound.nextExpectedInvalid && inbound.outputs.empty()
+                               && !inbound.disconnected && inbound.nextSenderSequence == senderSequence
+                               && inbound.nextTargetSequence == targetSequence;
+  const bool authenticatedOrdinaryLogon = inbound.admin && !inbound.application && inbound.msgType == "A"
+                                          && !inbound.resetLogon && inbound.identified && inbound.sequenceValid
+                                          && inbound.sequenceFieldsValid && inbound.sequence == targetSequence
+                                          && inbound.identityMatches && inbound.timeMatches && inbound.dictionaryValid
+                                          && inbound.logonProfileValid && !inbound.nextExpectedInvalid;
+  const bool finalTarget = targetState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                           && targetSequence == static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
+  const bool exactNativeOriginal
+      = request.next_original_state == senderState && request.next_original_value == read64(session.state.data() + 132);
+  const bool finalTargetNone = finalTarget && detached && recoveryKind == RECOVERY_NONE && authenticatedOrdinaryLogon
+                               && exactNativeOriginal
+                               && (!inbound.nextExpectedPresent || inbound.nextExpectedSequence <= senderSequence);
+  const auto nativeSender = read64(session.state.data() + 132);
+  const bool directInitialResponse = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                                     && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                                     && request.next_original_value == nativeSender
+                                     && (!inbound.nextExpectedPresent || inbound.nextExpectedSequence == nativeSender);
+  const auto directPredecessor = senderExhausted ? static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1
+                                 : nativeSender > 1 ? nativeSender - 1
+                                                    : 0;
+  const bool directLostResponse = directPredecessor != 0
+                                  && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                                  && request.next_original_value == directPredecessor && inbound.nextExpectedPresent
+                                  && inbound.nextExpectedSequence == directPredecessor;
+  const bool finalTargetDirect = finalTarget && detached && recoveryKind == RECOVERY_RESEND_REQUEST
+                                 && authenticatedOrdinaryLogon && (directInitialResponse || directLostResponse);
+  const auto recoveryPeer = read64(session.state.data() + 172);
+  const auto recoveryCursor = read64(session.state.data() + 244);
+  const bool exactLogonOriginal
+      = request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+        && ((recoveryPhase == RECOVERY_PHASE_PEER_PREFIX && request.next_original_value == recoveryCursor)
+            || (recoveryPhase == RECOVERY_PHASE_LOGON_RESPONSE
+                && (request.next_original_value == read64(session.state.data() + 228)
+                    || request.next_original_value == nativeSender))
+            || ((recoveryPhase == RECOVERY_PHASE_STORED_RANGE || recoveryPhase == RECOVERY_PHASE_FINAL_GAP_FILL)
+                && request.next_original_value == nativeSender));
+  const bool exactLogon789 = detached && recoveryKind == RECOVERY_LOGON_789 && authenticatedOrdinaryLogon
+                             && inbound.nextExpectedPresent && inbound.nextExpectedSequence == recoveryPeer
+                             && exactLogonOriginal;
+  const bool finalTargetLogon789 = finalTarget && exactLogon789;
+  const bool resetDecision
+      = validResetLogon && detached && (recoveryKind == RECOVERY_NONE || recoveryKind == RECOVERY_RESEND_REQUEST);
+  if ((validResetLogon && !resetDecision)
+      || (!resetDecision && (targetExhausted || (senderExhausted && !finalTargetNone && !finalTargetDirect)))
+      || (!resetDecision && recoveryActive && !detached)
+      || (finalTarget && inbound.msgType == "A" && !validResetLogon && !finalTargetNone && !finalTargetDirect
+          && !finalTargetLogon789)) {
+    throw std::invalid_argument("Inbound recovery admission");
   }
 
   auto plan = std::make_unique<PendingPlan>();
@@ -1894,7 +2035,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   if (detached && inbound.disconnected && session.profile.heartbeatMode == 2) {
     write32(plan->state.data() + 188, inbound.heartbeatSeconds);
   }
-  const auto expectedTarget = read64(session.state.data() + 144);
+  const auto expectedTarget = targetSequence;
   const auto appendOutputs = [&] {
     std::uint64_t offset = 0;
     for (std::size_t index = 0; index < inbound.outputs.size(); ++index) {
@@ -1928,26 +2069,50 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       writeSenderSuccessor(plan->state, inbound.nextSenderSequence);
     }
   };
-  if (!inbound.identified || !inbound.sequenceValid) {
-    appendOutputs();
-    const auto sentLogout
-        = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5") != inbound.outputMsgTypes.end();
-    const auto terminalReason = !inbound.identified || (inbound.identityMatches && inbound.timeMatches)
-                                    ? IRFQ_INFINITE_REASON_PROTOCOL_V2
-                                : !inbound.identityMatches ? IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2
-                                                           : IRFQ_INFINITE_REASON_LATENCY_V2;
-    write64(
-        plan->state.data() + 180,
-        read64(plan->state.data() + 180) | UINT64_C(256) | (sentLogout ? UINT64_C(16) : UINT64_C(0)));
-    write32(plan->state.data() + 308, terminalReason);
+  const auto appendDisposition = [&](std::uint32_t disposition, std::uint32_t reason) {
+    irfq_infinite_declarative_action_v2 action{};
+    action.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
+    action.disposition = disposition;
+    action.input_source = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
+    action.sequence_begin = inbound.sequence;
+    action.sequence_end_exclusive = inbound.sequence + 1;
+    action.input_offset = 68;
+    action.input_length = frameLength;
+    std::copy_n(request.payload.data, 32, action.binding_sha256);
+    action.reason_code = reason;
+    plan->actions.push_back(action);
+  };
+  const auto appendDisconnect = [&](std::uint32_t reason) {
     irfq_infinite_declarative_action_v2 disconnect{};
     disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
-    disconnect.reason_code = terminalReason;
+    disconnect.reason_code = reason;
     plan->actions.push_back(disconnect);
-    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
-    return plan;
-  }
-  if (inbound.resetLogon && inbound.identityMatches && inbound.timeMatches) {
+  };
+  const auto appendAdminOutput = [&](const FIX::InfiniteHeartbeatPlan &output, char msgType) {
+    if (output.output.empty() || output.output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2) {
+      throw std::length_error("Inbound Logon output");
+    }
+    const auto offset = plan->output.size();
+    plan->output.insert(plan->output.end(), output.output.begin(), output.output.end());
+    irfq_infinite_declarative_action_v2 action{};
+    action.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+    action.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+    action.msg_type_length = 1;
+    action.msg_type[0] = static_cast<std::uint8_t>(msgType);
+    action.sequence_begin = read64(plan->state.data() + 132);
+    action.sequence_end_exclusive = action.sequence_begin + 1;
+    action.output_offset = offset;
+    action.output_length = output.output.size();
+    Sha256 outputSha;
+    outputSha.update(reinterpret_cast<const std::uint8_t *>(output.output.data()), output.output.size());
+    const auto outputDigest = outputSha.finish();
+    std::copy(outputDigest.begin(), outputDigest.end(), action.binding_sha256);
+    plan->actions.push_back(action);
+    write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
+    write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
+    writeSenderSuccessor(plan->state, output.nextSenderSequence);
+  };
+  if (resetDecision) {
     plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2;
     std::copy_n(request.payload.data, plan->subject.size(), plan->subject.begin());
     plan->inputSource = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
@@ -1966,6 +2131,265 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     reborrowSha.update(reborrowFields.data(), reborrowFields.size());
     reborrowSha.update(request.payload.data, static_cast<std::size_t>(request.payload.length));
     plan->reborrowDigest = reborrowSha.finish();
+    return plan;
+  }
+  if (finalTargetNone) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    const bool emitLogout = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                            && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2;
+    if (emitLogout) {
+      if (inbound.outputs.size() != 1 || inbound.outputMsgTypes[0] != "5" || !inbound.disconnected
+          || inbound.nextTargetSequence != targetSequence) {
+        throw std::logic_error("Final-target Logout classification");
+      }
+      appendOutputs();
+    }
+    appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    write32(plan->state.data() + 168, 0);
+    write64(plan->state.data() + 172, 0);
+    write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256) | (emitLogout ? UINT64_C(16) : UINT64_C(0)));
+    write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
+    write32(plan->state.data() + 192, 0);
+    write32(plan->state.data() + 288, 0);
+    write32(plan->state.data() + 292, CONTINUATION_NONE);
+    write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+    write64(plan->state.data() + 300, 0);
+    write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (finalTargetDirect) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    const bool emitLogout = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+                            && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2;
+    if (emitLogout) {
+      if (inbound.outputs.size() != 1 || inbound.outputMsgTypes[0] != "5" || !inbound.disconnected
+          || inbound.nextTargetSequence != targetSequence) {
+        throw std::logic_error("Final-target direct Logout classification");
+      }
+      appendOutputs();
+    }
+    appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (finalTargetLogon789) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (exactLogon789) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2, IRFQ_INFINITE_REASON_NONE_V2);
+    write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+    write32(plan->state.data() + 192, 0);
+    if (recoveryPhase == RECOVERY_PHASE_PEER_PREFIX) {
+      write64(plan->state.data() + 180, SESSION_FLAG_ENABLED);
+      write32(plan->state.data() + 288, 0);
+      write32(plan->state.data() + 292, CONTINUATION_RESEND);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, recoveryCursor);
+    } else {
+      write64(plan->state.data() + 180, UINT64_C(135));
+      write32(plan->state.data() + 288, 10);
+      if (recoveryPhase == RECOVERY_PHASE_LOGON_RESPONSE) {
+        write32(plan->state.data() + 292, CONTINUATION_NONE);
+        write64(plan->state.data() + 300, 0);
+      } else {
+        write32(plan->state.data() + 292, CONTINUATION_RESEND);
+        write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+        write64(plan->state.data() + 300, recoveryCursor);
+      }
+    }
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (detached && recoveryKind == RECOVERY_RESEND_REQUEST && authenticatedOrdinaryLogon) {
+    if (directInitialResponse) {
+      appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2, IRFQ_INFINITE_REASON_NONE_V2);
+      const auto response = FIX::InfiniteSessionPlanner::logon(
+          session.profile.beginString,
+          session.profile.venueCompId,
+          session.profile.participantCompId,
+          inbound.heartbeatSeconds,
+          nativeSender,
+          expectedTarget,
+          request.now_utc_ns,
+          read64(session.state.data() + 152),
+          &session.dictionaries,
+          &session.staticProfile);
+      appendAdminOutput(response, 'A');
+      write64(plan->state.data() + 180, UINT64_C(135));
+      write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+      write32(plan->state.data() + 192, 0);
+      write32(plan->state.data() + 288, 10);
+      write32(plan->state.data() + 292, CONTINUATION_NONE);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, 0);
+      plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+      return plan;
+    }
+    if (directLostResponse) {
+      appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2, IRFQ_INFINITE_REASON_NONE_V2);
+      write64(plan->state.data() + 180, UINT64_C(135));
+      write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+      write32(plan->state.data() + 192, 0);
+      write32(plan->state.data() + 288, 10);
+      write32(plan->state.data() + 292, CONTINUATION_NONE);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, 0);
+      plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2;
+      plan->storeBegin = directPredecessor;
+      plan->storeEnd = directPredecessor + 1;
+      return plan;
+    }
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    write32(plan->state.data() + 168, 0);
+    write64(plan->state.data() + 172, 0);
+    write64(plan->state.data() + 180, SESSION_FLAG_ENABLED);
+    write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
+    write32(plan->state.data() + 192, 0);
+    write32(plan->state.data() + 288, 0);
+    write32(plan->state.data() + 292, CONTINUATION_NONE);
+    write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+    write64(plan->state.data() + 300, 0);
+    write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_NONE_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (detached && recoveryKind == RECOVERY_NONE && authenticatedOrdinaryLogon) {
+    if (senderExhausted || request.next_original_state == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2) {
+      appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+      appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
+      write32(plan->state.data() + 168, 0);
+      write64(plan->state.data() + 172, 0);
+      write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256));
+      write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
+      write32(plan->state.data() + 192, 0);
+      write32(plan->state.data() + 288, 0);
+      write32(plan->state.data() + 292, CONTINUATION_NONE);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, 0);
+      write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+      plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+      return plan;
+    }
+    if (request.next_original_state != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
+      throw std::invalid_argument("Logon original cursor state");
+    }
+    const auto original = request.next_original_value;
+    const auto sender = read64(session.state.data() + 132);
+    const auto peer = inbound.nextExpectedSequence;
+    const auto lastLowerSender = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2;
+    const bool reconciliation = original > sender || (!inbound.nextExpectedPresent && original != sender)
+                                || (inbound.nextExpectedPresent && peer > sender)
+                                || (inbound.nextExpectedPresent && peer < sender && sender > lastLowerSender);
+    appendDisposition(
+        reconciliation ? IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2 : IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2,
+        reconciliation ? IRFQ_INFINITE_REASON_SEQUENCE_V2 : IRFQ_INFINITE_REASON_NONE_V2);
+    if (reconciliation) {
+      const auto logout = FIX::InfiniteSessionPlanner::logout(
+          session.profile.beginString,
+          session.profile.venueCompId,
+          session.profile.participantCompId,
+          inbound.heartbeatSeconds,
+          sender,
+          expectedTarget,
+          request.now_utc_ns,
+          "NextExpectedMsgSeqNum reconciliation",
+          read64(session.state.data() + 152),
+          &session.dictionaries,
+          &session.staticProfile);
+      appendAdminOutput(logout, '5');
+      write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256));
+      write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? inbound.heartbeatSeconds : 0);
+      write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+      irfq_infinite_declarative_action_v2 disconnect{};
+      disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+      disconnect.reason_code = IRFQ_INFINITE_REASON_SEQUENCE_V2;
+      plan->actions.push_back(disconnect);
+      plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+      return plan;
+    }
+    if (inbound.nextExpectedPresent && original < peer) {
+      write32(plan->state.data() + 168, 1);
+      write64(plan->state.data() + 172, peer);
+      write64(plan->state.data() + 180, SESSION_FLAG_ENABLED);
+      write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+      write32(plan->state.data() + 192, 0);
+      write32(plan->state.data() + 220, RECOVERY_LOGON_789);
+      write32(plan->state.data() + 224, RECOVERY_PHASE_PEER_PREFIX);
+      write64(plan->state.data() + 228, original);
+      write64(plan->state.data() + 236, peer);
+      write64(plan->state.data() + 244, original);
+      std::copy_n(request.payload.data, 32, plan->state.begin() + 252);
+      write32(plan->state.data() + 288, 0);
+      write32(plan->state.data() + 292, CONTINUATION_RESEND);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, original);
+      plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+      return plan;
+    }
+    const auto response = FIX::InfiniteSessionPlanner::logon(
+        session.profile.beginString,
+        session.profile.venueCompId,
+        session.profile.participantCompId,
+        inbound.heartbeatSeconds,
+        sender,
+        expectedTarget,
+        request.now_utc_ns,
+        read64(session.state.data() + 152),
+        &session.dictionaries,
+        &session.staticProfile);
+    appendAdminOutput(response, 'A');
+    write64(plan->state.data() + 180, UINT64_C(135));
+    write32(plan->state.data() + 188, inbound.heartbeatSeconds);
+    write32(plan->state.data() + 192, 0);
+    write32(plan->state.data() + 288, 10);
+    if (inbound.nextExpectedPresent && peer < sender) {
+      write32(plan->state.data() + 168, 1);
+      write64(plan->state.data() + 172, peer);
+      write32(plan->state.data() + 220, RECOVERY_LOGON_789);
+      write32(plan->state.data() + 224, RECOVERY_PHASE_LOGON_RESPONSE);
+      write64(plan->state.data() + 228, sender);
+      write64(plan->state.data() + 236, sender + 1);
+      write64(plan->state.data() + 244, sender);
+      std::copy_n(request.payload.data, 32, plan->state.begin() + 252);
+      write32(plan->state.data() + 292, CONTINUATION_NONE);
+      write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+      write64(plan->state.data() + 300, 0);
+    } else {
+      write32(plan->state.data() + 168, 0);
+      write64(plan->state.data() + 172, 0);
+      std::fill(plan->state.begin() + 220, plan->state.begin() + 284, std::uint8_t{0});
+    }
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
+  if (senderExhausted) {
+    throw std::invalid_argument("Inbound event with exhausted sender");
+  }
+  if (recoveryActive) {
+    throw std::invalid_argument("Inbound event during recovery");
+  }
+  if (!inbound.identified || !inbound.sequenceValid) {
+    appendOutputs();
+    const auto sentLogout
+        = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5") != inbound.outputMsgTypes.end();
+    const auto terminalReason = !inbound.identified || (inbound.identityMatches && inbound.timeMatches)
+                                    ? IRFQ_INFINITE_REASON_PROTOCOL_V2
+                                : !inbound.identityMatches ? IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2
+                                                           : IRFQ_INFINITE_REASON_LATENCY_V2;
+    write64(
+        plan->state.data() + 180,
+        read64(plan->state.data() + 180) | UINT64_C(256) | (sentLogout ? UINT64_C(16) : UINT64_C(0)));
+    write32(plan->state.data() + 308, terminalReason);
+    irfq_infinite_declarative_action_v2 disconnect{};
+    disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
+    disconnect.reason_code = terminalReason;
+    plan->actions.push_back(disconnect);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
     return plan;
   }
   if (detached && inbound.identityMatches && inbound.timeMatches && !inbound.disconnected) {
@@ -2725,8 +3149,12 @@ irfq_infinite_status_v2 resumeResendStore(
           session.profile.venueCompId,
           session.profile.participantCompId,
           read32(session.state.data() + 188),
-          read64(session.state.data() + 132),
-          read64(session.state.data() + 144),
+          nonallocatingRecoveryClassificationScratch(
+              read32(session.state.data() + 128),
+              read64(session.state.data() + 132)),
+          nonallocatingRecoveryClassificationScratch(
+              read32(session.state.data() + 140),
+              read64(session.state.data() + 144)),
           readI64(plan.state.data() + 88),
           read64(session.state.data() + 152),
           std::string(reinterpret_cast<const char *>(row.frame.data), row.frame_length),
@@ -2816,8 +3244,12 @@ irfq_infinite_status_v2 resumeResendStore(
         session.profile.venueCompId,
         session.profile.participantCompId,
         read32(session.state.data() + 188),
-        read64(session.state.data() + 132),
-        read64(session.state.data() + 144),
+        nonallocatingRecoveryClassificationScratch(
+            read32(session.state.data() + 128),
+            read64(session.state.data() + 132)),
+        nonallocatingRecoveryClassificationScratch(
+            read32(session.state.data() + 140),
+            read64(session.state.data() + 144)),
         readI64(plan.state.data() + 88),
         beginSequence,
         endSequence - 1,
@@ -2836,8 +3268,10 @@ irfq_infinite_status_v2 resumeResendStore(
   }
   const auto nextCursor = plan.storeBegin + index;
   if (integrityDisconnect) {
-    write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(256));
-    write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_INTEGRITY_V2);
+    if (index != 0) {
+      write64(plan.state.data() + 244, nextCursor);
+      write64(plan.state.data() + 300, nextCursor);
+    }
     irfq_infinite_declarative_action_v2 disconnect{};
     disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
     disconnect.reason_code = IRFQ_INFINITE_REASON_INTEGRITY_V2;
@@ -2866,6 +3300,104 @@ irfq_infinite_status_v2 resumeResendStore(
     write64(plan.state.data() + 96, read64(plan.state.data() + 80));
     write64(plan.state.data() + 104, read64(plan.state.data() + 88));
   }
+  plan.pendingStatus = IRFQ_INFINITE_STATUS_READY_V2;
+  plan.stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan.state.data(), plan.state.size());
+  return IRFQ_INFINITE_STATUS_READY_V2;
+}
+
+irfq_infinite_status_v2 resumeDirectLogonResponse(
+    irfq_infinite_session_v2 &session,
+    const irfq_infinite_resume_request_v2 &request,
+    const irfq_infinite_prepare_response_v2 &response,
+    const PrepareOutputView &view) {
+  auto &plan = *session.pending;
+  if (request.kind != IRFQ_INFINITE_RESUME_STORE_RANGE_V2 || request.subject_sequence != 0
+      || nonzero(request.subject_sha256, 32) || request.decision != 0
+      || request.input_source != IRFQ_INFINITE_INPUT_NONE_V2 || request.input_item_index != 0
+      || request.input_source_bytes.length != 0 || request.store_range_begin != plan.storeBegin
+      || request.store_range_end_exclusive != plan.storeEnd || request.store_row_count != 1
+      || request.store_rows == nullptr || plan.storeEnd != plan.storeBegin + 1) {
+    return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+  }
+  const auto &row = request.store_rows[0];
+  if (row.sequence != plan.storeBegin || row.store_class != IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2
+      || row.msg_type_length != 1 || row.msg_type[0] != 'A' || row.frame_length == 0
+      || row.frame_length > IRFQ_INFINITE_MAX_FRAME_BYTES_V2 || row.reserved != 0
+      || row.frame.length != row.frame_length || row.frame.data == nullptr
+      || std::any_of(row.msg_type + 1, row.msg_type + IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2, [](std::uint8_t byte) {
+           return byte != 0;
+         })) {
+    return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+  }
+  Range frameRange;
+  Range requestRange;
+  Range responseRange;
+  Range rowRange;
+  Range stateRange;
+  Range outputRange;
+  Range actionRange;
+  if (!sliceRange(row.frame, IRFQ_INFINITE_MAX_FRAME_BYTES_V2, frameRange)
+      || !range(&request, sizeof(request), requestRange) || !range(&response, sizeof(response), responseRange)
+      || !range(request.store_rows, sizeof(*request.store_rows), rowRange)
+      || !range(view.state.data, view.state.capacity, stateRange)
+      || !range(view.output.data, view.output.capacity, outputRange)
+      || !range(view.actions, static_cast<std::uint64_t>(view.actionCapacity) * sizeof(*view.actions), actionRange)
+      || !disjoint(frameRange, {requestRange, responseRange, rowRange, stateRange, outputRange, actionRange})) {
+    return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+  }
+  Sha256 frameSha;
+  frameSha.update(row.frame.data, row.frame_length);
+  const auto frameDigest = frameSha.finish();
+  if (!std::equal(frameDigest.begin(), frameDigest.end(), row.frame_sha256)) {
+    return IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2;
+  }
+  FIX::InfiniteStoredFramePlan retained;
+  try {
+    retained = FIX::InfiniteSessionPlanner::storedFrame(
+        session.profile.beginString,
+        session.profile.venueCompId,
+        session.profile.participantCompId,
+        read32(plan.state.data() + 188),
+        nonallocatingRecoveryClassificationScratch(
+            read32(session.state.data() + 128),
+            read64(session.state.data() + 132)),
+        nonallocatingRecoveryClassificationScratch(
+            read32(session.state.data() + 140),
+            read64(session.state.data() + 144)),
+        readI64(plan.state.data() + 88),
+        read64(session.state.data() + 152),
+        std::string(reinterpret_cast<const char *>(row.frame.data), row.frame_length),
+        session.dictionaries,
+        session.staticProfile);
+  } catch (const std::invalid_argument &) {
+    return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+  }
+  Sha256 bodySha;
+  bodySha.update(reinterpret_cast<const std::uint8_t *>(retained.body.data()), retained.body.size());
+  const auto bodyDigest = bodySha.finish();
+  if (retained.output.empty() || retained.output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2 || !retained.admin
+      || retained.application || retained.msgType != "A" || retained.sequence != plan.storeBegin) {
+    return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
+  }
+  if (!std::equal(bodyDigest.begin(), bodyDigest.end(), row.body_sha256)) {
+    return IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2;
+  }
+  plan.output.assign(retained.output.begin(), retained.output.end());
+  irfq_infinite_declarative_action_v2 action{};
+  action.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+  action.output_class = IRFQ_INFINITE_OUTPUT_SESSION_RETRANSMIT_V2;
+  action.msg_type_length = 1;
+  action.msg_type[0] = 'A';
+  action.sequence_begin = retained.sequence;
+  action.sequence_end_exclusive = retained.sequence + 1;
+  action.output_length = plan.output.size();
+  Sha256 outputSha;
+  outputSha.update(plan.output.data(), plan.output.size());
+  const auto outputDigest = outputSha.finish();
+  std::copy(outputDigest.begin(), outputDigest.end(), action.binding_sha256);
+  plan.actions.push_back(action);
+  write64(plan.state.data() + 96, read64(plan.state.data() + 80));
+  write64(plan.state.data() + 104, read64(plan.state.data() + 88));
   plan.pendingStatus = IRFQ_INFINITE_STATUS_READY_V2;
   plan.stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan.state.data(), plan.state.size());
   return IRFQ_INFINITE_STATUS_READY_V2;
@@ -2940,6 +3472,12 @@ std::array<std::uint8_t, 32> computeInfiniteFrameAdapterStockNonconformanceSmoke
   Sha256 sha;
   sha.update(bytes, length);
   return sha.finish();
+}
+
+void forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow(irfq_infinite_session_v2 *session) noexcept {
+  if (session != nullptr) {
+    session->nextPlan = UINT64_MAX;
+  }
 }
 } // namespace FIX
 
@@ -3104,6 +3642,9 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
     if (!std::equal(expectedIdentity.begin(), expectedIdentity.end(), request->event_identity_sha256)) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
+    if (session->nextPlan == UINT64_MAX) {
+      throw std::overflow_error("Prepare ID exhausted");
+    }
     const bool timerEvent
         = request->kind == IRFQ_INFINITE_PREPARE_RUST_TIMER_V2 && request->event == IRFQ_INFINITE_EVENT_TIMER_TICK_V2;
     const bool controlEvent = request->kind == IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
@@ -3133,6 +3674,20 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
         || (!logonNeedsOriginal && !inboundNeedsOriginal && !resendNeedsOriginal
             && request->next_original_state != IRFQ_INFINITE_SEQUENCE_ABSENT_V2)
         || request->payload.length < 32 || !nonzero(request->payload.data, 32)) {
+      return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    }
+    const bool recoveryActive = read32(session->state.data() + 220) != RECOVERY_NONE;
+    const bool detachedRecovery = read64(session->state.data() + 180) == SESSION_FLAG_ENABLED
+                                  && read32(session->state.data() + 292) == CONTINUATION_NONE;
+    const bool recoveryEvent = (request->stage == IRFQ_INFINITE_STAGE_EVENT_V2
+                                && (request->event == IRFQ_INFINITE_EVENT_CONTINUE_RESEND_V2
+                                    || request->event == IRFQ_INFINITE_EVENT_STORED_FRAME_RETRANSMIT_V2
+                                    || request->event == IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2
+                                    || request->event == IRFQ_INFINITE_EVENT_ADVANCE_PROCESSING_FRONTIER_V2))
+                               || (request->stage == IRFQ_INFINITE_STAGE_TARGET_CAS_V2
+                                   && request->event == IRFQ_INFINITE_EVENT_ADVANCE_TARGET_V2)
+                               || (inboundEvent && detachedRecovery);
+    if (recoveryActive && !recoveryEvent) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
     if (request->kind == IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2 && request->stage == IRFQ_INFINITE_STAGE_EVENT_V2
@@ -3215,6 +3770,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
   } catch (const std::invalid_argument &) {
     return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
   } catch (...) {
+    if (session != nullptr) {
+      session->pending.reset();
+      session->terminal = true;
+    }
     return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
   }
 }
@@ -3258,6 +3817,26 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
     }
     if (session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2) {
       auto &plan = *session->pending;
+      const bool directLogonResponse = plan.kind == IRFQ_INFINITE_PREPARE_REGISTERED_INBOUND_V2
+                                       && plan.event == IRFQ_INFINITE_EVENT_INBOUND_FRAME_V2
+                                       && read32(plan.state.data() + 220) == RECOVERY_RESEND_REQUEST
+                                       && read32(plan.state.data() + 224) == RECOVERY_PHASE_STORED_RANGE
+                                       && read64(plan.state.data() + 180) == UINT64_C(135)
+                                       && read32(plan.state.data() + 292) == CONTINUATION_NONE;
+      if (directLogonResponse) {
+        const auto resumed = resumeDirectLogonResponse(*session, *request, *response, outputView);
+        if (resumed != IRFQ_INFINITE_STATUS_READY_V2) {
+          return failPending(resumed);
+        }
+        if (plan.step >= IRFQ_INFINITE_MAX_RESUME_STEPS_V2) {
+          return failPending(IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+        }
+        ++plan.step;
+        const auto status = describePlan(plan, session->profile, outputView, response);
+        return status == IRFQ_INFINITE_STATUS_READY_V2 || status == IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2
+                   ? status
+                   : failPending(status);
+      }
       if (plan.event == IRFQ_INFINITE_EVENT_CONTINUE_RESEND_V2) {
         const auto resumed = resumeResendStore(*session, *request, *response, outputView);
         if (resumed != IRFQ_INFINITE_STATUS_READY_V2) {
@@ -3825,8 +4404,12 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             session->profile.venueCompId,
             session->profile.participantCompId,
             read32(session->state.data() + 188),
-            read64(session->state.data() + 132),
-            read64(session->state.data() + 144),
+            nonallocatingRecoveryClassificationScratch(
+                read32(session->state.data() + 128),
+                read64(session->state.data() + 132)),
+            nonallocatingRecoveryClassificationScratch(
+                read32(session->state.data() + 140),
+                read64(session->state.data() + 144)),
             readI64(plan.state.data() + 88),
             readI64(session->state.data() + 104),
             readI64(session->state.data() + 120),
@@ -3855,37 +4438,50 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
                                       : IRFQ_INFINITE_REASON_NONE_V2;
         plan.actions.push_back(disposition);
         if (request->decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2) {
-          const auto logout = FIX::InfiniteSessionPlanner::logout(
-              session->profile.beginString,
-              session->profile.venueCompId,
-              session->profile.participantCompId,
-              read32(session->state.data() + 188),
-              read64(session->state.data() + 132),
-              read64(session->state.data() + 144),
-              readI64(plan.state.data() + 88),
-              "Reset rejected",
-              read64(session->state.data() + 152),
-              &session->dictionaries,
-              &session->staticProfile);
-          plan.output.assign(logout.output.begin(), logout.output.end());
-          write64(plan.state.data() + 96, read64(plan.state.data() + 80));
-          write64(plan.state.data() + 104, read64(plan.state.data() + 88));
-          writeSenderSuccessor(plan.state, logout.nextSenderSequence);
-          write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(0x110));
-          write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
-          irfq_infinite_declarative_action_v2 output{};
-          output.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
-          output.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
-          output.msg_type_length = 1;
-          output.msg_type[0] = '5';
-          output.sequence_begin = read64(session->state.data() + 132);
-          output.sequence_end_exclusive = output.sequence_begin + 1;
-          output.output_length = plan.output.size();
-          Sha256 outputSha;
-          outputSha.update(plan.output.data(), plan.output.size());
-          const auto outputDigest = outputSha.finish();
-          std::copy(outputDigest.begin(), outputDigest.end(), output.binding_sha256);
-          plan.actions.push_back(output);
+          const bool directRecovery = read32(session->state.data() + 220) == RECOVERY_RESEND_REQUEST;
+          const bool senderExhausted = read32(session->state.data() + 128) == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2;
+          if (!senderExhausted) {
+            const auto senderSequence = nonallocatingRecoveryClassificationScratch(
+                read32(session->state.data() + 128),
+                read64(session->state.data() + 132));
+            const auto logout = FIX::InfiniteSessionPlanner::logout(
+                session->profile.beginString,
+                session->profile.venueCompId,
+                session->profile.participantCompId,
+                read32(session->state.data() + 188),
+                senderSequence,
+                nonallocatingRecoveryClassificationScratch(
+                    read32(session->state.data() + 140),
+                    read64(session->state.data() + 144)),
+                readI64(plan.state.data() + 88),
+                "Reset rejected",
+                read64(session->state.data() + 152),
+                &session->dictionaries,
+                &session->staticProfile);
+            plan.output.assign(logout.output.begin(), logout.output.end());
+            write64(plan.state.data() + 96, read64(plan.state.data() + 80));
+            write64(plan.state.data() + 104, read64(plan.state.data() + 88));
+            writeSenderSuccessor(plan.state, logout.nextSenderSequence);
+            irfq_infinite_declarative_action_v2 output{};
+            output.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
+            output.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+            output.msg_type_length = 1;
+            output.msg_type[0] = '5';
+            output.sequence_begin = senderSequence;
+            output.sequence_end_exclusive = senderSequence + 1;
+            output.output_length = plan.output.size();
+            Sha256 outputSha;
+            outputSha.update(plan.output.data(), plan.output.size());
+            const auto outputDigest = outputSha.finish();
+            std::copy(outputDigest.begin(), outputDigest.end(), output.binding_sha256);
+            plan.actions.push_back(output);
+          }
+          if (!directRecovery) {
+            write64(
+                plan.state.data() + 180,
+                SESSION_FLAG_ENABLED | UINT64_C(256) | (senderExhausted ? UINT64_C(0) : UINT64_C(16)));
+            write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+          }
           irfq_infinite_declarative_action_v2 disconnect{};
           disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
           disconnect.reason_code = IRFQ_INFINITE_REASON_RESET_REJECTED_V2;
