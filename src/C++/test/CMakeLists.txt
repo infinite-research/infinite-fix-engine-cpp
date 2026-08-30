@@ -75,6 +75,9 @@ if (QUICKFIX_TESTS)
   target_compile_definitions(ut PRIVATE
     INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
     INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}")
+  if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+    target_compile_definitions(ut PRIVATE IRFQ_INFINITE_EMBED_DICTIONARIES=1)
+  endif()
   
   target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
     ${PROJECT_SOURCE_DIR}/src/C++)

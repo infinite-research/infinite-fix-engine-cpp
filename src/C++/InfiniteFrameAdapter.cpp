@@ -38,9 +38,19 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef IRFQ_INFINITE_EMBED_DICTIONARIES
+struct InfiniteEmbeddedDictionary {
+  const unsigned char *data;
+  std::size_t size;
+};
+
+extern "C" const InfiniteEmbeddedDictionary irfq_infinite_embedded_dictionaries_v1[2];
+#endif
 
 namespace {
 constexpr std::array<std::uint8_t, 8> STATE_MAGIC{{'I', 'R', 'F', 'Q', 'N', 'S', '2', 0}};
@@ -67,6 +77,19 @@ constexpr std::uint32_t CONTINUATION_RESEND = 1;
 constexpr std::uint32_t CONTINUATION_QUEUED_INBOUND = 2;
 constexpr std::uint32_t CONTINUATION_APPLICATION_BLOCK = 3;
 constexpr std::uint32_t CONTINUATION_READ_RESULT = 4;
+constexpr char INFINITE_DEFAULT_CUSTOM_APPLICATION_VERSION[] = "INFINITE-RFQ-1.0.0";
+constexpr char INFINITE_TRANSPORT_DICTIONARY_ID[] = "INFINITE-FIXT11";
+constexpr char INFINITE_APPLICATION_DICTIONARY_ID[] = "INFINITE-RFQ-1.0.0-EP299";
+constexpr std::size_t INFINITE_TRANSPORT_DICTIONARY_SIZE = 10148;
+constexpr std::size_t INFINITE_APPLICATION_DICTIONARY_SIZE = 90828;
+constexpr std::array<std::uint8_t, 32> INFINITE_TRANSPORT_DICTIONARY_SHA256{{
+    0x3a, 0x78, 0x4e, 0x84, 0xad, 0x56, 0xdc, 0x7b, 0xec, 0x92, 0x7e, 0xc3, 0xa4, 0xa4, 0xdf, 0x48,
+    0xc4, 0xaa, 0x96, 0xd5, 0xe4, 0x4e, 0xc1, 0x9d, 0x39, 0xe5, 0x98, 0xf1, 0xd8, 0xa5, 0x76, 0x14,
+}};
+constexpr std::array<std::uint8_t, 32> INFINITE_APPLICATION_DICTIONARY_SHA256{{
+    0xcf, 0xb5, 0x10, 0x43, 0x09, 0x3a, 0x99, 0x39, 0xc3, 0x5b, 0x0d, 0x5c, 0x4a, 0x07, 0x83, 0x32,
+    0x0e, 0x86, 0x82, 0x5c, 0xc0, 0xd8, 0x14, 0x69, 0x06, 0x7e, 0xa6, 0x9d, 0xdb, 0xeb, 0x8d, 0xf8,
+}};
 
 class DeclaredLimit final : public std::exception {};
 
@@ -390,6 +413,10 @@ struct Profile {
   std::string participantLocationId;
   std::string qualifier;
   std::string defaultCustomApplicationVersion;
+  std::string transportDictionaryId;
+  std::array<std::uint8_t, 32> transportDictionarySha256{};
+  std::string applicationDictionaryId;
+  std::array<std::uint8_t, 32> applicationDictionarySha256{};
   std::uint32_t heartbeatMode{0};
   std::uint32_t scheduleMode{0};
   std::array<std::uint32_t, 8> schedule{};
@@ -570,7 +597,57 @@ bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) noexce
   profile.validateLengthAndChecksum = fields[36].boolean;
   profile.sendNextExpectedMsgSeqNum = fields[37].boolean;
   profile.defaultCustomApplicationVersion.assign(reinterpret_cast<const char *>(fields[45].bytes), fields[45].length);
+  profile.transportDictionaryId.assign(reinterpret_cast<const char *>(fields[46].bytes), fields[46].length);
+  std::copy_n(fields[47].bytes, profile.transportDictionarySha256.size(), profile.transportDictionarySha256.begin());
+  profile.applicationDictionaryId.assign(reinterpret_cast<const char *>(fields[48].bytes), fields[48].length);
+  std::copy_n(
+      fields[49].bytes,
+      profile.applicationDictionarySha256.size(),
+      profile.applicationDictionarySha256.begin());
   return true;
+}
+
+bool governedDictionaries(const Profile &profile, FIX::DataDictionaryProvider &dictionaries) {
+  if (profile.defaultCustomApplicationVersion != INFINITE_DEFAULT_CUSTOM_APPLICATION_VERSION
+      || profile.transportDictionaryId != INFINITE_TRANSPORT_DICTIONARY_ID
+      || profile.transportDictionarySha256 != INFINITE_TRANSPORT_DICTIONARY_SHA256
+      || profile.applicationDictionaryId != INFINITE_APPLICATION_DICTIONARY_ID
+      || profile.applicationDictionarySha256 != INFINITE_APPLICATION_DICTIONARY_SHA256) {
+    return false;
+  }
+#ifdef IRFQ_INFINITE_EMBED_DICTIONARIES
+  const auto &transport = irfq_infinite_embedded_dictionaries_v1[0];
+  const auto &application = irfq_infinite_embedded_dictionaries_v1[1];
+  if (transport.data == nullptr || transport.size != INFINITE_TRANSPORT_DICTIONARY_SIZE || application.data == nullptr
+      || application.size != INFINITE_APPLICATION_DICTIONARY_SIZE) {
+    return false;
+  }
+  Sha256 transportSha256;
+  transportSha256.update(transport.data, transport.size);
+  Sha256 applicationSha256;
+  applicationSha256.update(application.data, application.size);
+  if (transportSha256.finish() != INFINITE_TRANSPORT_DICTIONARY_SHA256
+      || applicationSha256.finish() != INFINITE_APPLICATION_DICTIONARY_SHA256) {
+    return false;
+  }
+  try {
+    std::istringstream transportStream(std::string(reinterpret_cast<const char *>(transport.data), transport.size));
+    std::istringstream applicationStream(
+        std::string(reinterpret_cast<const char *>(application.data), application.size));
+    dictionaries.addTransportDataDictionary(
+        FIX::BeginString("FIXT.1.1"),
+        std::make_shared<FIX::DataDictionary>(transportStream));
+    dictionaries.addApplicationDataDictionary(
+        FIX::ApplVerID("10"),
+        std::make_shared<FIX::DataDictionary>(applicationStream));
+  } catch (const FIX::ConfigError &) {
+    return false;
+  }
+  return true;
+#else
+  static_cast<void>(dictionaries);
+  return false;
+#endif
 }
 
 bool scheduledBoundary(const Profile &profile, std::int64_t creationUtcNs, std::int64_t &boundaryUtcNs) noexcept {
@@ -972,6 +1049,33 @@ FIX::InfiniteSessionStaticProfile staticProfile(const Profile &profile) {
       profile.persistMessages,
       profile.validateLengthAndChecksum,
       profile.sendNextExpectedMsgSeqNum};
+}
+
+std::unique_ptr<irfq_infinite_session_v2> makeInfiniteSession(
+    Profile profile,
+    const irfq_infinite_slice_v2 &nativeState,
+    std::uint64_t epoch,
+    std::uint64_t revision,
+    std::int64_t creationTaiNs,
+    std::int64_t creationUtcNs,
+    const FIX::DataDictionaryProvider &dictionaries) {
+  auto session = std::make_unique<irfq_infinite_session_v2>();
+  session->profile = std::move(profile);
+  session->staticProfile = staticProfile(session->profile);
+  session->dictionaries = dictionaries;
+  session->epoch = epoch;
+  session->revision = revision;
+  if (nativeState.length == 0) {
+    session->state = freshState(session->profile, epoch, creationTaiNs, creationUtcNs);
+  } else {
+    std::copy_n(nativeState.data, session->state.size(), session->state.begin());
+  }
+  static std::atomic<std::uint64_t> nextIdentity{1};
+  session->identity = nextIdentity.fetch_add(1, std::memory_order_relaxed);
+  if (session->identity == 0) {
+    return nullptr;
+  }
+  return session;
 }
 
 void writeSenderSuccessor(
@@ -3425,12 +3529,7 @@ irfq_infinite_session_v2 *createInfiniteFrameAdapterStockNonconformanceSmokeSess
     if (!parseProfile(configSlice, profile) || epoch == 0 || revision == UINT64_MAX) {
       return nullptr;
     }
-    auto session = std::make_unique<irfq_infinite_session_v2>();
-    session->profile = profile;
-    session->staticProfile = staticProfile(profile);
-    session->dictionaries = dictionaries;
-    session->epoch = epoch;
-    session->revision = revision;
+    const irfq_infinite_slice_v2 stateSlice{nativeState, nativeStateLength};
     if (nativeStateLength == 0) {
       if (revision != 0 || creationTaiNs <= 0 || creationUtcNs <= 0) {
         return nullptr;
@@ -3439,19 +3538,19 @@ irfq_infinite_session_v2 *createInfiniteFrameAdapterStockNonconformanceSmokeSess
       if (profile.scheduleMode == 2 && !scheduledBoundary(profile, creationUtcNs, boundary)) {
         return nullptr;
       }
-      session->state = freshState(profile, epoch, creationTaiNs, creationUtcNs);
     } else {
-      const irfq_infinite_slice_v2 stateSlice{nativeState, nativeStateLength};
       if (creationTaiNs != 0 || creationUtcNs != 0 || !validNativeState(stateSlice, profile, epoch, revision)) {
         return nullptr;
       }
-      std::copy_n(nativeState, session->state.size(), session->state.begin());
     }
-    static std::atomic<std::uint64_t> nextIdentity{1};
-    session->identity = nextIdentity.fetch_add(1, std::memory_order_relaxed);
-    if (session->identity == 0) {
-      return nullptr;
-    }
+    auto session = makeInfiniteSession(
+        std::move(profile),
+        stateSlice,
+        epoch,
+        revision,
+        creationTaiNs,
+        creationUtcNs,
+        dictionaries);
     return session.release();
   } catch (...) {
     return nullptr;
@@ -3590,7 +3689,25 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_session_create_v2(
         || !validNativeState(request->native_state, profile, request->session_epoch, request->cache_revision)) {
       return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
-    return publish(response, IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+    FIX::DataDictionaryProvider dictionaries;
+    if (!governedDictionaries(profile, dictionaries)) {
+      return publish(response, IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+    }
+    auto session = makeInfiniteSession(
+        std::move(profile),
+        request->native_state,
+        request->session_epoch,
+        request->cache_revision,
+        request->creation_tai_ns,
+        request->creation_utc_ns,
+        dictionaries);
+    if (!session) {
+      return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
+    }
+    response->cache_epoch = request->session_epoch;
+    response->cache_revision = request->cache_revision;
+    response->session = session.release();
+    return publish(response, IRFQ_INFINITE_STATUS_OK_V2);
   } catch (...) {
     return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
   }

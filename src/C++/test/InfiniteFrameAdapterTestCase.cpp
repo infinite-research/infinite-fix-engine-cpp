@@ -202,7 +202,37 @@ void cborDigest(std::vector<std::uint8_t> &bytes, std::uint8_t byte) {
   bytes.insert(bytes.end(), 32, byte);
 }
 
+void cborDigest(std::vector<std::uint8_t> &bytes, const std::array<std::uint8_t, 32> &digest) {
+  cborArgument(bytes, 2, digest.size());
+  bytes.insert(bytes.end(), digest.begin(), digest.end());
+}
+
 void cborBoolean(std::vector<std::uint8_t> &bytes, bool value) { bytes.push_back(value ? 0xf5 : 0xf4); }
+
+struct TestDictionaryTuple {
+  std::string transportId{"unavailable-transport-dictionary"};
+  std::array<std::uint8_t, 32> transportSha256 = [] {
+    std::array<std::uint8_t, 32> value{};
+    value.fill(0x22);
+    return value;
+  }();
+  std::string applicationId{"unavailable-application-dictionary"};
+  std::array<std::uint8_t, 32> applicationSha256 = [] {
+    std::array<std::uint8_t, 32> value{};
+    value.fill(0x33);
+    return value;
+  }();
+};
+
+TestDictionaryTuple governedDictionaryTuple() {
+  return {
+      "INFINITE-FIXT11",
+      {0x3a, 0x78, 0x4e, 0x84, 0xad, 0x56, 0xdc, 0x7b, 0xec, 0x92, 0x7e, 0xc3, 0xa4, 0xa4, 0xdf, 0x48,
+       0xc4, 0xaa, 0x96, 0xd5, 0xe4, 0x4e, 0xc1, 0x9d, 0x39, 0xe5, 0x98, 0xf1, 0xd8, 0xa5, 0x76, 0x14},
+      "INFINITE-RFQ-1.0.0-EP299",
+      {0xcf, 0xb5, 0x10, 0x43, 0x09, 0x3a, 0x99, 0x39, 0xc3, 0x5b, 0x0d, 0x5c, 0x4a, 0x07, 0x83, 0x32,
+       0x0e, 0x86, 0x82, 0x5c, 0xc0, 0xd8, 0x14, 0x69, 0x06, 0x7e, 0xa6, 0x9d, 0xdb, 0xeb, 0x8d, 0xf8}};
+}
 
 std::vector<std::uint8_t> otherwiseValidUnavailableProfile(
     std::uint32_t scheduleMode = 1,
@@ -215,7 +245,9 @@ std::vector<std::uint8_t> otherwiseValidUnavailableProfile(
     const std::string &venueLocationId = "",
     const std::string &participantSubId = "",
     const std::string &participantLocationId = "",
-    const std::string &qualifier = "") {
+    const std::string &qualifier = "",
+    const std::string &defaultCustomApplicationVersion = "INFINITE-RFQ-1.0.0",
+    const TestDictionaryTuple &dictionaries = {}) {
   std::vector<std::uint8_t> bytes{0x98, 0x32};
   cborUnsigned(bytes, 1);
   cborBytes(bytes, "FIXT.1.1");
@@ -257,12 +289,31 @@ std::vector<std::uint8_t> otherwiseValidUnavailableProfile(
   cborBytes(bytes, "INFINITE-RFQ-1.0.0");
   cborUnsigned(bytes, 10);
   cborUnsigned(bytes, 299);
-  cborBytes(bytes, "INFINITE-RFQ-1.0.0");
-  cborBytes(bytes, "unavailable-transport-dictionary");
-  cborDigest(bytes, 0x22);
-  cborBytes(bytes, "unavailable-application-dictionary");
-  cborDigest(bytes, 0x33);
+  cborBytes(bytes, defaultCustomApplicationVersion);
+  cborBytes(bytes, dictionaries.transportId);
+  cborDigest(bytes, dictionaries.transportSha256);
+  cborBytes(bytes, dictionaries.applicationId);
+  cborDigest(bytes, dictionaries.applicationSha256);
   return bytes;
+}
+
+std::vector<std::uint8_t> profileWithDictionaries(
+    const TestDictionaryTuple &dictionaries,
+    const std::string &defaultCustomApplicationVersion = "INFINITE-RFQ-1.0.0") {
+  return otherwiseValidUnavailableProfile(
+      1,
+      {},
+      1,
+      30,
+      30,
+      30,
+      "",
+      "",
+      "",
+      "",
+      "",
+      defaultCustomApplicationVersion,
+      dictionaries);
 }
 
 void write32(std::uint8_t *bytes, std::uint32_t value) {
@@ -5487,6 +5538,109 @@ TEST_CASE(
   request.creation_utc_ns = 0;
   init(response);
   CHECK(irfq_infinite_session_create_v2(&request, &response) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 production session accepts only the governed dictionary tuple",
+    "[infinite][adapter][v2][profile][dictionaries]") {
+  const auto create = [](const std::vector<std::uint8_t> &config, irfq_infinite_session_create_response_v2 &response) {
+    irfq_infinite_session_create_request_v2 request{};
+    init(request);
+    request.snapshot_codec_version = IRFQ_INFINITE_SNAPSHOT_CODEC_VERSION_V2;
+    request.canonical_session_create_config = {config.data(), config.size()};
+    request.session_epoch = 1;
+    request.creation_tai_ns = 1;
+    request.creation_utc_ns = 1;
+    init(response);
+    return irfq_infinite_session_create_v2(&request, &response);
+  };
+
+  const auto governed = governedDictionaryTuple();
+  const auto governedProfile = profileWithDictionaries(governed);
+  irfq_infinite_session_create_response_v2 response{};
+#ifdef IRFQ_INFINITE_EMBED_DICTIONARIES
+  REQUIRE(create(governedProfile, response) == IRFQ_INFINITE_STATUS_OK_V2);
+  CHECK(response.header.status == IRFQ_INFINITE_STATUS_OK_V2);
+  REQUIRE(response.session != nullptr);
+  CHECK(response.cache_epoch == 1);
+  CHECK(response.cache_revision == 0);
+  std::array<std::uint8_t, 32> closePayload{};
+  closePayload.fill(0x51);
+  irfq_infinite_prepare_request_v2 close{};
+  init(close);
+  close.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+  close.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+  close.event = IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2;
+  close.expected_epoch = response.cache_epoch;
+  close.expected_revision = response.cache_revision;
+  close.now_tai_ns = 2;
+  close.now_utc_ns = 2;
+  close.payload = {closePayload.data(), closePayload.size()};
+  REQUIRE(
+      FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+          response.session,
+          close,
+          close.event_identity_sha256));
+  PlanBuffers closeBuffers;
+  auto closed = closeBuffers.response();
+  REQUIRE(irfq_infinite_prepare_v2(response.session, &close, &closed) == IRFQ_INFINITE_STATUS_READY_V2);
+  REQUIRE(closed.native_state.length == IRFQ_INFINITE_NATIVE_STATE_BYTES_V2);
+  CHECK(irfq_infinite_destroy_v2(response.session) == IRFQ_INFINITE_STATUS_OK_V2);
+
+  irfq_infinite_session_create_request_v2 restore{};
+  init(restore);
+  restore.snapshot_codec_version = IRFQ_INFINITE_SNAPSHOT_CODEC_VERSION_V2;
+  restore.canonical_session_create_config = {governedProfile.data(), governedProfile.size()};
+  restore.session_epoch = closed.result_epoch;
+  restore.cache_revision = closed.result_revision;
+  restore.native_state = {closed.native_state.data, closed.native_state.length};
+  init(response);
+  REQUIRE(irfq_infinite_session_create_v2(&restore, &response) == IRFQ_INFINITE_STATUS_OK_V2);
+  CHECK(response.header.status == IRFQ_INFINITE_STATUS_OK_V2);
+  REQUIRE(response.session != nullptr);
+  CHECK(response.cache_epoch == restore.session_epoch);
+  CHECK(response.cache_revision == restore.cache_revision);
+  CHECK(irfq_infinite_destroy_v2(response.session) == IRFQ_INFINITE_STATUS_OK_V2);
+#else
+  REQUIRE(create(governedProfile, response) == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  CHECK(response.header.status == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  CHECK(response.session == nullptr);
+  CHECK(response.cache_epoch == 0);
+  CHECK(response.cache_revision == 0);
+#endif
+
+  std::array<TestDictionaryTuple, 5> rejected{};
+  rejected.fill(governed);
+  rejected[0].transportId += "-wrong";
+  rejected[1].transportSha256[0] ^= 1;
+  rejected[2].applicationId += "-wrong";
+  rejected[3].applicationSha256[0] ^= 1;
+  std::swap(rejected[4].transportId, rejected[4].applicationId);
+  std::swap(rejected[4].transportSha256, rejected[4].applicationSha256);
+  const std::array<const char *, 5> names{{
+      "transport ID",
+      "transport SHA-256",
+      "application ID",
+      "application SHA-256",
+      "swapped tuple",
+  }};
+  for (std::size_t index = 0; index < rejected.size(); ++index) {
+    DYNAMIC_SECTION(names[index]) {
+      CHECK(create(profileWithDictionaries(rejected[index]), response) == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+      CHECK(response.header.status == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+      CHECK(response.session == nullptr);
+      CHECK(response.cache_epoch == 0);
+      CHECK(response.cache_revision == 0);
+    }
+  }
+
+  CHECK(
+      create(profileWithDictionaries(governed, "INFINITE-RFQ-1.0.0-wrong"), response)
+      == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  CHECK(response.header.status == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  CHECK(response.session == nullptr);
+  CHECK(response.cache_epoch == 0);
+  CHECK(response.cache_revision == 0);
 }
 
 TEST_CASE(
