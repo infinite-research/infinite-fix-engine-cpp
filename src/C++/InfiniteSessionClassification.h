@@ -91,6 +91,19 @@ struct InfiniteInboundPlan {
   bool timeMatches{false};
   bool dictionaryValid{false};
   bool disconnected{false};
+  std::uint64_t resendBegin{0};
+  std::uint64_t resendEndInclusive{0};
+  bool resendRangeValid{false};
+};
+
+struct InfiniteStoredFramePlan {
+  std::string output;
+  std::string msgType;
+  std::string body;
+  std::string originalSendingTime;
+  std::uint64_t sequence{0};
+  bool application{false};
+  bool admin{false};
 };
 
 /// Drives an isolated ordinary QuickFIX Session to classify and render native session work.
@@ -108,6 +121,19 @@ public:
       const std::string &body,
       InfiniteApplicationRenderMode mode,
       std::uint64_t lastProcessedSequence,
+      const DataDictionaryProvider &dictionaries,
+      const InfiniteSessionStaticProfile &profile);
+
+  static InfiniteStoredFramePlan storedFrame(
+      const std::string &beginString,
+      const std::string &senderCompId,
+      const std::string &targetCompId,
+      std::uint32_t heartbeatSeconds,
+      std::uint64_t senderSequence,
+      std::uint64_t targetSequence,
+      std::int64_t nowUtcNanoseconds,
+      std::uint64_t lastProcessedSequence,
+      const std::string &wire,
       const DataDictionaryProvider &dictionaries,
       const InfiniteSessionStaticProfile &profile);
 
@@ -276,7 +302,8 @@ public:
       std::uint64_t endSequenceInclusive,
       std::uint64_t lastProcessedSequence = 0,
       const DataDictionaryProvider *dictionaries = nullptr,
-      const InfiniteSessionStaticProfile *profile = nullptr);
+      const InfiniteSessionStaticProfile *profile = nullptr,
+      const std::string &originalSendingTime = {});
 
 private:
   enum class Operation {

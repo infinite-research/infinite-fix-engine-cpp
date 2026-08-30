@@ -395,6 +395,106 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::application(
       std::max({maximumOriginal, maximumRetransmission, maximumSemantic})};
 }
 
+InfiniteStoredFramePlan InfiniteSessionPlanner::storedFrame(
+    const std::string &beginString,
+    const std::string &senderCompId,
+    const std::string &targetCompId,
+    std::uint32_t heartbeatSeconds,
+    std::uint64_t senderSequence,
+    std::uint64_t targetSequence,
+    std::int64_t nowUtcNanoseconds,
+    std::uint64_t lastProcessedSequence,
+    const std::string &wire,
+    const DataDictionaryProvider &dictionaries,
+    const InfiniteSessionStaticProfile &profile) {
+  if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
+      || senderSequence == 0 || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0
+      || targetSequence >= FIX_SEQUENCE_BOUND || nowUtcNanoseconds <= 0 || lastProcessedSequence >= FIX_SEQUENCE_BOUND
+      || wire.empty() || wire.size() > 65536) {
+    throw std::invalid_argument("Stored frame planner input");
+  }
+  try {
+    const auto &sessionDictionary = dictionaries.getSessionDataDictionary(BeginString(beginString));
+    const auto &applicationDictionary = dictionaries.getApplicationDataDictionary(ApplVerID("10"));
+    Message message(wire, sessionDictionary, applicationDictionary, true);
+    MsgType msgType;
+    SenderCompID sender;
+    TargetCompID target;
+    SendingTime originalSendingTime;
+    auto &header = message.getHeader();
+    header.getField(msgType);
+    header.getField(sender);
+    header.getField(target);
+    header.getField(originalSendingTime);
+    std::uint64_t sequence = 0;
+    const auto matchesOptional = [&header](int tag, const std::string &expected) {
+      StringField actual(tag);
+      const bool present = header.getFieldIfSet(actual);
+      return expected.empty() ? !present : present && actual.getString() == expected;
+    };
+    if (msgType.getValue().empty() || msgType.getValue().size() > 8
+        || !std::all_of(
+            msgType.getValue().begin(),
+            msgType.getValue().end(),
+            [](unsigned char byte) { return byte >= 0x21 && byte <= 0x7e; })
+        || wireSequence(header, FIELD::MsgSeqNum, false, sequence) != WireSequenceStatus::Valid
+        || sender != senderCompId || target != targetCompId || !matchesOptional(FIELD::SenderSubID, profile.senderSubId)
+        || !matchesOptional(FIELD::SenderLocationID, profile.senderLocationId)
+        || !matchesOptional(FIELD::TargetSubID, profile.targetSubId)
+        || !matchesOptional(FIELD::TargetLocationID, profile.targetLocationId)) {
+      throw std::invalid_argument("Stored frame identity");
+    }
+    if (message.isApp()) {
+      DataDictionary::validate(message, &sessionDictionary, &applicationDictionary);
+    } else {
+      sessionDictionary.validate(message);
+    }
+    std::string body;
+    message.calculateString(body);
+    if (message.isApp() && body.empty()) {
+      throw std::invalid_argument("Stored application body");
+    }
+    const auto now = utcTime(nowUtcNanoseconds);
+    PlanningApplication application("", &profile, lastProcessedSequence, true);
+    PlanningStoreFactory stores;
+    const SessionID sessionId(beginString, senderCompId, targetCompId, profile.qualifier);
+    const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+    const auto sessionTime = profile.scheduleMode == 1 ? nonstop : governedRange(profile, 0);
+    const auto logonTime = profile.scheduleMode == 1 ? nonstop : governedRange(profile, 4);
+    Session session([now] { return now; }, application, stores, sessionId, dictionaries, sessionTime, 0, nullptr, true);
+    RecordingResponder responder;
+    session.setLogonTime(logonTime);
+    session.setIsNonStopSession(profile.scheduleMode == 1);
+    configureStaticProfile(session, &profile);
+    session.setNextSenderMsgSeqNum(senderSequence);
+    session.setNextTargetMsgSeqNum(targetSequence);
+    session.m_state.heartBtInt(static_cast<int>(heartbeatSeconds));
+    session.m_state.enabled(true);
+    session.m_state.receivedLogon(true);
+    session.m_state.sentLogon(true);
+    session.m_state.lastSentTime(now);
+    session.m_state.lastReceivedTime(now);
+    session.setResponder(&responder);
+    header.removeField(FIELD::PossResend);
+    header.setField(PossDupFlag(true));
+    header.setField(OrigSendingTime(originalSendingTime, static_cast<int>(profile.timestampPrecision)));
+    if (!session.sendRaw(message, sequence) || responder.output.empty() || responder.disconnected
+        || stores.nextSender() != senderSequence) {
+      throw std::logic_error("Stored frame planner produced no output");
+    }
+    return {
+        std::move(responder.output),
+        msgType.getValue(),
+        std::move(body),
+        originalSendingTime.getString(),
+        sequence,
+        message.isApp(),
+        message.isAdmin()};
+  } catch (const Exception &error) {
+    throw std::invalid_argument(error.what());
+  }
+}
+
 InfiniteHeartbeatPlan InfiniteSessionPlanner::heartbeat(
     const std::string &beginString,
     const std::string &senderCompId,
@@ -788,6 +888,14 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const auto nextExpectedStatus = wireSequence(incoming, FIELD::NextExpectedMsgSeqNum, false, nextExpectedSequence);
     const bool invalidNextExpectedSequence
         = msgType == MsgType_Logon && nextExpectedStatus == WireSequenceStatus::Invalid;
+    std::uint64_t resendBegin = 0;
+    std::uint64_t resendEndInclusive = 0;
+    const auto resendBeginStatus = wireSequence(incoming, FIELD::BeginSeqNo, false, resendBegin);
+    const auto resendEndStatus = wireSequence(incoming, FIELD::EndSeqNo, true, resendEndInclusive);
+    const bool resendRangeValid
+        = msgType != MsgType_ResendRequest
+          || (resendBeginStatus == WireSequenceStatus::Valid && resendEndStatus == WireSequenceStatus::Valid
+              && (resendEndInclusive == 0 || resendEndInclusive >= resendBegin));
     const bool timeMatches = session.isGoodTime(sendingTime);
     const bool headerSafe = completeIdentity && timeMatches && session.checkSessionTime(now);
     const bool safeToIntercept = dictionaryValid && headerSafe;
@@ -823,10 +931,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       application.admin = true;
       intercepted = true;
     } else if (headerSafe && msgType == MsgType_ResendRequest) {
-      std::uint64_t beginSequence = 0;
-      std::uint64_t endSequence = 0;
-      if (wireSequence(incoming, FIELD::BeginSeqNo, false, beginSequence) == WireSequenceStatus::Invalid
-          || wireSequence(incoming, FIELD::EndSeqNo, true, endSequence) == WireSequenceStatus::Invalid) {
+      if (!resendRangeValid) {
         session.generateLogout("Invalid ResendRequest range");
         session.disconnect();
         intercepted = true;
@@ -931,7 +1036,10 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         completeIdentity,
         timeMatches,
         dictionaryValid,
-        responder.disconnected};
+        responder.disconnected,
+        resendBegin,
+        resendEndInclusive,
+        resendRangeValid};
   } catch (const Exception &error) {
     throw std::invalid_argument(error.what());
   }
@@ -1075,7 +1183,8 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::gapFill(
     std::uint64_t endSequenceInclusive,
     std::uint64_t lastProcessedSequence,
     const DataDictionaryProvider *dictionaries,
-    const InfiniteSessionStaticProfile *profile) {
+    const InfiniteSessionStaticProfile *profile,
+    const std::string &originalSendingTime) {
   if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
       || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence <= 1
       || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0 || targetSequence >= FIX_SEQUENCE_BOUND
@@ -1119,6 +1228,7 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::gapFill(
   session.setResponder(&responder);
 
   const auto lastStored = endSequenceInclusive == 0 ? senderSequence - 1 : endSequenceInclusive;
+  const auto retainedTime = originalSendingTime.empty() ? now : UtcTimeStampConvertor::convert(originalSendingTime);
   for (auto sequence = beginSequence; sequence <= lastStored; ++sequence) {
     Message stored;
     stored.getHeader().setField(BeginString(beginString));
@@ -1126,7 +1236,7 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::gapFill(
     stored.getHeader().setField(SenderCompID(senderCompId));
     stored.getHeader().setField(TargetCompID(targetCompId));
     stored.getHeader().setField(MsgSeqNum(sequence));
-    stored.getHeader().setField(SendingTime(now, 6));
+    stored.getHeader().setField(SendingTime(retainedTime, 6));
     session.m_state.set(sequence, stored.toString());
   }
   Message request;
@@ -1141,6 +1251,15 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::gapFill(
   session.next(request.toString(), now);
   if (responder.output.empty() || responder.disconnected) {
     throw std::logic_error("GapFill planner produced no output");
+  }
+  if (!originalSendingTime.empty()) {
+    const auto &sessionDictionary = selectedDictionaries.getSessionDataDictionary(BeginString(beginString));
+    const auto &applicationDictionary = selectedDictionaries.getApplicationDataDictionary(ApplVerID("10"));
+    Message rendered(responder.output, sessionDictionary, applicationDictionary, true);
+    rendered.getHeader().setField(OrigSendingTime(
+        UtcTimeStampConvertor::convert(originalSendingTime),
+        static_cast<int>(profile == nullptr ? 6 : profile->timestampPrecision)));
+    responder.output = rendered.toString();
   }
   return {
       std::move(responder.output),
