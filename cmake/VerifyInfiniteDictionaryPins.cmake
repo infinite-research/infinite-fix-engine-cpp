@@ -1,13 +1,40 @@
-# The approved INF-56 transport/application dictionary inputs are deliberately
-# absent from this frozen source tree. Keeping the failure here as well as in
-# the top-level option guard prevents this helper from being invoked directly
-# to bless the bundled stock QuickFIX dictionaries.
 function(irfq_verify_infinite_dictionary_pins dictionary_dir)
-  unset(dictionary_dir)
-  message(FATAL_ERROR
-    "Approved custom Infinite FIXT.1.1 and FIX Latest EP299 dictionary bytes, exact SHA-256 pins, license, and provenance are unavailable; stock QuickFIX dictionaries are prohibited production substitutes")
+  set(pins
+      "infinite-rfq-1.0.0/INFINITE-FIXT11.xml|10148|3a784e84ad56dc7bec927ec3a4a4df48c4aa96d5e44ec19d39e598f1d8a57614"
+      "infinite-rfq-1.0.0/INFINITE-RFQ-1.0.0-EP299.xml|90828|cfb51043093a9939c35b0d5c4a0783320e86825cc0d81469067ea69ddbeb8df8"
+      "infinite-rfq-1.0.0/provenance.v1.json|2755|7ee311b779cd886b8c613304ee40803529cca71e36052f2263b6c1b48ee18b07"
+      "infinite-rfq-1.0.0/license-inventory.v1.json|1076|f76489fe025d794f38f394f34569d899235af925ad24444ebba555f09710de31"
+      "infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt|11357|b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1")
+  set(governed_inputs)
+  foreach(pin IN LISTS pins)
+    string(REPLACE "|" ";" fields "${pin}")
+    list(GET fields 0 name)
+    list(GET fields 1 expected_size)
+    list(GET fields 2 expected_sha256)
+    set(path "${dictionary_dir}/${name}")
+    if(NOT EXISTS "${path}")
+      message(FATAL_ERROR "${name} is missing")
+    endif()
+    file(SIZE "${path}" actual_size)
+    if(NOT actual_size EQUAL expected_size)
+      message(FATAL_ERROR "${name} size mismatch: expected ${expected_size}, found ${actual_size}")
+    endif()
+    file(SHA256 "${path}" actual_sha256)
+    if(NOT actual_sha256 STREQUAL expected_sha256)
+      message(FATAL_ERROR "${name} SHA-256 mismatch: expected ${expected_sha256}, found ${actual_sha256}")
+    endif()
+    list(APPEND governed_inputs "${name}")
+  endforeach()
+  set(IRFQ_INFINITE_GOVERNED_INPUTS "${governed_inputs}" PARENT_SCOPE)
+  set(IRFQ_INFINITE_DICTIONARY_RESOURCES
+      "infinite-rfq-1.0.0/INFINITE-FIXT11.xml|irfq_infinite_fixt11_xml"
+      "infinite-rfq-1.0.0/INFINITE-RFQ-1.0.0-EP299.xml|irfq_infinite_rfq_1_0_0_ep299_xml"
+      PARENT_SCOPE)
 endfunction()
 
 if("${CMAKE_SCRIPT_MODE_FILE}" STREQUAL "${CMAKE_CURRENT_LIST_FILE}")
-  irfq_verify_infinite_dictionary_pins("")
+  if(NOT DEFINED IRFQ_INFINITE_DICTIONARY_DIR)
+    message(FATAL_ERROR "IRFQ_INFINITE_DICTIONARY_DIR is required")
+  endif()
+  irfq_verify_infinite_dictionary_pins("${IRFQ_INFINITE_DICTIONARY_DIR}")
 endif()

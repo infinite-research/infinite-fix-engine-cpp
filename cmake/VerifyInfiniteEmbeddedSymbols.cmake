@@ -36,10 +36,16 @@ endif()
 if(sections MATCHES "[^\n]*\\.note\\.GNU-stack[^\n]*[ \t][A-Z]*X[A-Z]*[ \t]")
   message(FATAL_ERROR "Embedded dictionary object requires an executable stack")
 endif()
+if(NOT sections MATCHES "[^\n]*\\.rodata[^\n]*[ \t]A[ \t]")
+  message(FATAL_ERROR "Embedded dictionary object has no allocated read-only resource section")
+endif()
+if(sections MATCHES "[^\n]*\\.rodata[^\n]*[ \t]WA?[ \t]")
+  message(FATAL_ERROR "Embedded dictionary resource section is writable")
+endif()
 
 string(
   REGEX MATCH
-  "[^\n]*GLOBAL[ \t]+DEFAULT[^\n]*(_binary_|irfq_infinite_dictionary_)[^\n]*(start|end|size)[^\n]*"
+  "[^\n]*GLOBAL[^\n]*_binary_[^\n]*_(start|end|size)([ \t\n]|$)"
   exposed
   "${symbols}")
 if(exposed)
@@ -52,8 +58,22 @@ string(
   localized
   "${symbols}")
 list(LENGTH localized localized_count)
-if(NOT localized_count EQUAL 27)
-  message(FATAL_ERROR "Expected 27 localized dictionary boundary symbols, found ${localized_count}")
+if(NOT localized_count EQUAL 6)
+  message(FATAL_ERROR "Expected 6 localized dictionary boundary symbols, found ${localized_count}")
+endif()
+foreach(symbol IN ITEMS
+    _binary_irfq_infinite_fixt11_xml_start
+    _binary_irfq_infinite_fixt11_xml_end
+    _binary_irfq_infinite_fixt11_xml_size
+    _binary_irfq_infinite_rfq_1_0_0_ep299_xml_start
+    _binary_irfq_infinite_rfq_1_0_0_ep299_xml_end
+    _binary_irfq_infinite_rfq_1_0_0_ep299_xml_size)
+  if(NOT symbols MATCHES "[^\n]*LOCAL[ \t]+DEFAULT[^\n]*${symbol}([ \t\n]|$)")
+    message(FATAL_ERROR "Embedded dictionary boundary is absent or not local: ${symbol}")
+  endif()
+endforeach()
+if(symbols MATCHES "_binary_[^\n]*(FIX40|FIX41|FIX42|FIX43|FIX44|FIX50|FIX50SP1|FIX50SP2|FIXT11)_xml")
+  message(FATAL_ERROR "Stock QuickFIX dictionary resource is embedded")
 endif()
 if(NOT symbols MATCHES "[^\n]*GLOBAL[ \t]+HIDDEN[^\n]*irfq_infinite_embedded_dictionaries_v1")
   message(FATAL_ERROR "Embedded dictionary table is not hidden")

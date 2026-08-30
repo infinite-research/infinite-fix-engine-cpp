@@ -89,8 +89,6 @@ if (QUICKFIX_TESTS)
 endif()
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES)
-  message(FATAL_ERROR
-    "IRFQ_INFINITE_EMBED_DICTIONARIES is unavailable: the approved custom Infinite FIXT.1.1 and FIX Latest EP299 dictionaries, exact SHA-256 pins, license, and provenance are not present. Stock QuickFIX dictionaries are prohibited production substitutes.")
   if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "IRFQ_INFINITE_EMBED_DICTIONARIES requires CMAKE_BUILD_TYPE=Release")
   endif()
@@ -136,7 +134,7 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
 
   include(VerifyInfiniteDictionaryPins)
   irfq_verify_infinite_dictionary_pins("${CMAKE_CURRENT_SOURCE_DIR}/spec")
-  foreach(_irfq_name IN LISTS IRFQ_INFINITE_DICTIONARY_NAMES)
+  foreach(_irfq_name IN LISTS IRFQ_INFINITE_GOVERNED_INPUTS)
     set(_irfq_path "${CMAKE_CURRENT_SOURCE_DIR}/spec/${_irfq_name}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_irfq_path}")
   endforeach()
