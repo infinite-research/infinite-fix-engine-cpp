@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fix type="FIXT" major="1" minor="1" servicepack="0">
+  <header>
+    <field name="BeginString" required="Y" />
+    <field name="BodyLength" required="Y" />
+    <field name="MsgType" required="Y" />
+    <field name="ApplVerID" required="N" />
+    <field name="ApplExtID" required="N" />
+    <field name="CstmApplVerID" required="N" />
+    <field name="SenderCompID" required="Y" />
+    <field name="TargetCompID" required="Y" />
+    <field name="MsgSeqNum" required="Y" />
+    <field name="SendingTime" required="Y" />
+    <field name="PossDupFlag" required="N" />
+    <field name="PossResend" required="N" />
+    <field name="OrigSendingTime" required="N" />
+    <field name="LastMsgSeqNumProcessed" required="N" />
+  </header>
+  <trailer>
+    <field name="CheckSum" required="Y" />
+  </trailer>
+  <messages>
+    <message name="Logon" msgtype="A" msgcat="admin">
+      <field name="EncryptMethod" required="Y" />
+      <field name="HeartBtInt" required="Y" />
+      <field name="ResetSeqNumFlag" required="N" />
+      <field name="NextExpectedMsgSeqNum" required="N" />
+      <group name="NoMsgTypes" required="N">
+        <field name="RefMsgType" required="N" />
+        <field name="MsgDirection" required="N" />
+        <field name="RefApplVerID" required="N" />
+        <field name="RefApplExtID" required="N" />
+        <field name="RefCstmApplVerID" required="N" />
+        <field name="DefaultVerIndicator" required="N" />
+      </group>
+      <field name="Username" required="N" />
+      <field name="Password" required="N" />
+      <field name="DefaultApplVerID" required="Y" />
+      <field name="DefaultApplExtID" required="Y" />
+      <field name="DefaultCstmApplVerID" required="Y" />
+    </message>
+    <message name="Logout" msgtype="5" msgcat="admin">
+      <field name="Text" required="N" />
+    </message>
+    <message name="Heartbeat" msgtype="0" msgcat="admin">
+      <field name="TestReqID" required="N" />
+    </message>
+    <message name="TestRequest" msgtype="1" msgcat="admin">
+      <field name="TestReqID" required="Y" />
+    </message>
+    <message name="ResendRequest" msgtype="2" msgcat="admin">
+      <field name="BeginSeqNo" required="Y" />
+      <field name="EndSeqNo" required="Y" />
+    </message>
+    <message name="SequenceReset" msgtype="4" msgcat="admin">
+      <field name="GapFillFlag" required="Y" />
+      <field name="NewSeqNo" required="Y" />
+    </message>
+    <message name="Reject" msgtype="3" msgcat="admin">
+      <field name="RefSeqNum" required="Y" />
+      <field name="RefTagID" required="N" />
+      <field name="RefMsgType" required="N" />
+      <field name="SessionRejectReason" required="N" />
+      <field name="Text" required="N" />
+    </message>
+  </messages>
+  <fields>
+    <field number="7" name="BeginSeqNo" type="SEQNUM">
+    </field>
+    <field number="8" name="BeginString" type="STRING">
+    </field>
+    <field number="9" name="BodyLength" type="LENGTH">
+    </field>
+    <field number="10" name="CheckSum" type="STRING">
+    </field>
+    <field number="16" name="EndSeqNo" type="SEQNUM">
+    </field>
+    <field number="34" name="MsgSeqNum" type="SEQNUM">
+    </field>
+    <field number="35" name="MsgType" type="STRING">
+      <value enum="0" description="Heartbeat" />
+      <value enum="1" description="TestRequest" />
+      <value enum="2" description="ResendRequest" />
+      <value enum="3" description="Reject" />
+      <value enum="4" description="SequenceReset" />
+      <value enum="5" description="Logout" />
+      <value enum="A" description="Logon" />
+      <value enum="j" description="BusinessMessageReject" />
+      <value enum="n" description="XMLnonFIX" />
+    </field>
+    <field number="36" name="NewSeqNo" type="SEQNUM">
+    </field>
+    <field number="43" name="PossDupFlag" type="BOOLEAN">
+      <value enum="N" description="OriginalTransmission" />
+      <value enum="Y" description="PossibleDuplicate" />
+    </field>
+    <field number="45" name="RefSeqNum" type="SEQNUM">
+    </field>
+    <field number="49" name="SenderCompID" type="STRING">
+    </field>
+    <field number="52" name="SendingTime" type="UTCTIMESTAMP">
+    </field>
+    <field number="56" name="TargetCompID" type="STRING">
+    </field>
+    <field number="58" name="Text" type="STRING">
+    </field>
+    <field number="97" name="PossResend" type="BOOLEAN">
+      <value enum="N" description="OriginalTransmission" />
+      <value enum="Y" description="PossibleResend" />
+    </field>
+    <field number="98" name="EncryptMethod" type="INT">
+      <value enum="0" description="None" />
+      <value enum="1" description="PKCS" />
+      <value enum="2" description="DES" />
+      <value enum="3" description="PKCSDES" />
+      <value enum="4" description="PGPDES" />
+      <value enum="5" description="PGPDESMD5" />
+      <value enum="6" description="PEM" />
+    </field>
+    <field number="108" name="HeartBtInt" type="INT">
+    </field>
+    <field number="112" name="TestReqID" type="STRING">
+    </field>
+    <field number="122" name="OrigSendingTime" type="UTCTIMESTAMP">
+    </field>
+    <field number="123" name="GapFillFlag" type="BOOLEAN">
+      <value enum="N" description="SequenceReset" />
+      <value enum="Y" description="GapFillMessage" />
+    </field>
+    <field number="141" name="ResetSeqNumFlag" type="BOOLEAN">
+      <value enum="N" description="No" />
+      <value enum="Y" description="Yes" />
+    </field>
+    <field number="369" name="LastMsgSeqNumProcessed" type="SEQNUM">
+    </field>
+    <field number="371" name="RefTagID" type="INT">
+    </field>
+    <field number="372" name="RefMsgType" type="STRING">
+      <value enum="0" description="Heartbeat" />
+      <value enum="1" description="TestRequest" />
+      <value enum="2" description="ResendRequest" />
+      <value enum="3" description="Reject" />
+      <value enum="4" description="SequenceReset" />
+      <value enum="5" description="Logout" />
+      <value enum="A" description="Logon" />
+      <value enum="j" description="BusinessMessageReject" />
+      <value enum="n" description="XMLnonFIX" />
+    </field>
+    <field number="373" name="SessionRejectReason" type="INT">
+      <value enum="0" description="InvalidTagNumber" />
+      <value enum="1" description="RequiredTagMissing" />
+      <value enum="2" description="TagNotDefinedForThisMessageType" />
+      <value enum="3" description="UndefinedTag" />
+      <value enum="4" description="TagSpecifiedWithoutAValue" />
+      <value enum="5" description="ValueIsIncorrect" />
+      <value enum="6" description="IncorrectDataFormatForValue" />
+      <value enum="7" description="DecryptionProblem" />
+      <value enum="8" description="SignatureProblem" />
+      <value enum="9" description="CompIDProblem" />
+      <value enum="10" description="SendingTimeAccuracyProblem" />
+      <value enum="11" description="InvalidMsgType" />
+      <value enum="12" description="XMLValidationError" />
+      <value enum="13" description="TagAppearsMoreThanOnce" />
+      <value enum="14" description="TagSpecifiedOutOfRequiredOrder" />
+      <value enum="15" description="RepeatingGroupFieldsOutOfOrder" />
+      <value enum="16" description="IncorrectNumInGroupCountForRepeatingGroup" />
+      <value enum="17" description="FieldDelimiterInFieldValue" />
+      <value enum="18" description="InvalidUnsupportedAppVersion" />
+      <value enum="99" description="Other" />
+    </field>
+    <field number="384" name="NoMsgTypes" type="NUMINGROUP">
+    </field>
+    <field number="385" name="MsgDirection" type="CHAR">
+      <value enum="R" description="Receive" />
+      <value enum="S" description="Send" />
+    </field>
+    <field number="553" name="Username" type="STRING">
+    </field>
+    <field number="554" name="Password" type="STRING">
+    </field>
+    <field number="789" name="NextExpectedMsgSeqNum" type="SEQNUM">
+    </field>
+    <field number="1128" name="ApplVerID" type="STRING">
+      <value enum="0" description="FIX27" />
+      <value enum="1" description="FIX30" />
+      <value enum="2" description="FIX40" />
+      <value enum="3" description="FIX41" />
+      <value enum="4" description="FIX42" />
+      <value enum="5" description="FIX43" />
+      <value enum="6" description="FIX44" />
+      <value enum="7" description="FIX50" />
+      <value enum="8" description="FIX50SP1" />
+      <value enum="9" description="FIX50SP2" />
+      <value enum="10" description="FIXLatest" />
+    </field>
+    <field number="1129" name="CstmApplVerID" type="STRING">
+    </field>
+    <field number="1130" name="RefApplVerID" type="STRING">
+      <value enum="0" description="FIX27" />
+      <value enum="1" description="FIX30" />
+      <value enum="2" description="FIX40" />
+      <value enum="3" description="FIX41" />
+      <value enum="4" description="FIX42" />
+      <value enum="5" description="FIX43" />
+      <value enum="6" description="FIX44" />
+      <value enum="7" description="FIX50" />
+      <value enum="8" description="FIX50SP1" />
+      <value enum="9" description="FIX50SP2" />
+      <value enum="10" description="FIXLatest" />
+    </field>
+    <field number="1131" name="RefCstmApplVerID" type="STRING">
+    </field>
+    <field number="1137" name="DefaultApplVerID" type="STRING">
+      <value enum="0" description="FIX27" />
+      <value enum="1" description="FIX30" />
+      <value enum="2" description="FIX40" />
+      <value enum="3" description="FIX41" />
+      <value enum="4" description="FIX42" />
+      <value enum="5" description="FIX43" />
+      <value enum="6" description="FIX44" />
+      <value enum="7" description="FIX50" />
+      <value enum="8" description="FIX50SP1" />
+      <value enum="9" description="FIX50SP2" />
+      <value enum="10" description="FIXLatest" />
+    </field>
+    <field number="1156" name="ApplExtID" type="INT">
+    </field>
+    <field number="1406" name="RefApplExtID" type="INT">
+    </field>
+    <field number="1407" name="DefaultApplExtID" type="INT">
+    </field>
+    <field number="1408" name="DefaultCstmApplVerID" type="STRING">
+    </field>
+    <field number="1410" name="DefaultVerIndicator" type="BOOLEAN">
+    </field>
+  </fields>
+</fix>
