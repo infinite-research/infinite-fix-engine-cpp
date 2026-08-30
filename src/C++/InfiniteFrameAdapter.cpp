@@ -2032,7 +2032,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
   write32(plan->state.data() + 192, inbound.testRequestCount);
-  if (detached && inbound.disconnected && session.profile.heartbeatMode == 2) {
+  if (detached && inbound.disconnected && session.profile.heartbeatMode == 2 && !finalTarget) {
     write32(plan->state.data() + 188, inbound.heartbeatSeconds);
   }
   const auto expectedTarget = targetSequence;
@@ -2148,7 +2148,11 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     write32(plan->state.data() + 168, 0);
     write64(plan->state.data() + 172, 0);
     write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256) | (emitLogout ? UINT64_C(16) : UINT64_C(0)));
-    write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
+    write32(
+        plan->state.data() + 188,
+        session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat
+        : emitLogout                       ? inbound.heartbeatSeconds
+                                           : 0);
     write32(plan->state.data() + 192, 0);
     write32(plan->state.data() + 288, 0);
     write32(plan->state.data() + 292, CONTINUATION_NONE);
@@ -4448,7 +4452,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
                 session->profile.beginString,
                 session->profile.venueCompId,
                 session->profile.participantCompId,
-                read32(session->state.data() + 188),
+                inbound.heartbeatSeconds,
                 senderSequence,
                 nonallocatingRecoveryClassificationScratch(
                     read32(session->state.data() + 140),
@@ -4477,6 +4481,9 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             plan.actions.push_back(output);
           }
           if (!directRecovery) {
+            if (!senderExhausted) {
+              write32(plan.state.data() + 188, inbound.heartbeatSeconds);
+            }
             write64(
                 plan.state.data() + 180,
                 SESSION_FLAG_ENABLED | UINT64_C(256) | (senderExhausted ? UINT64_C(0) : UINT64_C(16)));

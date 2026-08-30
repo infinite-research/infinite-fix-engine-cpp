@@ -2422,161 +2422,188 @@ TEST_CASE(
 TEST_CASE(
     "InfiniteFrameAdapterV2 closes the detached reset-resume sender target and recovery cross product",
     "[infinite][adapter][v2][task2d][reset-resume-matrix]") {
-  const auto config = otherwiseValidUnavailableProfile();
-  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> noneState{};
-  auto *source = detachedSenderSession(config, 7, 30, &noneState);
-  REQUIRE(source != nullptr);
-  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
-  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> directState{};
-  source = detachedResendRecoverySession(config, 2, 5, 2, 7, &directState);
-  REQUIRE(source != nullptr);
-  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
   constexpr auto lastLegal = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
+  const auto fixedConfig = otherwiseValidUnavailableProfile();
+  const auto peerConfig = otherwiseValidUnavailableProfile(1, {}, 2, 0, 20, 40);
+  struct HeartbeatVariant {
+    const std::vector<std::uint8_t> *config;
+    std::uint32_t heartbeat;
+    bool peerHeartbeat;
+  };
+  const std::array heartbeatVariants{
+      HeartbeatVariant{&fixedConfig, 30, false},
+      HeartbeatVariant{&peerConfig, 35, true}};
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> directTemplate{};
+  auto *source = detachedResendRecoverySession(fixedConfig, 2, 5, 2, 7, &directTemplate);
+  REQUIRE(source != nullptr);
+  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
 
-  for (const bool direct : {false, true}) {
-    for (const bool senderExhausted : {false, true}) {
-      for (const bool targetExhausted : {false, true}) {
-        for (const auto decision :
-             {IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2, IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2}) {
-          DYNAMIC_SECTION(
-              (direct ? "direct" : "none") << "-sender-" << (senderExhausted ? "E" : "V") << "-target-"
-                                           << (targetExhausted ? "E" : "V") << "-decision-" << decision) {
-            auto baseline = direct ? directState : noneState;
-            write64(baseline.data() + 56, 1);
-            write32(
-                baseline.data() + 128,
-                senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
-            write64(baseline.data() + 132, senderExhausted ? 0 : 7);
-            write32(
-                baseline.data() + 140,
-                targetExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
-            write64(baseline.data() + 144, targetExhausted ? 0 : 3);
-            write64(baseline.data() + 152, 1);
-            write64(baseline.data() + 160, 0);
-            auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-                config.data(),
-                config.size(),
-                baseline.data(),
-                baseline.size(),
-                1,
-                1,
-                0,
-                0);
-            REQUIRE(session != nullptr);
-            InboundCall reset(
-                session,
-                participantFrame(
-                    'A',
-                    targetExhausted ? lastLegal : 3,
-                    "98=0\001108=30\001141=Y\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
-                0x6d);
-            reset.request.next_original_state
-                = senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2;
-            reset.request.next_original_value = senderExhausted ? 0 : 7;
-            reset.request.now_tai_ns = INT64_C(1700000000123457000);
-            reset.request.now_utc_ns = INT64_C(1700000000123457000);
-            REQUIRE(
-                FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
-                    session,
-                    reset.request,
-                    reset.request.event_identity_sha256));
-            PlanBuffers pendingBuffers;
-            auto pending = pendingBuffers.response();
-            REQUIRE(
-                irfq_infinite_prepare_v2(session, &reset.request, &pending)
-                == IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2);
+  for (const auto &heartbeatVariant : heartbeatVariants) {
+    const auto &config = *heartbeatVariant.config;
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> noneState{};
+    source = detachedSenderSession(config, 7, heartbeatVariant.heartbeat, &noneState);
+    REQUIRE(source != nullptr);
+    REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+    auto directState = heartbeatVariant.peerHeartbeat ? noneState : directTemplate;
+    if (heartbeatVariant.peerHeartbeat) {
+      std::copy(directTemplate.begin() + 220, directTemplate.begin() + 284, directState.begin() + 220);
+    }
 
-            irfq_infinite_resume_request_v2 resume{};
-            init(resume);
-            resume.prepare_id = pending.prepare_id;
-            resume.kind = IRFQ_INFINITE_RESUME_EPOCH_RESET_DECISION_V2;
-            std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
-            resume.decision = decision;
-            resume.input_source = pending.input_source;
-            resume.input_item_index = pending.input_item_index;
-            resume.input_source_bytes = {reset.payload.data(), reset.payload.size()};
-            PlanBuffers buffers;
-            auto result = buffers.response();
-            REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
-            CHECK(result.result_epoch == 1);
-            CHECK(result.result_revision == 2);
-            CHECK(read32(result.native_state.data + 140) == read32(baseline.data() + 140));
-            CHECK(read64(result.native_state.data + 144) == read64(baseline.data() + 144));
-            CHECK(read64(result.native_state.data + 152) == read64(baseline.data() + 152));
-            CHECK(read64(result.native_state.data + 160) == read64(baseline.data() + 160));
+    for (const bool direct : {false, true}) {
+      for (const bool senderExhausted : {false, true}) {
+        for (const bool targetExhausted : {false, true}) {
+          for (const auto decision :
+               {IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2,
+                IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2}) {
+            DYNAMIC_SECTION(
+                (heartbeatVariant.peerHeartbeat ? "heartbeat-range-" : "")
+                << (direct ? "direct" : "none") << "-sender-" << (senderExhausted ? "E" : "V") << "-target-"
+                << (targetExhausted ? "E" : "V") << "-decision-" << decision) {
+              auto baseline = direct ? directState : noneState;
+              write64(baseline.data() + 56, 1);
+              write32(
+                  baseline.data() + 128,
+                  senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+              write64(baseline.data() + 132, senderExhausted ? 0 : 7);
+              write32(
+                  baseline.data() + 140,
+                  targetExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+              write64(baseline.data() + 144, targetExhausted ? 0 : 3);
+              write64(baseline.data() + 152, 1);
+              write64(baseline.data() + 160, 0);
+              auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+                  config.data(),
+                  config.size(),
+                  baseline.data(),
+                  baseline.size(),
+                  1,
+                  1,
+                  0,
+                  0);
+              REQUIRE(session != nullptr);
+              InboundCall reset(
+                  session,
+                  participantFrame(
+                      'A',
+                      targetExhausted ? lastLegal : 3,
+                      "98=0\001108=" + std::to_string(heartbeatVariant.heartbeat)
+                          + "\001141=Y\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
+                  0x6d);
+              reset.request.next_original_state
+                  = senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2;
+              reset.request.next_original_value = senderExhausted ? 0 : 7;
+              reset.request.now_tai_ns = INT64_C(1700000000123457000);
+              reset.request.now_utc_ns = INT64_C(1700000000123457000);
+              REQUIRE(
+                  FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+                      session,
+                      reset.request,
+                      reset.request.event_identity_sha256));
+              PlanBuffers pendingBuffers;
+              auto pending = pendingBuffers.response();
+              REQUIRE(
+                  irfq_infinite_prepare_v2(session, &reset.request, &pending)
+                  == IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2);
 
-            if (decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2) {
-              CHECK(result.output.length == 0);
-              CHECK(result.output_frame_count == 0);
-              REQUIRE(result.action_count == 2);
-              CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
-              CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_PENDING_RESET_LOGON_V2);
-              CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_NONE_V2);
-              CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_RESET_TRIGGER_V2);
-              CHECK(result.actions[1].disposition == 1);
-              for (std::size_t index = 0; index < baseline.size(); ++index) {
-                const bool changed
-                    = (index >= 56 && index < 64) || (index >= 80 && index < 96) || (index >= 112 && index < 128);
-                if (!changed) {
-                  CHECK(result.native_state.data[index] == baseline[index]);
+              irfq_infinite_resume_request_v2 resume{};
+              init(resume);
+              resume.prepare_id = pending.prepare_id;
+              resume.kind = IRFQ_INFINITE_RESUME_EPOCH_RESET_DECISION_V2;
+              std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+              resume.decision = decision;
+              resume.input_source = pending.input_source;
+              resume.input_item_index = pending.input_item_index;
+              resume.input_source_bytes = {reset.payload.data(), reset.payload.size()};
+              PlanBuffers buffers;
+              auto result = buffers.response();
+              REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+              CHECK(result.result_epoch == 1);
+              CHECK(result.result_revision == 2);
+              CHECK(read32(result.native_state.data + 140) == read32(baseline.data() + 140));
+              CHECK(read64(result.native_state.data + 144) == read64(baseline.data() + 144));
+              CHECK(read64(result.native_state.data + 152) == read64(baseline.data() + 152));
+              CHECK(read64(result.native_state.data + 160) == read64(baseline.data() + 160));
+              if (heartbeatVariant.peerHeartbeat) {
+                if (decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2 && !direct && !senderExhausted) {
+                  CHECK(read32(result.native_state.data + 188) == 35);
+                } else {
+                  CHECK(read32(result.native_state.data + 188) == 0);
                 }
               }
-            } else {
-              REQUIRE(result.action_count == (senderExhausted ? 2 : 3));
-              CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
-              CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
-              CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
-              CHECK(result.actions[result.action_count - 1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-              CHECK(result.actions[result.action_count - 1].reason_code == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
-              if (senderExhausted) {
+
+              if (decision == IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2) {
                 CHECK(result.output.length == 0);
                 CHECK(result.output_frame_count == 0);
-                CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
-                CHECK(read64(result.native_state.data + 132) == 0);
-                CHECK(read64(result.native_state.data + 96) == read64(baseline.data() + 96));
-                CHECK(read64(result.native_state.data + 104) == read64(baseline.data() + 104));
+                REQUIRE(result.action_count == 2);
+                CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+                CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_PENDING_RESET_LOGON_V2);
+                CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_NONE_V2);
+                CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_RESET_TRIGGER_V2);
+                CHECK(result.actions[1].disposition == 1);
+                for (std::size_t index = 0; index < baseline.size(); ++index) {
+                  const bool changed
+                      = (index >= 56 && index < 64) || (index >= 80 && index < 96) || (index >= 112 && index < 128);
+                  if (!changed) {
+                    CHECK(result.native_state.data[index] == baseline[index]);
+                  }
+                }
               } else {
-                REQUIRE(result.output_frame_count == 1);
-                CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
-                CHECK(result.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
-                CHECK(result.actions[1].msg_type_length == 1);
-                CHECK(result.actions[1].msg_type[0] == '5');
-                CHECK(result.actions[1].sequence_begin == 7);
-                CHECK(result.actions[1].sequence_end_exclusive == 8);
-                const std::string output(reinterpret_cast<const char *>(result.output.data), result.output.length);
-                FIX::Message logout(output, true);
-                FIX::MsgType msgType;
-                FIX::MsgSeqNum sequence;
-                FIX::Text text;
-                logout.getHeader().getField(msgType);
-                logout.getHeader().getField(sequence);
-                logout.getField(text);
-                CHECK(msgType == FIX::MsgType_Logout);
-                CHECK(sequence == 7);
-                CHECK(text == "Reset rejected");
-                CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
-                CHECK(read64(result.native_state.data + 132) == 8);
+                REQUIRE(result.action_count == (senderExhausted ? 2 : 3));
+                CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+                CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+                CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+                CHECK(result.actions[result.action_count - 1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+                CHECK(result.actions[result.action_count - 1].reason_code == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+                if (senderExhausted) {
+                  CHECK(result.output.length == 0);
+                  CHECK(result.output_frame_count == 0);
+                  CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+                  CHECK(read64(result.native_state.data + 132) == 0);
+                  CHECK(read64(result.native_state.data + 96) == read64(baseline.data() + 96));
+                  CHECK(read64(result.native_state.data + 104) == read64(baseline.data() + 104));
+                } else {
+                  REQUIRE(result.output_frame_count == 1);
+                  CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+                  CHECK(result.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+                  CHECK(result.actions[1].msg_type_length == 1);
+                  CHECK(result.actions[1].msg_type[0] == '5');
+                  CHECK(result.actions[1].sequence_begin == 7);
+                  CHECK(result.actions[1].sequence_end_exclusive == 8);
+                  const std::string output(reinterpret_cast<const char *>(result.output.data), result.output.length);
+                  FIX::Message logout(output, true);
+                  FIX::MsgType msgType;
+                  FIX::MsgSeqNum sequence;
+                  FIX::Text text;
+                  logout.getHeader().getField(msgType);
+                  logout.getHeader().getField(sequence);
+                  logout.getField(text);
+                  CHECK(msgType == FIX::MsgType_Logout);
+                  CHECK(sequence == 7);
+                  CHECK(text == "Reset rejected");
+                  CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+                  CHECK(read64(result.native_state.data + 132) == 8);
+                }
+                if (direct) {
+                  CHECK(read64(result.native_state.data + 180) == UINT64_C(1));
+                  CHECK(read32(result.native_state.data + 188) == read32(baseline.data() + 188));
+                  CHECK(std::equal(baseline.begin() + 220, baseline.begin() + 284, result.native_state.data + 220));
+                  CHECK(read32(result.native_state.data + 288) == 0);
+                  CHECK(read32(result.native_state.data + 292) == 0);
+                  CHECK(read32(result.native_state.data + 296) == 0);
+                  CHECK(read64(result.native_state.data + 300) == 0);
+                  CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
+                } else {
+                  CHECK(
+                      read64(result.native_state.data + 180)
+                      == (UINT64_C(1) | UINT64_C(256) | (senderExhausted ? UINT64_C(0) : UINT64_C(16))));
+                  CHECK(read32(result.native_state.data + 220) == 0);
+                  CHECK(read32(result.native_state.data + 292) == 0);
+                  CHECK(read64(result.native_state.data + 300) == 0);
+                  CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+                }
               }
-              if (direct) {
-                CHECK(read64(result.native_state.data + 180) == UINT64_C(1));
-                CHECK(read32(result.native_state.data + 188) == read32(baseline.data() + 188));
-                CHECK(std::equal(baseline.begin() + 220, baseline.begin() + 284, result.native_state.data + 220));
-                CHECK(read32(result.native_state.data + 288) == 0);
-                CHECK(read32(result.native_state.data + 292) == 0);
-                CHECK(read32(result.native_state.data + 296) == 0);
-                CHECK(read64(result.native_state.data + 300) == 0);
-                CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
-              } else {
-                CHECK(
-                    read64(result.native_state.data + 180)
-                    == (UINT64_C(1) | UINT64_C(256) | (senderExhausted ? UINT64_C(0) : UINT64_C(16))));
-                CHECK(read32(result.native_state.data + 220) == 0);
-                CHECK(read32(result.native_state.data + 292) == 0);
-                CHECK(read64(result.native_state.data + 300) == 0);
-                CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
-              }
+              CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
             }
-            CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
           }
         }
       }
@@ -6065,9 +6092,14 @@ TEST_CASE(
     "[infinite][adapter][v2][stock-smoke][inbound-logon][sequence-boundary][task2d][final-target-matrix]") {
   constexpr auto bound = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2);
   constexpr auto lastLegal = bound - 1;
-  const auto config = otherwiseValidUnavailableProfile();
-  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseline{};
-  auto *source = detachedSenderSession(config, 7, 30, &baseline);
+  const auto fixedConfig = otherwiseValidUnavailableProfile();
+  const auto peerConfig = otherwiseValidUnavailableProfile(1, {}, 2, 0, 20, 40);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> fixedBaseline{};
+  auto *source = detachedSenderSession(fixedConfig, 7, 30, &fixedBaseline);
+  REQUIRE(source != nullptr);
+  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> peerBaseline{};
+  source = detachedSenderSession(peerConfig, 7, 35, &peerBaseline);
   REQUIRE(source != nullptr);
   REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
 
@@ -6075,17 +6107,21 @@ TEST_CASE(
     const char *name;
     bool senderExhausted;
     int peerRelation;
+    bool peerHeartbeat;
   };
   const std::array variants{
-      Variant{"sender-value-peer-absent", false, 0},
-      Variant{"sender-value-peer-equal", false, 1},
-      Variant{"sender-value-peer-lower", false, -1},
-      Variant{"sender-exhausted-peer-absent", true, 0},
-      Variant{"sender-exhausted-peer-equal", true, 1},
-      Variant{"sender-exhausted-peer-lower", true, -1}};
+      Variant{"sender-value-peer-absent", false, 0, false},
+      Variant{"sender-value-peer-equal", false, 1, false},
+      Variant{"sender-value-peer-lower", false, -1, false},
+      Variant{"sender-exhausted-peer-absent", true, 0, false},
+      Variant{"sender-exhausted-peer-equal", true, 1, false},
+      Variant{"sender-exhausted-peer-lower", true, -1, false},
+      Variant{"heartbeat-range-sender-value", false, 0, true},
+      Variant{"heartbeat-range-sender-exhausted", true, 0, true}};
   for (const auto &variant : variants) {
     DYNAMIC_SECTION(variant.name) {
-      auto state = baseline;
+      const auto &config = variant.peerHeartbeat ? peerConfig : fixedConfig;
+      auto state = variant.peerHeartbeat ? peerBaseline : fixedBaseline;
       write32(
           state.data() + 128,
           variant.senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
@@ -6104,7 +6140,8 @@ TEST_CASE(
           0);
       REQUIRE(session != nullptr);
       const auto sender = variant.senderExhausted ? lastLegal : UINT64_C(7);
-      auto fields = std::string("369=") + std::to_string(lastLegal - 1) + "\00198=0\001108=30\001";
+      auto fields = std::string("369=") + std::to_string(lastLegal - 1)
+                    + "\00198=0\001108=" + (variant.peerHeartbeat ? "35\001" : "30\001");
       if (variant.peerRelation != 0) {
         fields += "789=" + std::to_string(sender - (variant.peerRelation < 0 ? 1 : 0)) + "\001";
       }
@@ -6136,6 +6173,9 @@ TEST_CASE(
       CHECK(
           read64(result.native_state.data + 180)
           == (UINT64_C(1) | UINT64_C(256) | (variant.senderExhausted ? UINT64_C(0) : UINT64_C(16))));
+      if (variant.peerHeartbeat) {
+        CHECK(read32(result.native_state.data + 188) == (variant.senderExhausted ? 0U : 35U));
+      }
       CHECK(read32(result.native_state.data + 220) == 0);
       CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_SEQUENCE_V2);
       if (variant.senderExhausted) {
@@ -6171,11 +6211,18 @@ TEST_CASE(
     "[infinite][adapter][v2][task2d][final-target-matrix][direct]") {
   constexpr auto bound = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2);
   constexpr auto lastLegal = bound - 1;
-  const auto config = otherwiseValidUnavailableProfile();
-  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseline{};
-  auto *source = detachedResendRecoverySession(config, 2, 5, 2, 7, &baseline);
+  const auto fixedConfig = otherwiseValidUnavailableProfile();
+  const auto peerConfig = otherwiseValidUnavailableProfile(1, {}, 2, 0, 20, 40);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> fixedBaseline{};
+  auto *source = detachedResendRecoverySession(fixedConfig, 2, 5, 2, 7, &fixedBaseline);
   REQUIRE(source != nullptr);
   REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> peerBaseline{};
+  source = detachedSenderSession(peerConfig, 7, 35, &peerBaseline);
+  REQUIRE(source != nullptr);
+  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+  write64(peerBaseline.data() + 56, 4);
+  std::copy(fixedBaseline.begin() + 220, fixedBaseline.begin() + 284, peerBaseline.begin() + 220);
 
   struct Variant {
     const char *name;
@@ -6183,15 +6230,19 @@ TEST_CASE(
     bool peerPresent;
     std::uint64_t original;
     std::uint64_t peer;
+    bool peerHeartbeat;
   };
   const std::array variants{
-      Variant{"initial-peer-absent", false, false, 7, 0},
-      Variant{"initial-peer-equal", false, true, 7, 7},
-      Variant{"lost-response", false, true, 6, 6},
-      Variant{"exhausted-lost-response", true, true, lastLegal, lastLegal}};
+      Variant{"initial-peer-absent", false, false, 7, 0, false},
+      Variant{"initial-peer-equal", false, true, 7, 7, false},
+      Variant{"lost-response", false, true, 6, 6, false},
+      Variant{"exhausted-lost-response", true, true, lastLegal, lastLegal, false},
+      Variant{"heartbeat-range-sender-value", false, false, 7, 0, true},
+      Variant{"heartbeat-range-sender-exhausted", true, true, lastLegal, lastLegal, true}};
   for (const auto &variant : variants) {
     DYNAMIC_SECTION(variant.name) {
-      auto state = baseline;
+      const auto &config = variant.peerHeartbeat ? peerConfig : fixedConfig;
+      auto state = variant.peerHeartbeat ? peerBaseline : fixedBaseline;
       write32(
           state.data() + 128,
           variant.senderExhausted ? IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2 : IRFQ_INFINITE_SEQUENCE_VALUE_V2);
@@ -6209,7 +6260,8 @@ TEST_CASE(
           0,
           0);
       REQUIRE(session != nullptr);
-      auto fields = std::string("369=") + std::to_string(lastLegal - 1) + "\00198=0\001108=30\001";
+      auto fields = std::string("369=") + std::to_string(lastLegal - 1)
+                    + "\00198=0\001108=" + (variant.peerHeartbeat ? "35\001" : "30\001");
       if (variant.peerPresent) {
         fields += "789=" + std::to_string(variant.peer) + "\001";
       }
@@ -6238,6 +6290,9 @@ TEST_CASE(
       CHECK(read64(result.native_state.data + 152) == lastLegal - 1);
       CHECK(read64(result.native_state.data + 180) == read64(state.data() + 180));
       CHECK(read32(result.native_state.data + 188) == read32(state.data() + 188));
+      if (variant.peerHeartbeat) {
+        CHECK(read32(result.native_state.data + 188) == 0);
+      }
       CHECK(std::equal(state.begin() + 220, state.begin() + 284, result.native_state.data + 220));
       CHECK(read32(result.native_state.data + 288) == read32(state.data() + 288));
       CHECK(read32(result.native_state.data + 292) == read32(state.data() + 292));
@@ -6342,13 +6397,18 @@ TEST_CASE(
     "InfiniteFrameAdapterV2 terminalizes every exact LOGON_789 phase at the final target",
     "[infinite][adapter][v2][task2d][final-target-matrix][logon-789]") {
   constexpr auto lastLegal = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
-  const auto config = otherwiseValidUnavailableProfile();
-  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseline{};
-  auto *source = detachedSenderSession(config, 8, 30, &baseline);
+  const auto fixedConfig = otherwiseValidUnavailableProfile();
+  const auto peerConfig = otherwiseValidUnavailableProfile(1, {}, 2, 0, 20, 40);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> fixedBaseline{};
+  auto *source = detachedSenderSession(fixedConfig, 8, 30, &fixedBaseline);
+  REQUIRE(source != nullptr);
+  REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+  std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> peerBaseline{};
+  source = detachedSenderSession(peerConfig, 8, 35, &peerBaseline);
   REQUIRE(source != nullptr);
   REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
 
-  const auto phaseState = [&](std::uint32_t phase) {
+  const auto phaseState = [&](const auto &baseline, std::uint32_t phase) {
     auto state = baseline;
     write64(state.data() + 56, 1);
     write32(state.data() + 128, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
@@ -6387,71 +6447,86 @@ TEST_CASE(
     }
     return state;
   };
-  for (std::uint32_t phase = 1; phase <= 4; ++phase) {
-    DYNAMIC_SECTION("phase-" << phase) {
-      const auto state = phaseState(phase);
-      auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-          config.data(),
-          config.size(),
-          state.data(),
-          state.size(),
-          1,
-          1,
-          0,
-          0);
-      REQUIRE(session != nullptr);
-      InboundCall inbound(
-          session,
-          participantFrame(
-              'A',
-              lastLegal,
-              "369=" + std::to_string(lastLegal - 1)
-                  + "\00198=0\001108=30\001789=5\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
-          0xba);
-      inbound.request.expected_revision = 1;
-      inbound.request.next_original_value = phase == 1 ? 2 : phase == 2 ? 7 : 8;
-      inbound.request.now_tai_ns = INT64_C(1700000000123456001);
-      inbound.request.now_utc_ns = INT64_C(1700000000123456001);
-      REQUIRE(
-          FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
-              session,
-              inbound.request,
-              inbound.request.event_identity_sha256));
-      PlanBuffers buffers;
-      auto result = buffers.response();
-      REQUIRE(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
-      CHECK(result.output.length == 0);
-      CHECK(result.output_frame_count == 0);
-      REQUIRE(result.action_count == 2);
-      CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
-      CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
-      CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
-      CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-      CHECK(result.actions[1].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
-      CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
-      CHECK(read64(result.native_state.data + 132) == 8);
-      CHECK(read64(result.native_state.data + 96) == read64(state.data() + 96));
-      CHECK(read64(result.native_state.data + 104) == read64(state.data() + 104));
-      CHECK(read32(result.native_state.data + 140) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
-      CHECK(read64(result.native_state.data + 144) == lastLegal);
-      CHECK(read64(result.native_state.data + 152) == lastLegal - 1);
-      CHECK(read64(result.native_state.data + 180) == read64(state.data() + 180));
-      CHECK(std::equal(state.begin() + 220, state.begin() + 284, result.native_state.data + 220));
-      CHECK(read32(result.native_state.data + 288) == 0);
-      CHECK(read32(result.native_state.data + 292) == 0);
-      CHECK(read32(result.native_state.data + 296) == 0);
-      CHECK(read64(result.native_state.data + 300) == 0);
-      CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
-      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  struct HeartbeatVariant {
+    const std::vector<std::uint8_t> *config;
+    const std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> *baseline;
+    std::uint32_t heartbeat;
+    bool peerHeartbeat;
+  };
+  const std::array heartbeatVariants{
+      HeartbeatVariant{&fixedConfig, &fixedBaseline, 30, false},
+      HeartbeatVariant{&peerConfig, &peerBaseline, 35, true}};
+  for (const auto &heartbeatVariant : heartbeatVariants) {
+    for (std::uint32_t phase = 1; phase <= 4; ++phase) {
+      DYNAMIC_SECTION((heartbeatVariant.peerHeartbeat ? "heartbeat-range-" : "") << "phase-" << phase) {
+        const auto state = phaseState(*heartbeatVariant.baseline, phase);
+        const auto &config = *heartbeatVariant.config;
+        auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+            config.data(),
+            config.size(),
+            state.data(),
+            state.size(),
+            1,
+            1,
+            0,
+            0);
+        REQUIRE(session != nullptr);
+        InboundCall inbound(
+            session,
+            participantFrame(
+                'A',
+                lastLegal,
+                "369=" + std::to_string(lastLegal - 1) + "\00198=0\001108=" + std::to_string(heartbeatVariant.heartbeat)
+                    + "\001789=5\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
+            0xba);
+        inbound.request.expected_revision = 1;
+        inbound.request.next_original_value = phase == 1 ? 2 : phase == 2 ? 7 : 8;
+        inbound.request.now_tai_ns = INT64_C(1700000000123456001);
+        inbound.request.now_utc_ns = INT64_C(1700000000123456001);
+        REQUIRE(
+            FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+                session,
+                inbound.request,
+                inbound.request.event_identity_sha256));
+        PlanBuffers buffers;
+        auto result = buffers.response();
+        REQUIRE(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+        CHECK(result.output.length == 0);
+        CHECK(result.output_frame_count == 0);
+        REQUIRE(result.action_count == 2);
+        CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+        CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+        CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+        CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+        CHECK(result.actions[1].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+        CHECK(read32(result.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+        CHECK(read64(result.native_state.data + 132) == 8);
+        CHECK(read64(result.native_state.data + 96) == read64(state.data() + 96));
+        CHECK(read64(result.native_state.data + 104) == read64(state.data() + 104));
+        CHECK(read32(result.native_state.data + 140) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+        CHECK(read64(result.native_state.data + 144) == lastLegal);
+        CHECK(read64(result.native_state.data + 152) == lastLegal - 1);
+        CHECK(read64(result.native_state.data + 180) == read64(state.data() + 180));
+        if (heartbeatVariant.peerHeartbeat) {
+          CHECK(read32(result.native_state.data + 188) == 0);
+        }
+        CHECK(std::equal(state.begin() + 220, state.begin() + 284, result.native_state.data + 220));
+        CHECK(read32(result.native_state.data + 288) == 0);
+        CHECK(read32(result.native_state.data + 292) == 0);
+        CHECK(read32(result.native_state.data + 296) == 0);
+        CHECK(read64(result.native_state.data + 300) == 0);
+        CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
+        CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+      }
     }
   }
 
-  auto invalidPhase = phaseState(1);
+  auto invalidPhase = phaseState(fixedBaseline, 1);
   write32(invalidPhase.data() + 224, 0);
   CHECK(
       FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-          config.data(),
-          config.size(),
+          fixedConfig.data(),
+          fixedConfig.size(),
           invalidPhase.data(),
           invalidPhase.size(),
           1,
@@ -6474,10 +6549,10 @@ TEST_CASE(
       InvalidVariant{"reset", 5, 8, false, true}};
   for (const auto &variant : invalidVariants) {
     DYNAMIC_SECTION("invalid-" << variant.name) {
-      const auto state = phaseState(3);
+      const auto state = phaseState(fixedBaseline, 3);
       auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-          config.data(),
-          config.size(),
+          fixedConfig.data(),
+          fixedConfig.size(),
           state.data(),
           state.size(),
           1,
