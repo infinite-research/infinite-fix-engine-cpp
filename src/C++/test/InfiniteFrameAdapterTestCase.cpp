@@ -6204,6 +6204,46 @@ TEST_CASE(
       CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
     }
   }
+
+  DYNAMIC_SECTION("heartbeat-range-detached-non-logon-invalid") {
+    auto state = peerBaseline;
+    write32(state.data() + 140, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+    write64(state.data() + 144, lastLegal);
+    write64(state.data() + 152, lastLegal - 1);
+    auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+        peerConfig.data(),
+        peerConfig.size(),
+        state.data(),
+        state.size(),
+        1,
+        2,
+        0,
+        0);
+    REQUIRE(session != nullptr);
+    InboundCall inbound(
+        session,
+        participantFrame(
+            '4',
+            lastLegal,
+            "369=" + std::to_string(lastLegal - 1) + "\00136=" + std::to_string(lastLegal) + "\001123=N\001"),
+        0xbd);
+    inbound.request.expected_revision = 2;
+    inbound.request.now_tai_ns = INT64_C(1700000000123456002);
+    inbound.request.now_utc_ns = INT64_C(1700000000123456002);
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            inbound.request,
+            inbound.request.event_identity_sha256));
+    PlanBuffers buffers;
+    auto result = buffers.response();
+    CHECK(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    CHECK(result.prepare_id.low == 0);
+    CHECK(result.native_state.length == 0);
+    CHECK(result.output.length == 0);
+    CHECK(result.action_count == 0);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
 }
 
 TEST_CASE(

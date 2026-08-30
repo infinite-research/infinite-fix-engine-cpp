@@ -2007,7 +2007,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   const bool finalTargetLogon789 = finalTarget && exactLogon789;
   const bool resetDecision
       = validResetLogon && detached && (recoveryKind == RECOVERY_NONE || recoveryKind == RECOVERY_RESEND_REQUEST);
-  if ((validResetLogon && !resetDecision)
+  if ((detached && inbound.msgType != "A") || (validResetLogon && !resetDecision)
       || (!resetDecision && (targetExhausted || (senderExhausted && !finalTargetNone && !finalTargetDirect)))
       || (!resetDecision && recoveryActive && !detached)
       || (finalTarget && inbound.msgType == "A" && !validResetLogon && !finalTargetNone && !finalTargetDirect
