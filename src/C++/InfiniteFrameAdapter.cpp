@@ -80,15 +80,15 @@ constexpr std::uint32_t CONTINUATION_READ_RESULT = 4;
 constexpr char INFINITE_DEFAULT_CUSTOM_APPLICATION_VERSION[] = "INFINITE-RFQ-1.0.0";
 constexpr char INFINITE_TRANSPORT_DICTIONARY_ID[] = "INFINITE-FIXT11";
 constexpr char INFINITE_APPLICATION_DICTIONARY_ID[] = "INFINITE-RFQ-1.0.0-EP299";
-constexpr std::size_t INFINITE_TRANSPORT_DICTIONARY_SIZE = 10148;
-constexpr std::size_t INFINITE_APPLICATION_DICTIONARY_SIZE = 90828;
+constexpr std::size_t INFINITE_TRANSPORT_DICTIONARY_SIZE = 9242;
+constexpr std::size_t INFINITE_APPLICATION_DICTIONARY_SIZE = 79971;
 constexpr std::array<std::uint8_t, 32> INFINITE_TRANSPORT_DICTIONARY_SHA256{{
-    0x3a, 0x78, 0x4e, 0x84, 0xad, 0x56, 0xdc, 0x7b, 0xec, 0x92, 0x7e, 0xc3, 0xa4, 0xa4, 0xdf, 0x48,
-    0xc4, 0xaa, 0x96, 0xd5, 0xe4, 0x4e, 0xc1, 0x9d, 0x39, 0xe5, 0x98, 0xf1, 0xd8, 0xa5, 0x76, 0x14,
+    0x75, 0xec, 0xae, 0x39, 0x57, 0xf5, 0xf5, 0xb0, 0xcc, 0x86, 0x13, 0xac, 0x89, 0x76, 0xbb, 0x33,
+    0xdf, 0xe3, 0xe2, 0xed, 0xf0, 0x12, 0xcd, 0xf3, 0x60, 0x87, 0xb3, 0x49, 0xad, 0x5f, 0x85, 0xe5,
 }};
 constexpr std::array<std::uint8_t, 32> INFINITE_APPLICATION_DICTIONARY_SHA256{{
-    0xcf, 0xb5, 0x10, 0x43, 0x09, 0x3a, 0x99, 0x39, 0xc3, 0x5b, 0x0d, 0x5c, 0x4a, 0x07, 0x83, 0x32,
-    0x0e, 0x86, 0x82, 0x5c, 0xc0, 0xd8, 0x14, 0x69, 0x06, 0x7e, 0xa6, 0x9d, 0xdb, 0xeb, 0x8d, 0xf8,
+    0xd9, 0xce, 0x75, 0xd2, 0x06, 0x57, 0x3a, 0x39, 0x1d, 0xbc, 0xb8, 0x3a, 0x61, 0x66, 0x5f, 0x38,
+    0x44, 0x91, 0x6c, 0xfd, 0x63, 0x00, 0x6d, 0x6a, 0xb9, 0x9d, 0x64, 0x5b, 0xac, 0x6d, 0x25, 0x51,
 }};
 
 class DeclaredLimit final : public std::exception {};
@@ -473,7 +473,7 @@ bool weeklyLogonContained(const std::array<CborValue, 50> &fields) noexcept {
   return logonStart <= logonEnd && logonEnd <= sessionEndOffset;
 }
 
-bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) noexcept {
+bool parseProfile(const irfq_infinite_slice_v2 &config, Profile &profile) {
   if (config.length == 0 || config.length > 4096 || config.data == nullptr) {
     return false;
   }
@@ -993,6 +993,7 @@ struct PendingPlan {
   std::uint64_t classifiedSequence{0};
   std::array<std::uint8_t, 32> subject{};
   std::string msgType;
+  std::string businessRejectRefId;
   irfq_infinite_input_source_v2 inputSource{IRFQ_INFINITE_INPUT_NONE_V2};
   std::uint32_t inputItemIndex{0};
   std::uint64_t inputOffset{0};
@@ -1140,7 +1141,7 @@ bool validPrepareOutput(
           actionRange)) {
     return false;
   }
-  const std::vector<Range> all{requestRange, responseRange, payloadRange, stateRange, outputRange, actionRange};
+  const std::array<Range, 6> all{requestRange, responseRange, payloadRange, stateRange, outputRange, actionRange};
   for (std::size_t left = 0; left < all.size(); ++left) {
     for (std::size_t right = left + 1; right < all.size(); ++right) {
       if (overlaps(all[left], all[right])) {
@@ -1169,8 +1170,13 @@ bool validResumeOutput(
   Range outputRange;
   Range actionRange;
   Range rowRange;
+  Range dispositionRange;
   if (!range(&request, sizeof(request), requestRange) || !range(&response, sizeof(response), responseRange)
       || !sliceRange(request.input_source_bytes, IRFQ_INFINITE_MAX_STORE_RANGE_BYTES_V2, sourceRange)
+      || !sliceRange(
+          request.gateway_inbound_disposition_id,
+          IRFQ_INFINITE_MAX_GATEWAY_INBOUND_DISPOSITION_ID_BYTES_V2,
+          dispositionRange)
       || !range(view.state.data, view.state.capacity, stateRange)
       || !range(view.output.data, view.output.capacity, outputRange)
       || !range(
@@ -1183,8 +1189,8 @@ bool validResumeOutput(
           rowRange)) {
     return false;
   }
-  const std::vector<Range>
-      all{requestRange, responseRange, sourceRange, stateRange, outputRange, actionRange, rowRange};
+  const std::array<Range, 8>
+      all{requestRange, responseRange, sourceRange, dispositionRange, stateRange, outputRange, actionRange, rowRange};
   for (std::size_t left = 0; left < all.size(); ++left) {
     for (std::size_t right = left + 1; right < all.size(); ++right) {
       if (overlaps(all[left], all[right])) {
@@ -1672,7 +1678,7 @@ std::unique_ptr<PendingPlan> continueResendPlan(
                                                                   : flags == UINT64_C(135);
   const bool continuationRequired = !logonResponse && !directResponseBarrier;
   if (!attached || request.payload.length != 56
-      || read32(session.state.data() + 292) != CONTINUATION_RESEND && continuationRequired
+      || (read32(session.state.data() + 292) != CONTINUATION_RESEND && continuationRequired)
       || read32(session.state.data() + 296) != IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
       || (continuationRequired && read64(session.state.data() + 300) != cursor)
       || (!continuationRequired
@@ -2666,6 +2672,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
         inbound.msgType,
         bodyDigest);
     plan->msgType = inbound.msgType;
+    plan->businessRejectRefId = inbound.businessRejectRefId;
     plan->inputSource = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
     plan->inputOffset = 68 + inbound.bodyOffset;
     plan->inputLength = inbound.bodyLength;
@@ -3936,6 +3943,19 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
         || request->step != session->pending->step) {
       return failPending(IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
     }
+    const auto &dispositionId = request->gateway_inbound_disposition_id;
+    const bool applicationReject = session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2
+                                   && session->pending->applicationDispatch
+                                   && request->kind == IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2
+                                   && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2;
+    const bool validDispositionId
+        = dispositionId.data != nullptr && dispositionId.length != 0
+          && std::all_of(dispositionId.data, dispositionId.data + dispositionId.length, [](std::uint8_t byte) {
+               return byte >= 0x21 && byte <= 0x7e;
+             });
+    if (applicationReject ? !validDispositionId : dispositionId.data != nullptr || dispositionId.length != 0) {
+      return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    }
     if (session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2) {
       auto &plan = *session->pending;
       const bool directLogonResponse = plan.kind == IRFQ_INFINITE_PREPARE_REGISTERED_INBOUND_V2
@@ -4418,6 +4438,12 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
       plan.actions.push_back(disposition);
       if (request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
           && (plan.applicationDispatch || gapFillDecision)) {
+        const auto gatewayDispositionId
+            = plan.applicationDispatch
+                  ? std::string(
+                        reinterpret_cast<const char *>(request->gateway_inbound_disposition_id.data),
+                        static_cast<std::size_t>(request->gateway_inbound_disposition_id.length))
+                  : std::string{};
         const auto reject = gapFillDecision ? FIX::InfiniteSessionPlanner::resendRequest(
                                                   session->profile.beginString,
                                                   session->profile.venueCompId,
@@ -4439,6 +4465,8 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
                                                   readI64(plan.state.data() + 88),
                                                   plan.subjectSequence,
                                                   plan.msgType,
+                                                  plan.businessRejectRefId,
+                                                  gatewayDispositionId,
                                                   read64(session->state.data() + 152),
                                                   &session->dictionaries,
                                                   &session->staticProfile);
@@ -4448,7 +4476,8 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
         writeSenderSuccessor(plan.state, reject.nextSenderSequence);
         irfq_infinite_declarative_action_v2 output{};
         output.kind = IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2;
-        output.output_class = IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2;
+        output.output_class
+            = gapFillDecision ? IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2 : IRFQ_INFINITE_OUTPUT_ORIGINAL_APPLICATION_V2;
         output.msg_type_length = 1;
         output.msg_type[0] = gapFillDecision ? '2' : 'j';
         output.sequence_begin = read64(session->state.data() + 132);

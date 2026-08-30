@@ -31,8 +31,8 @@ if( MSVC )
 endif()
 
 # Allow overriding the output directory for libraries and executables.
-# Default: <project-root>/lib
-set(QUICKFIX_LIB_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/lib" CACHE PATH "Top-level output directory for quickfix libraries and runtime files")
+# Default: <build-root>/lib
+set(QUICKFIX_LIB_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib" CACHE PATH "Top-level output directory for quickfix libraries and runtime files")
 
 # Single-config generators
 if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
@@ -68,9 +68,6 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
-include(QuickfixPlatformSettings)
-include(QuickfixPrebuildSetup)
-
 # Call cmake with-DHAVE_SSL=ON to compile with SSL. Similarly for others.
 option(HAVE_SSL "Build with SSL")
 option(HAVE_MYSQL "Build with MySQL")
@@ -84,6 +81,10 @@ option(QUICKFIX_SHARED_LIBS "Build using shared libraries" ON)
 option(QUICKFIX_EXAMPLES "Build quickfix examples" ON)
 option(QUICKFIX_TESTS "Build quickfix tests" ON)
 option(IRFQ_INFINITE_EMBED_DICTIONARIES "Embed approved FIX dictionaries in the static Infinite adapter archive" OFF)
+
+include(QuickfixPlatformSettings)
+include(QuickfixPrebuildSetup)
+
 if (QUICKFIX_TESTS)
   enable_testing()
 endif()
@@ -190,6 +191,102 @@ endif ()
 
 add_subdirectory(src)
 
+if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+  set(IRFQ_INFINITE_SOURCE_COMMIT "" CACHE STRING "Exact source commit for the Infinite adapter package")
+  set(IRFQ_INFINITE_SOURCE_TREE "" CACHE STRING "Exact source tree for the Infinite adapter package")
+  set(IRFQ_INFINITE_SOURCE_MERGE_BASE "" CACHE STRING "Exact source merge base for the Infinite adapter package")
+  set(IRFQ_INFINITE_SOURCE_DIFF_SHA256 "" CACHE STRING "Exact source diff SHA-256 for the Infinite adapter package")
+  set(IRFQ_INFINITE_SPECIFICATION_COMMIT "" CACHE STRING "Exact specification commit for the Infinite adapter package")
+  set(IRFQ_INFINITE_SPECIFICATION_TREE "" CACHE STRING "Exact specification tree for the Infinite adapter package")
+  set(IRFQ_INFINITE_SPECIFICATION_BUNDLE_SHA256 "" CACHE STRING "Exact semantic specification bundle SHA-256")
+  set(IRFQ_INFINITE_BUILD_IMAGE "" CACHE STRING "Exact build image name for the Infinite adapter package")
+  set(IRFQ_INFINITE_BUILD_IMAGE_SHA256 "" CACHE STRING "Exact build image SHA-256 for the Infinite adapter package")
+  set(IRFQ_INFINITE_BUILD_COMMAND "" CACHE STRING "Path-independent governed build command")
+
+  file(WRITE "${CMAKE_BINARY_DIR}/.irfq-package-root"
+       "irfq.infinite-fix-engine-package-root.v1\n")
+  add_custom_target(infinite_adapter_package
+    COMMAND "${CMAKE_COMMAND}"
+            "-DIRFQ_INFINITE_ARCHIVE=$<TARGET_FILE:quickfix>"
+            "-DIRFQ_INFINITE_AR=${CMAKE_AR}"
+            "-DIRFQ_INFINITE_READELF=${IRFQ_INFINITE_READELF}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyInfiniteEmbeddedSymbols.cmake"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DIRFQ_PACKAGE_BINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DIRFQ_PACKAGE_OUTPUT_DIR=${CMAKE_BINARY_DIR}/infinite-adapter-package"
+            "-DIRFQ_PACKAGE_ARCHIVE=$<TARGET_FILE:quickfix>"
+            "-DIRFQ_PACKAGE_HEADER=${CMAKE_CURRENT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h"
+            "-DIRFQ_PACKAGE_ABI_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v2.tsv"
+            "-DIRFQ_PACKAGE_QUICKFIX_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+            "-DIRFQ_PACKAGE_APACHE_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/spec/infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt"
+            "-DIRFQ_PACKAGE_DOUBLE_CONVERSION_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/double-conversion-BSD-3-Clause.txt"
+            "-DIRFQ_PACKAGE_PUGIXML_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/pugixml-MIT.txt"
+            "-DIRFQ_PACKAGE_SCOPE_GUARD_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/scope_guard-Unlicense.txt"
+            "-DIRFQ_PACKAGE_SOURCE_COMMIT=${IRFQ_INFINITE_SOURCE_COMMIT}"
+            "-DIRFQ_PACKAGE_SOURCE_TREE=${IRFQ_INFINITE_SOURCE_TREE}"
+            "-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=${IRFQ_INFINITE_SOURCE_MERGE_BASE}"
+            "-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=${IRFQ_INFINITE_SOURCE_DIFF_SHA256}"
+            "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=${IRFQ_INFINITE_SPECIFICATION_COMMIT}"
+            "-DIRFQ_PACKAGE_SPECIFICATION_TREE=${IRFQ_INFINITE_SPECIFICATION_TREE}"
+            "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=${IRFQ_INFINITE_SPECIFICATION_BUNDLE_SHA256}"
+            "-DIRFQ_PACKAGE_BUILD_IMAGE=${IRFQ_INFINITE_BUILD_IMAGE}"
+            "-DIRFQ_PACKAGE_BUILD_IMAGE_SHA256=${IRFQ_INFINITE_BUILD_IMAGE_SHA256}"
+            "-DIRFQ_PACKAGE_BUILD_COMMAND=${IRFQ_INFINITE_BUILD_COMMAND}"
+            "-DIRFQ_PACKAGE_C_COMPILER=${CMAKE_C_COMPILER}"
+            "-DIRFQ_PACKAGE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            "-DIRFQ_PACKAGE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DIRFQ_PACKAGE_LIB_OUTPUT_DIR=${QUICKFIX_LIB_OUTPUT_DIR}"
+            "-DIRFQ_PACKAGE_ARCHIVE_OUTPUT_DIR=${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}"
+            "-DIRFQ_PACKAGE_ARCHIVE_OUTPUT_DIR_RELEASE=${CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE}"
+            "-DIRFQ_PACKAGE_GENERATOR=${CMAKE_GENERATOR}"
+            "-DIRFQ_PACKAGE_NINJA=${CMAKE_MAKE_PROGRAM}"
+            "-DIRFQ_PACKAGE_OBJCOPY=${IRFQ_INFINITE_OBJCOPY}"
+            "-DIRFQ_PACKAGE_LINKER=${CMAKE_LINKER}"
+            "-DIRFQ_PACKAGE_AR=${CMAKE_AR}"
+            "-DIRFQ_PACKAGE_RANLIB=${CMAKE_RANLIB}"
+            "-DIRFQ_PACKAGE_READELF=${IRFQ_INFINITE_READELF}"
+            "-DIRFQ_PACKAGE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+            "-DIRFQ_PACKAGE_HAVE_SSL=${HAVE_SSL}"
+            "-DIRFQ_PACKAGE_QUICKFIX_SHARED_LIBS=${QUICKFIX_SHARED_LIBS}"
+            "-DIRFQ_PACKAGE_QUICKFIX_EXAMPLES=${QUICKFIX_EXAMPLES}"
+            "-DIRFQ_PACKAGE_QUICKFIX_TESTS=${QUICKFIX_TESTS}"
+            "-DIRFQ_PACKAGE_EMBED_DICTIONARIES=${IRFQ_INFINITE_EMBED_DICTIONARIES}"
+            "-DIRFQ_PACKAGE_HAVE_MYSQL=${HAVE_MYSQL}"
+            "-DIRFQ_PACKAGE_HAVE_POSTGRESQL=${HAVE_POSTGRESQL}"
+            "-DIRFQ_PACKAGE_HAVE_ODBC=${HAVE_ODBC}"
+            "-DIRFQ_PACKAGE_HAVE_PYTHON3=${HAVE_PYTHON3}"
+            "-DIRFQ_PACKAGE_POSITION_INDEPENDENT_CODE=${CMAKE_POSITION_INDEPENDENT_CODE}"
+            "-DIRFQ_PACKAGE_INTERPROCEDURAL_OPTIMIZATION=${CMAKE_INTERPROCEDURAL_OPTIMIZATION}"
+            "-DIRFQ_PACKAGE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=${CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE}"
+            "-DIRFQ_PACKAGE_UNITY_BUILD=${CMAKE_UNITY_BUILD}"
+            "-DIRFQ_PACKAGE_CXX_EXTENSIONS=${CMAKE_CXX_EXTENSIONS}"
+            "-DIRFQ_PACKAGE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+            "-DIRFQ_PACKAGE_SYSROOT=${CMAKE_SYSROOT}"
+            "-DIRFQ_PACKAGE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}"
+            "-DIRFQ_PACKAGE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}"
+            "-DIRFQ_PACKAGE_C_FLAGS=${CMAKE_C_FLAGS}"
+            "-DIRFQ_PACKAGE_C_FLAGS_RELEASE=${CMAKE_C_FLAGS_RELEASE}"
+            "-DIRFQ_PACKAGE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+            "-DIRFQ_PACKAGE_CXX_FLAGS_RELEASE=${CMAKE_CXX_FLAGS_RELEASE}"
+            "-DIRFQ_PACKAGE_STATIC_LINKER_FLAGS=${CMAKE_STATIC_LINKER_FLAGS}"
+            "-DIRFQ_PACKAGE_STATIC_LINKER_FLAGS_RELEASE=${CMAKE_STATIC_LINKER_FLAGS_RELEASE}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageInfiniteAdapter.cmake"
+    DEPENDS
+      quickfix
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v2.tsv"
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/spec/infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/licenses/double-conversion-BSD-3-Clause.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/licenses/pugixml-MIT.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/licenses/scope_guard-Unlicense.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageInfiniteAdapter.cmake"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyInfiniteAdapterPackage.cmake"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyInfiniteEmbeddedSymbols.cmake"
+    COMMENT "Packaging governed Infinite adapter artifact"
+    VERBATIM)
+endif()
+
 if (QUICKFIX_EXAMPLES)
   add_subdirectory(examples)
 endif()
@@ -200,11 +297,7 @@ if (QUICKFIX_TESTS)
   endif()
 endif()
 
-configure_file(cmake_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/src/C++/config.h @ONLY)
-configure_file(cmake_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfix/config.h @ONLY)
-file(REMOVE config.h)
-
-
-configure_file(cmake_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfix/config.h @ONLY)
+file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/include/quickfix")
+configure_file(cmake_config.h.in "${PROJECT_BINARY_DIR}/include/quickfix/config.h" @ONLY)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/spec/ DESTINATION share/quickfix FILES_MATCHING PATTERN "FIX*.xml")

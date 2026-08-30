@@ -174,6 +174,7 @@ if(HAVE_FTIME)
 endif()
 
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+target_compile_definitions(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:QUICKFIX_CMAKE_BUILD=1>)
 if(IRFQ_INFINITE_EMBED_DICTIONARIES)
   target_compile_definitions(${PROJECT_NAME} PRIVATE IRFQ_INFINITE_EMBED_DICTIONARIES=1)
 else()
@@ -181,8 +182,10 @@ else()
     ${PROJECT_NAME}
     PRIVATE IRFQ_INFINITE_DICTIONARY_PATH="${CMAKE_INSTALL_PREFIX}/share/quickfix")
 endif()
-target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/C++)
+target_include_directories(${PROJECT_NAME} PUBLIC $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/C++)
+add_dependencies(${PROJECT_NAME} QUICKFIX_HEADERS_COPY)
+add_dependencies(${PROJECT_NAME} QUICKFIX_SSL_HEADERS_COPY)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES VERSION ${quickfix_VERSION} SOVERSION ${quickfix_VERSION_MAJOR} )
 
@@ -203,11 +206,9 @@ endif()
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${PROJECT_NAME}${debug_postfix}.pdb:${PROJECT_NAME} DESTINATION lib OPTIONAL)
 
 
-install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/C++/ DESTINATION include/quickfix
+install(DIRECTORY ${PROJECT_BINARY_DIR}/include/quickfix/ DESTINATION include/quickfix
         FILES_MATCHING PATTERN "*.h"
-        PATTERN double-conversion EXCLUDE
-        PATTERN "Infinite*.h" EXCLUDE
-        PATTERN test EXCLUDE)
+        PATTERN wx EXCLUDE)
 install(FILES ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h DESTINATION include/quickfix)
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES AND QUICKFIX_TESTS)

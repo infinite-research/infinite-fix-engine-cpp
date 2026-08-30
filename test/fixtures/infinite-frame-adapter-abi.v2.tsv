@@ -23,6 +23,7 @@ constant	max_actions	258
 constant	max_resume_steps	3
 constant	max_message_type_bytes	8
 constant	max_test_request_id_bytes	64
+constant	max_gateway_inbound_disposition_id_bytes	64
 constant	fix_sequence_bound	9223372036854775807
 status	OK	0
 status	INVALID_ARGUMENT	1
@@ -228,7 +229,7 @@ offset	irfq_infinite_store_row_v2.frame_sha256	24
 offset	irfq_infinite_store_row_v2.body_sha256	56
 offset	irfq_infinite_store_row_v2.msg_type	88
 offset	irfq_infinite_store_row_v2.frame	96
-size	irfq_infinite_resume_request_v2	144
+size	irfq_infinite_resume_request_v2	160
 align	irfq_infinite_resume_request_v2	8
 offset	irfq_infinite_resume_request_v2.header	0
 offset	irfq_infinite_resume_request_v2.prepare_id	16
@@ -246,6 +247,7 @@ offset	irfq_infinite_resume_request_v2.store_range_end_exclusive	120
 offset	irfq_infinite_resume_request_v2.store_rows	128
 offset	irfq_infinite_resume_request_v2.store_row_count	136
 offset	irfq_infinite_resume_request_v2.reserved2	140
+offset	irfq_infinite_resume_request_v2.gateway_inbound_disposition_id	144
 size	irfq_infinite_apply_committed_request_v2	72
 align	irfq_infinite_apply_committed_request_v2	8
 offset	irfq_infinite_apply_committed_request_v2.header	0

@@ -34,6 +34,7 @@
 #include "TimeRange.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -284,6 +285,86 @@ void configureStaticProfile(Session &session, const InfiniteSessionStaticProfile
   session.setSendNextExpectedMsgSeqNum(profile->sendNextExpectedMsgSeqNum);
 }
 
+std::pair<std::size_t, std::size_t> originalBodyRange(const Message &message, const std::string &wire) {
+  const auto headerLength = message.getHeader().calculateLength(0, 0, 0);
+  const auto bodyLength = message.calculateLength(0, 0, 0);
+  const auto trailerLength = message.getTrailer().calculateLength(0, 0, 0);
+  if (headerLength < 0 || bodyLength < 0 || trailerLength < 0) {
+    throw std::invalid_argument("FIX body range");
+  }
+  const auto header = static_cast<std::size_t>(headerLength);
+  const auto body = static_cast<std::size_t>(bodyLength);
+  const auto trailer = static_cast<std::size_t>(trailerLength);
+  if (header > wire.size() || body > wire.size() - header || trailer != wire.size() - header - body) {
+    throw std::invalid_argument("FIX body range");
+  }
+  return {header, body};
+}
+
+std::string businessRejectReference(const Message &message, const std::string &msgType) {
+  const auto first = [&message](std::initializer_list<int> tags) {
+    for (const auto tag : tags) {
+      StringField field(tag);
+      if (message.getFieldIfSet(field)) {
+        return field.getString();
+      }
+    }
+    return std::string{};
+  };
+  if (msgType == "AH" || msgType == "UAH0") {
+    return first({644});
+  }
+  if (msgType == "R") {
+    return first({131});
+  }
+  if (msgType == "S" || msgType == "Z") {
+    return first({1166});
+  }
+  if (msgType == "AJ") {
+    return first({11});
+  }
+  if (msgType == "EC") {
+    return first({2965});
+  }
+  if (msgType == "j") {
+    return first({379});
+  }
+  if (msgType == "AI") {
+    return first({649, 1166, 117, 131, 693});
+  }
+  if (msgType == "AG") {
+    return first({131});
+  }
+  if (msgType == "8") {
+    return first({17, 37, 11, 1166, 693});
+  }
+  if (msgType == "AE") {
+    return first({571, 1003, 17});
+  }
+  if (msgType == "AK") {
+    return first({664});
+  }
+  if (msgType == "ED") {
+    return first({2965});
+  }
+  if (msgType == "EE") {
+    return first({2967, 2965, 664});
+  }
+  if (msgType == "CW") {
+    return first({1166, 117, 131});
+  }
+  if (msgType == "J") {
+    return first({70});
+  }
+  if (msgType == "AS") {
+    return first({755});
+  }
+  if (msgType == "T") {
+    return first({777});
+  }
+  return {};
+}
+
 std::string applicationParseEnvelope(const std::string &beginString, const std::string &body) {
   return "8=" + beginString + "\0019=" + std::to_string(body.size()) + "\001" + body + "10=000\001";
 }
@@ -453,8 +534,8 @@ InfiniteStoredFramePlan InfiniteSessionPlanner::storedFrame(
     } else {
       sessionDictionary.validate(message);
     }
-    std::string body;
-    message.calculateString(body);
+    const auto bodyRange = originalBodyRange(message, wire);
+    auto body = wire.substr(bodyRange.first, bodyRange.second);
     if (message.isApp() && body.empty()) {
       throw std::invalid_argument("Stored application body");
     }
@@ -688,6 +769,8 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::businessReject(
     std::int64_t nowUtcNanoseconds,
     std::uint64_t refSequence,
     const std::string &refMsgType,
+    const std::string &businessRejectRefId,
+    const std::string &gatewayInboundDispositionId,
     std::uint64_t lastProcessedSequence,
     const DataDictionaryProvider *dictionaries,
     const InfiniteSessionStaticProfile *profile) {
@@ -706,7 +789,9 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::businessReject(
       0,
       0,
       dictionaries,
-      profile);
+      profile,
+      businessRejectRefId,
+      gatewayInboundDispositionId);
 }
 
 InfiniteInboundPlan InfiniteSessionPlanner::inbound(
@@ -871,15 +956,15 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         }
       }
     }
-    std::string body;
-    incoming.calculateString(body);
-    const auto trailerOffset = wire.rfind("\00110=");
-    const auto bodyOffset
-        = body.empty() ? (trailerOffset == std::string::npos ? trailerOffset : trailerOffset + 1) : wire.find(body);
-    if ((!body.empty() && (bodyOffset == std::string::npos || wire.find(body, bodyOffset + 1) != std::string::npos))
-        || (body.empty() && bodyOffset == std::string::npos) || (incoming.isApp() && body.empty())) {
-      throw std::invalid_argument("Inbound body range");
+    std::pair<std::size_t, std::size_t> bodyRange{};
+    if (dictionaryValid) {
+      bodyRange = originalBodyRange(incoming, wire);
+      if (incoming.isApp() && bodyRange.second == 0) {
+        throw std::invalid_argument("Inbound body range");
+      }
     }
+    const auto businessRejectRefId
+        = dictionaryValid && incoming.isApp() ? businessRejectReference(incoming, msgType.getValue()) : std::string{};
     ResetSeqNumFlag reset(false);
     incoming.getFieldIfSet(reset);
     std::uint64_t lastProcessedSequence = 0;
@@ -1032,6 +1117,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         std::move(outputMsgTypes),
         std::move(outputSequences),
         msgType,
+        businessRejectRefId,
         sequenceValid ? sequence : 0,
         stores.nextSender(),
         stores.nextTarget(),
@@ -1039,8 +1125,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         msgType == MsgType_Logon && heartbeatRejectReason == 0
             ? validatedLogonHeartbeat
             : static_cast<std::uint32_t>(session.m_state.heartBtInt()),
-        body.empty() ? 0 : static_cast<std::uint64_t>(bodyOffset),
-        static_cast<std::uint64_t>(body.size()),
+        static_cast<std::uint64_t>(bodyRange.first),
+        static_cast<std::uint64_t>(bodyRange.second),
         application.application,
         incoming.isAdmin(),
         msgType == MsgType_Logon && reset && application.admin,
@@ -1302,7 +1388,13 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
     std::uint32_t refTag,
     std::uint32_t rejectReason,
     const DataDictionaryProvider *dictionaries,
-    const InfiniteSessionStaticProfile *profile) {
+    const InfiniteSessionStaticProfile *profile,
+    const std::string &businessRejectRefId,
+    const std::string &gatewayInboundDispositionId) {
+  const auto printable = [](const std::string &value, std::size_t minimum, std::size_t maximum) {
+    return value.size() >= minimum && value.size() <= maximum
+           && std::all_of(value.begin(), value.end(), [](unsigned char byte) { return byte >= 0x21 && byte <= 0x7e; });
+  };
   if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || heartbeatSeconds == 0
       || heartbeatSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
       || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0 || targetSequence >= FIX_SEQUENCE_BOUND
@@ -1312,7 +1404,8 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
           && (text.size() > 8 || refSequence == 0 || refSequence >= INT64_MAX
               || (operation == Operation::Reject
                   && (refTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
-                      || (rejectReason > 18 && rejectReason != 99)))))) {
+                      || (rejectReason > 18 && rejectReason != 99)))))
+      || (operation == Operation::BusinessReject && !printable(gatewayInboundDispositionId, 1, 64))) {
     throw std::invalid_argument("Heartbeat planner input");
   }
   const auto now = utcTime(nowUtcNanoseconds);
@@ -1373,6 +1466,10 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
     incoming.setField(EncryptMethod(0));
     incoming.setField(HeartBtInt(static_cast<int>(heartbeatSeconds)));
     incoming.setField(DefaultApplVerID("10"));
+    if (profile != nullptr) {
+      incoming.setField(DefaultApplExtID(299));
+      incoming.setField(DefaultCstmApplVerID(profile->defaultCustomApplicationVersion));
+    }
     session.next(incoming.toString(), now);
   } else if (operation == Operation::Reject) {
     Message incoming;
@@ -1384,14 +1481,17 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::run(
     incoming.getHeader().setField(SendingTime(now, 6));
     session.generateReject(incoming, static_cast<int>(rejectReason), static_cast<int>(refTag));
   } else if (operation == Operation::BusinessReject) {
-    Message incoming;
-    incoming.getHeader().setField(BeginString(beginString));
-    incoming.getHeader().setField(MsgType(text));
-    incoming.getHeader().setField(SenderCompID(targetCompId));
-    incoming.getHeader().setField(TargetCompID(senderCompId));
-    incoming.getHeader().setField(MsgSeqNum(refSequence));
-    incoming.getHeader().setField(SendingTime(now, 6));
-    session.generateBusinessReject(incoming, BusinessRejectReason_UNSUPPORTED_MESSAGE_TYPE);
+    Message reject = session.newMessage(MsgType(MsgType_BusinessMessageReject));
+    reject.setField(RefMsgType(text));
+    if (!businessRejectRefId.empty()) {
+      reject.setField(BusinessRejectRefID(businessRejectRefId));
+    }
+    reject.setField(BusinessRejectReason(BusinessRejectReason_UNSUPPORTED_MESSAGE_TYPE));
+    reject.setField(Text("Application message is unsupported."));
+    reject.setField(StringField(20003, gatewayInboundDispositionId));
+    reject.setField(StringField(20004, "INF-1002"));
+    session.m_state.incrNextTargetMsgSeqNum();
+    session.send(reject);
   } else {
     session.next(now);
   }

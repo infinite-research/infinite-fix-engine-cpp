@@ -7,7 +7,7 @@ ut_LDADD = ../libquickfix.la
 ut_SOURCES = \
 	ut.cpp \
 	catch_amalgamated.cpp \
-	catch_amalgamated.h \
+	catch_amalgamated.hpp \
 	DataDictionaryProviderTestCase.cpp \
 	DataDictionaryTestCase.cpp \
 	DictionaryTestCase.cpp \
@@ -20,6 +20,7 @@ ut_SOURCES = \
 	FileStoreTestCase.cpp \
 	FileUtilitiesTestCase.cpp \
 	GroupTestCase.cpp \
+	HostDetailsProviderTestCase.cpp \
 	HttpMessageTestCase.cpp \
 	HttpParserTestCase.cpp \
 	InfiniteCompleteFrameTestCase.cpp \
@@ -56,6 +57,7 @@ ut_SOURCES = \
 AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	'-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"' \
 	'-DINFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/infinite-frame-adapter-abi.v2.tsv"' \
+	-I$(top_srcdir)/src/C++ \
 	-I..
 
 check-local:

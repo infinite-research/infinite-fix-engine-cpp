@@ -78,15 +78,6 @@
     <field number="34" name="MsgSeqNum" type="SEQNUM">
     </field>
     <field number="35" name="MsgType" type="STRING">
-      <value enum="0" description="Heartbeat" />
-      <value enum="1" description="TestRequest" />
-      <value enum="2" description="ResendRequest" />
-      <value enum="3" description="Reject" />
-      <value enum="4" description="SequenceReset" />
-      <value enum="5" description="Logout" />
-      <value enum="A" description="Logon" />
-      <value enum="j" description="BusinessMessageReject" />
-      <value enum="n" description="XMLnonFIX" />
     </field>
     <field number="36" name="NewSeqNo" type="SEQNUM">
     </field>
@@ -136,15 +127,6 @@
     <field number="371" name="RefTagID" type="INT">
     </field>
     <field number="372" name="RefMsgType" type="STRING">
-      <value enum="0" description="Heartbeat" />
-      <value enum="1" description="TestRequest" />
-      <value enum="2" description="ResendRequest" />
-      <value enum="3" description="Reject" />
-      <value enum="4" description="SequenceReset" />
-      <value enum="5" description="Logout" />
-      <value enum="A" description="Logon" />
-      <value enum="j" description="BusinessMessageReject" />
-      <value enum="n" description="XMLnonFIX" />
     </field>
     <field number="373" name="SessionRejectReason" type="INT">
       <value enum="0" description="InvalidTagNumber" />

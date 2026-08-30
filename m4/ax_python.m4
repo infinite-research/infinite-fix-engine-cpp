@@ -4,7 +4,7 @@ has_python3=false
 AC_ARG_WITH(python3,
     [  --with-python3           will use $PYTHON to find python],
     [
-       has_python3=true
+       AS_IF([test "x$with_python3" = "xno"], [has_python3=false], [has_python3=true])
     ],
     has_python3=false
 )

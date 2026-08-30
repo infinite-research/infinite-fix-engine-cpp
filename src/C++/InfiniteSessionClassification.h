@@ -75,6 +75,7 @@ struct InfiniteInboundPlan {
   std::vector<std::string> outputMsgTypes;
   std::vector<std::uint64_t> outputSequences;
   std::string msgType;
+  std::string businessRejectRefId;
   std::uint64_t sequence{0};
   std::uint64_t nextSenderSequence{0};
   std::uint64_t nextTargetSequence{0};
@@ -230,6 +231,8 @@ public:
       std::int64_t nowUtcNanoseconds,
       std::uint64_t refSequence,
       const std::string &refMsgType,
+      const std::string &businessRejectRefId,
+      const std::string &gatewayInboundDispositionId,
       std::uint64_t lastProcessedSequence = 0,
       const DataDictionaryProvider *dictionaries = nullptr,
       const InfiniteSessionStaticProfile *profile = nullptr);
@@ -336,6 +339,8 @@ private:
       std::uint32_t refTag = 0,
       std::uint32_t rejectReason = 0,
       const DataDictionaryProvider *dictionaries = nullptr,
-      const InfiniteSessionStaticProfile *profile = nullptr);
+      const InfiniteSessionStaticProfile *profile = nullptr,
+      const std::string &businessRejectRefId = {},
+      const std::string &gatewayInboundDispositionId = {});
 };
 } // namespace FIX

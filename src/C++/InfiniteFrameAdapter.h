@@ -46,6 +46,7 @@ extern "C" {
 #define IRFQ_INFINITE_MAX_RESUME_STEPS_V2 UINT32_C(3)
 #define IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2 UINT32_C(8)
 #define IRFQ_INFINITE_MAX_TEST_REQUEST_ID_BYTES_V2 UINT32_C(64)
+#define IRFQ_INFINITE_MAX_GATEWAY_INBOUND_DISPOSITION_ID_BYTES_V2 UINT32_C(64)
 #define IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2 INT64_C(9223372036854775807)
 
 typedef uint32_t irfq_infinite_status_v2;
@@ -355,6 +356,9 @@ typedef struct irfq_infinite_resume_request_v2 {
   const irfq_infinite_store_row_v2 *store_rows;
   uint32_t store_row_count;
   uint32_t reserved2;
+  /** Borrowed for this call: 1-64 visible ASCII bytes only for an application-dispatch rejection; null/empty otherwise.
+   */
+  irfq_infinite_slice_v2 gateway_inbound_disposition_id;
 } irfq_infinite_resume_request_v2;
 
 typedef struct irfq_infinite_apply_committed_request_v2 {

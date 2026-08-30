@@ -95,6 +95,15 @@ make -j$(nproc)
 sudo make install
 </pre>
 
+    <p>For an out-of-source build such as <code>cmake -S . -B build</code>,
+    generated headers and default outputs remain under the build tree:
+    libraries and executables use <code>build/lib</code>, example links use
+    <code>build/bin</code>, and test links use <code>build/test</code>.
+    <code>QUICKFIX_LIB_OUTPUT_DIR</code> still overrides the library/runtime
+    directory. Autotools supplies <code>QUICKFIX_TEST_SRCDIR</code> and
+    <code>QUICKFIX_TEST_BUILDDIR</code> when its legacy test scripts run from a
+    separate build tree; direct script callers must supply the same two paths.</p>
+
     <h2>CMake Build Options</h2>
     <table>
       <tr>
@@ -177,25 +186,52 @@ sudo make install
 
     <p>By default, the static build installs
     <code>quickfix/InfiniteFrameAdapter.h</code>, <code>libquickfix.a</code>, and
-    the immutable FIX dictionaries under <code>share/quickfix</code>. Configure
-    CMake with the final absolute
-    <code>-DCMAKE_INSTALL_PREFIX=/final/path</code> before building, then run
-    <code>cmake --install &lt;build-directory&gt;</code> without
-    <code>--prefix</code>. The adapter embeds that exact dictionary directory;
-    CMake rejects a relative configured prefix and any install-time prefix
-    override so the archive and installed dictionaries cannot disagree.</p>
+    the stock QuickFIX dictionaries under <code>share/quickfix</code>. The
+    production Infinite RFQ profile remains unavailable in this ordinary mode;
+    stock dictionaries are not a production substitute.</p>
 
-    <p>A self-contained Linux amd64 archive can instead embed the nine approved
-    QuickFIX dictionaries:</p>
+    <p>A self-contained Linux amd64 archive can instead embed the exact custom
+    <code>INFINITE-FIXT11</code> and
+    <code>INFINITE-RFQ-1.0.0-EP299</code> dictionaries:</p>
     <pre class='fragment'>
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=OFF \
   -DQUICKFIX_SHARED_LIBS=OFF -DIRFQ_INFINITE_EMBED_DICTIONARIES=ON
 </pre>
     <p>This opt-in profile requires the pinned Linux amd64 GCC/G++ 13.3.0 and
-    GNU <code>objcopy</code>/<code>ld</code> 2.42 route. It verifies every
-    dictionary SHA-256 during configuration before generating read-only,
-    non-executable-stack resources. The resulting archive does not read
-    dictionaries from an installed path at runtime.</p>
+    GNU <code>objcopy</code>/<code>ld</code> 2.42 route. Configuration verifies
+    both XML files and their provenance, license inventory, and source license
+    by exact size and SHA-256 before generating two read-only,
+    non-executable-stack resources with local boundary symbols. These governed
+    inputs remain source-distribution evidence and are not installed. The
+    resulting archive does not read dictionaries from a runtime path.</p>
+
+    <p>The embedded build exposes an explicit
+    <code>infinite_adapter_package</code> target. Configure the exact source
+    commit, tree, merge base, diff SHA-256, accepted specification commit,
+    tree and semantic bundle SHA-256, build image name and digest, and the
+    path-independent build command through the corresponding
+    <code>IRFQ_INFINITE_*</code> CMake cache values. Packaging is available only
+    in the governed container after configuring <code>/src</code> into
+    <code>/build</code>; invoke the target with:</p>
+    <pre class='fragment'>
+cmake --build /build --parallel 2 --target infinite_adapter_package
+</pre>
+    <p>The target fails closed when any identity is absent or invalid. It
+    also requires the governed container paths <code>/src</code>,
+    <code>/build</code>, and <code>/build/out</code>, the explicit
+    <code>/usr/bin/gcc-13</code> and <code>/usr/bin/g++-13</code> compilers and
+    canonical <code>/usr/bin</code> Ninja/binutils tools (including
+    <code>ar</code> and <code>ranlib</code>),
+    the default CMake Release flags, and no extra compiler or static-linker
+    flags. The recorded build command must equal that canonical configure and
+    two-job package-target invocation exactly. The target
+    writes only <code>/build/infinite-adapter-package/</code>, containing
+    <code>libquickfix.a</code>, <code>InfiniteFrameAdapter.h</code>,
+    <code>infinite-frame-adapter-abi.v2.tsv</code>, <code>LICENSES.txt</code>,
+    and <code>manifest.sha256</code>. The package preserves source artifact and
+    license bytes, including the distinct QuickFIX, FIX dictionary,
+    double-conversion, pugixml, and scope_guard notices. It is validated before
+    publication and is not installed by <code>cmake --install</code>.</p>
 
     <p>A C17 consumer must include the installed header, statically link
     <code>libquickfix.a</code> (using the C++ linker or its required C++ runtime
@@ -206,6 +242,14 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=OFF \
     structure size and ABI version. Input is borrowed for one call and output is
     written only to caller-owned bounded buffers; a short buffer reports the
     exact required capacity without changing session state.</p>
+
+    <p>An application-dispatch <code>REJECT</code> resume must supply a
+    <code>gateway_inbound_disposition_id</code> of 1&ndash;64 visible ASCII
+    bytes. The slice is borrowed only for that call and is copied into tag
+    <code>20003</code> of the governed <code>BusinessMessageReject</code>;
+    every other resume must supply exactly <code>{NULL, 0}</code>. The adapter
+    derives optional tag <code>379</code> from the validated inbound message
+    and never retains the caller pointer.</p>
 
     <p>The session handle is exclusively owned. Calls for one handle must not
     overlap, ownership may move between threads only after the previous call has

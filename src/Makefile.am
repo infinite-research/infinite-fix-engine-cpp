@@ -22,7 +22,8 @@ at_LDADD = C++/libquickfix.la
 ut_LDADD = C++/libquickfix.la
 pt_LDADD = C++/libquickfix.la
 
-AM_CPPFLAGS = -IC++ -IC++/test
+AM_CPPFLAGS = -I$(top_builddir)/src/C++ -I$(top_builddir)/src/C++/test \
+	-I$(top_srcdir)/src/C++ -I$(top_srcdir)/src/C++/test
 pt_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN $(AM_CPPFLAGS)
 
 all-local:

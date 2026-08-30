@@ -79,8 +79,7 @@ if (QUICKFIX_TESTS)
     target_compile_definitions(ut PRIVATE IRFQ_INFINITE_EMBED_DICTIONARIES=1)
   endif()
   
-  target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
-    ${PROJECT_SOURCE_DIR}/src/C++)
+  target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR}/src/C++)
     
   target_link_libraries(ut ${PROJECT_NAME})
 
@@ -99,11 +98,12 @@ if (QUICKFIX_TESTS)
   
   if (NOT WIN32)
   ADD_CUSTOM_TARGET(ut_target ALL
-                    COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE:ut> ${PROJECT_SOURCE_DIR}/test/ut)
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_BINARY_DIR}/test
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE:ut> ${PROJECT_BINARY_DIR}/test/ut)
   else()
   set_target_properties(ut PROPERTIES
-                        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PROJECT_SOURCE_DIR}/test/debug/ut/
-                        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PROJECT_SOURCE_DIR}/test/release/ut/
-                        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_SOURCE_DIR}/test/release/ut/)
+                        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PROJECT_BINARY_DIR}/test/debug/ut/
+                        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PROJECT_BINARY_DIR}/test/release/ut/
+                        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_BINARY_DIR}/test/release/ut/)
   endif()
 endif()

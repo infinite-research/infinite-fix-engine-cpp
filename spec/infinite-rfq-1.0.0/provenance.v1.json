@@ -44,8 +44,8 @@
     {
       "id": "stdlib-generator",
       "path": "docs/fix-dictionaries/generate.py",
-      "byte_length": 72690,
-      "sha256": "4881bf7e27db433071c8ddb29262b479df43ac2a67d7b97baa6fd5a3b29f824f"
+      "byte_length": 72805,
+      "sha256": "14d7f5a07315456260e58d4b652c5f1d52fabb5b02ee6739f7a73e120a25efc2"
     },
     {
       "id": "license-inventory",
@@ -58,14 +58,14 @@
     {
       "id": "INFINITE-FIXT11",
       "path": "docs/fix-dictionaries/generated/INFINITE-FIXT11.xml",
-      "byte_length": 10148,
-      "sha256": "3a784e84ad56dc7bec927ec3a4a4df48c4aa96d5e44ec19d39e598f1d8a57614"
+      "byte_length": 9242,
+      "sha256": "75ecae3957f5f5b0cc8613ac8976bb33dfe3e2edf012cdf36087b349ad5f85e5"
     },
     {
       "id": "INFINITE-RFQ-1.0.0-EP299",
       "path": "docs/fix-dictionaries/generated/INFINITE-RFQ-1.0.0-EP299.xml",
-      "byte_length": 90828,
-      "sha256": "cfb51043093a9939c35b0d5c4a0783320e86825cc0d81469067ea69ddbeb8df8"
+      "byte_length": 79971,
+      "sha256": "d9ce75d206573a391dbcb83a61665f3844916cfd63006d6ab99d645bac6d2551"
     }
   ],
   "license_inventory": {

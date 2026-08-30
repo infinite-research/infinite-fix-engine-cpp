@@ -117,8 +117,6 @@ TEST_CASE("HostDetailsProviderTests") {
     settings.setString("SocketConnectSourceHost3", "192.0.0.3");
     settings.setString("SocketConnectSourcePort3", "7003");
 
-    int startOvertIntervalInSeconds = 20;
-
     HostDetailsProvider detailsProvider;
     detailsProvider.getTime = []() { return 0; };
 

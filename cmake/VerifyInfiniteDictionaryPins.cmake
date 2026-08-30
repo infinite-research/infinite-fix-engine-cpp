@@ -1,8 +1,8 @@
 function(irfq_verify_infinite_dictionary_pins dictionary_dir)
   set(pins
-      "infinite-rfq-1.0.0/INFINITE-FIXT11.xml|10148|3a784e84ad56dc7bec927ec3a4a4df48c4aa96d5e44ec19d39e598f1d8a57614"
-      "infinite-rfq-1.0.0/INFINITE-RFQ-1.0.0-EP299.xml|90828|cfb51043093a9939c35b0d5c4a0783320e86825cc0d81469067ea69ddbeb8df8"
-      "infinite-rfq-1.0.0/provenance.v1.json|2755|7ee311b779cd886b8c613304ee40803529cca71e36052f2263b6c1b48ee18b07"
+      "infinite-rfq-1.0.0/INFINITE-FIXT11.xml|9242|75ecae3957f5f5b0cc8613ac8976bb33dfe3e2edf012cdf36087b349ad5f85e5"
+      "infinite-rfq-1.0.0/INFINITE-RFQ-1.0.0-EP299.xml|79971|d9ce75d206573a391dbcb83a61665f3844916cfd63006d6ab99d645bac6d2551"
+      "infinite-rfq-1.0.0/provenance.v1.json|2754|18a671069a156f19a9898dcbe7a7e4b283f063116cc20d756bbcf9ef840d2af4"
       "infinite-rfq-1.0.0/license-inventory.v1.json|1076|f76489fe025d794f38f394f34569d899235af925ad24444ebba555f09710de31"
       "infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt|11357|b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1")
   set(governed_inputs)
