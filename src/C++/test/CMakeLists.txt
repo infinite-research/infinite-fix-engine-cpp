@@ -95,6 +95,14 @@ if (QUICKFIX_TESTS)
     NAME quickfix_unit
     COMMAND ut --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
   set_tests_properties(quickfix_unit PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime)
+
+  if (NOT WIN32)
+    add_test(
+      NAME infinite_acceptance_harness_contract
+      COMMAND sh ${PROJECT_SOURCE_DIR}/test/AcceptanceHarnessTest.sh
+                 ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+    set_tests_properties(infinite_acceptance_harness_contract PROPERTIES TIMEOUT 30)
+  endif()
   
   if (NOT WIN32)
   ADD_CUSTOM_TARGET(ut_target ALL
