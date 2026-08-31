@@ -133,7 +133,8 @@ if (QUICKFIX_TESTS)
       COMMAND "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer/InfiniteFrameAdapterInstalledConsumer")
     set_tests_properties(
       infinite_frame_adapter_installed_consumer
-      PROPERTIES FIXTURES_REQUIRED irfq_infinite_adapter_installed_consumer)
+      PROPERTIES FIXTURES_REQUIRED irfq_infinite_adapter_installed_consumer
+                 TIMEOUT 30)
   endif()
   add_test(
     NAME quickfix_unit
