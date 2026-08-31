@@ -242,13 +242,14 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
 
   SECTION("accumulator overflow is rejected before the next append") {
     InfiniteCompleteFrameDispatcher dispatcher({1, MAX_FRAME_BYTES});
-    const std::string starved = "8=" + std::string(MAX_FRAME_BYTES - 2, 'x');
+    const std::string bodyLengthPrefix = "8=FIX.4.2\0019=";
+    const std::string starved = bodyLengthPrefix + std::string(MAX_FRAME_BYTES - bodyLengthPrefix.size(), '0');
     const auto first = dispatcher.process(starved.data(), starved.size(), observedAt(1));
     CHECK(first.frames.empty());
     CHECK(first.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     InfiniteCompleteFrameDispatcher oneRead({1, MAX_FRAME_BYTES});
-    const std::string oversizedStarved = "8=" + std::string(MAX_FRAME_BYTES - 1, 'x');
+    const std::string oversizedStarved = starved + "0";
     const auto sameRead = oneRead.process(oversizedStarved.data(), oversizedStarved.size(), observedAt(1));
     CHECK(sameRead.frames.empty());
     CHECK(sameRead.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
@@ -262,13 +263,15 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     CHECK(prefixedResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
 
     InfiniteCompleteFrameDispatcher bytewise({1, MAX_FRAME_BYTES});
-    const auto header = bytewise.process("8=", 2, observedAt(1));
+    const auto header = bytewise.process(bodyLengthPrefix.data(), bodyLengthPrefix.size(), observedAt(1));
     CHECK_FALSE(header.terminalFault.has_value());
     InfiniteDispatchResult bytewiseResult;
     bool faultedEarly = false;
-    for (std::size_t index = 0; index < MAX_FRAME_BYTES - 2; ++index) {
-      bytewiseResult = bytewise.process("x", 1, observedAt(static_cast<std::int64_t>(index + 2)));
-      faultedEarly = faultedEarly || (index + 1 < MAX_FRAME_BYTES - 2 && bytewiseResult.terminalFault.has_value());
+    for (std::size_t index = 0; index < MAX_FRAME_BYTES - bodyLengthPrefix.size(); ++index) {
+      bytewiseResult = bytewise.process("0", 1, observedAt(static_cast<std::int64_t>(index + 2)));
+      faultedEarly
+          = faultedEarly
+            || (index + 1 < MAX_FRAME_BYTES - bodyLengthPrefix.size() && bytewiseResult.terminalFault.has_value());
     }
     CHECK_FALSE(faultedEarly);
     CHECK(bytewiseResult.terminalFault == InfiniteDispatchFault::AccumulatorOverflow);
@@ -434,6 +437,16 @@ TEST_CASE("InfiniteCompleteFrameDispatcherTests") {
     REQUIRE(result.frames.size() == 1);
     CHECK(result.frames[0].bytes == valid);
     CHECK(result.terminalFault == InfiniteDispatchFault::FrameTooLarge);
+  }
+
+  SECTION("a valid prefix is returned before an overlong BeginString") {
+    InfiniteCompleteFrameDispatcher dispatcher({2, MAX_FRAME_BYTES});
+    const auto valid = makeMessageOfSize(128);
+    const std::string read = valid + "8=" + std::string(17, 'X');
+    const auto result = dispatcher.process(read.data(), read.size(), observedAt(1));
+    REQUIRE(result.frames.size() == 1);
+    CHECK(result.frames[0].bytes == valid);
+    CHECK(result.terminalFault == InfiniteDispatchFault::MalformedFrame);
   }
 
   SECTION("a fragmented maximum frame can complete alongside a valid successor") {

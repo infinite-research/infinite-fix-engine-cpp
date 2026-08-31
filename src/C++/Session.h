@@ -44,6 +44,7 @@
 
 namespace FIX {
 class InfiniteSessionPlanner;
+class SessionTestAccess;
 
 /// Maintains the state and implements the logic of a %FIX %session.
 class Session {
@@ -231,6 +232,7 @@ public:
 
 private:
   friend class InfiniteSessionPlanner;
+  friend class SessionTestAccess;
 
   Session(
       std::function<UtcTimeStamp()> timestamper,

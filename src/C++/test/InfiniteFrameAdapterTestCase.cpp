@@ -97,6 +97,8 @@ std::array<std::uint32_t, 4> infiniteFrameAdapterStockNonconformanceSmokeScrubOb
 bool infiniteFrameAdapterStockNonconformanceSmokePendingPlanRetainsBusinessRejectRefId() noexcept;
 void scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId(
     irfq_infinite_session_v2 *session) noexcept;
+void resetInfiniteCompleteFrameBeginStringVisits() noexcept;
+std::size_t stopInfiniteCompleteFrameBeginStringVisits() noexcept;
 } // namespace FIX
 
 namespace {
@@ -5775,6 +5777,94 @@ TEST_CASE(
   init(response);
   REQUIRE(irfq_infinite_scan_v2(&request, &response) == IRFQ_INFINITE_STATUS_FRAME_READY_V2);
   CHECK(response.complete_prefix_length == second.size());
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 scan bounds BeginString and preserves BodyLength status across every split",
+    "[infinite][adapter][v2][scan][bounds]") {
+  const auto scan = [](const std::string &input, const irfq_infinite_scan_cursor_v2 &cursor) {
+    irfq_infinite_scan_request_v2 request{};
+    init(request);
+    request.input = slice(input);
+    request.cursor = cursor;
+    irfq_infinite_scan_response_v2 response{};
+    init(response);
+    response.complete_prefix_length = UINT64_MAX;
+    response.cursor = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT32_MAX, UINT32_MAX};
+    const auto status = irfq_infinite_scan_v2(&request, &response);
+    return std::pair{status, response};
+  };
+  const auto checkZeroResult = [](const irfq_infinite_scan_response_v2 &response) {
+    CHECK(response.complete_prefix_length == 0);
+    CHECK(response.cursor.scan_offset == 0);
+    CHECK(response.cursor.body_length == 0);
+    CHECK(response.cursor.checksum_begin == 0);
+    CHECK(response.cursor.stage == IRFQ_INFINITE_SCAN_BEGIN_STRING_V2);
+    CHECK(response.cursor.body_length_has_digit == IRFQ_INFINITE_NO_V2);
+  };
+
+  const std::string oneByteBegin = "8=X\0019=0\00110=000\001";
+  CHECK(scan(oneByteBegin, {}).first == IRFQ_INFINITE_STATUS_FRAME_READY_V2);
+  const std::string maximumBegin = "8=1234567890123456\0019=0\00110=000\001";
+  CHECK(scan(maximumBegin, {}).first == IRFQ_INFINITE_STATUS_FRAME_READY_V2);
+
+  const std::string maximumPrefix = "8=1234567890123456";
+  const auto maximumPartial = scan(maximumPrefix, {});
+  REQUIRE(maximumPartial.first == IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+  const auto overlong = scan(maximumPrefix + "7", maximumPartial.second.cursor);
+  CHECK(overlong.first == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  checkZeroResult(overlong.second);
+
+  FIX::resetInfiniteCompleteFrameBeginStringVisits();
+  std::string cumulative = "8=";
+  irfq_infinite_scan_cursor_v2 cursor{};
+  for (std::size_t valueLength = 1; valueLength <= 17; ++valueLength) {
+    cumulative.push_back('X');
+    const auto result = scan(cumulative, cursor);
+    if (valueLength <= 16) {
+      REQUIRE(result.first == IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+      cursor = result.second.cursor;
+    } else {
+      CHECK(result.first == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      checkZeroResult(result.second);
+    }
+  }
+  const auto visits = FIX::stopInfiniteCompleteFrameBeginStringVisits();
+  CHECK(visits >= 17);
+  CHECK(visits <= 17 * 17);
+
+  const auto emptyBegin = scan("8=\0019=0\00110=000\001", {});
+  CHECK(emptyBegin.first == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  checkZeroResult(emptyBegin.second);
+
+  const std::string fragmentedFixt = "8=FIXT.1.1\0019=0\00110=000\001";
+  const auto fixtPrefix = scan(fragmentedFixt.substr(0, 7), {});
+  REQUIRE(fixtPrefix.first == IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+  CHECK(scan(fragmentedFixt, fixtPrefix.second.cursor).first == IRFQ_INFINITE_STATUS_FRAME_READY_V2);
+
+  const std::string oversizedLength = "8=FIXT.1.1\0019=65537\001";
+  for (std::size_t split = 0; split <= oversizedLength.size(); ++split) {
+    INFO("split=" << split);
+    const auto first = scan(oversizedLength.substr(0, split), {});
+    if (split == oversizedLength.size()) {
+      CHECK(first.first == IRFQ_INFINITE_STATUS_LIMIT_EXCEEDED_V2);
+      checkZeroResult(first.second);
+      continue;
+    }
+    REQUIRE(first.first == IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+    const auto completed = scan(oversizedLength, first.second.cursor);
+    CHECK(completed.first == IRFQ_INFINITE_STATUS_LIMIT_EXCEEDED_V2);
+    checkZeroResult(completed.second);
+  }
+
+  for (const std::string malformed : {
+           "8=FIXT.1.1\0019=6553x\001",
+           "8=FIXT.1.1\0019=999999999999999999999\001",
+       }) {
+    const auto result = scan(malformed, {});
+    CHECK(result.first == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    checkZeroResult(result.second);
+  }
 }
 
 TEST_CASE(

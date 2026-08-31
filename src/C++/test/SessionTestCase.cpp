@@ -58,6 +58,32 @@
 
 #include "catch_amalgamated.hpp"
 
+#include <memory>
+
+namespace FIX {
+class SessionTestAccess {
+public:
+  static std::unique_ptr<Session> detached(
+      std::function<UtcTimeStamp()> timestamper,
+      Application &application,
+      MessageStoreFactory &stores,
+      const SessionID &sessionID,
+      const DataDictionaryProvider &dictionaries,
+      const TimeRange &sessionTime) {
+    return std::unique_ptr<Session>(new Session(
+        std::move(timestamper),
+        application,
+        stores,
+        sessionID,
+        dictionaries,
+        sessionTime,
+        0,
+        nullptr,
+        true));
+  }
+};
+} // namespace FIX
+
 using namespace FIX;
 
 namespace {
@@ -662,6 +688,58 @@ struct acceptorT11Fixture : public sessionT11Fixture {
       : sessionT11Fixture(0) {}
 };
 } // namespace
+
+TEST_CASE(
+    "detached sessions share immutable dictionaries while ordinary sessions own copies",
+    "[session][dictionary]") {
+  TestCallback callback;
+  DataDictionaryProvider dictionaries;
+  auto transport = std::make_shared<DataDictionary>();
+  auto application = std::make_shared<DataDictionary>();
+  dictionaries.addTransportDataDictionary(BeginString("FIXT.1.1"), transport);
+  dictionaries.addApplicationDataDictionary(ApplVerID("10"), application);
+  const auto transportOwners = transport.use_count();
+  const auto applicationOwners = application.use_count();
+  const auto now = UtcTimeStamp::now();
+  const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+
+  Session ordinary(
+      [now] { return now; },
+      callback,
+      callback.factory,
+      SessionID(BeginString("FIXT.1.1"), SenderCompID("ORDINARY"), TargetCompID("VENUE")),
+      dictionaries,
+      nonstop,
+      0,
+      nullptr);
+  CHECK(
+      &ordinary.getDataDictionaryProvider().getSessionDataDictionary(BeginString("FIXT.1.1"))
+      != &dictionaries.getSessionDataDictionary(BeginString("FIXT.1.1")));
+  CHECK(
+      &ordinary.getDataDictionaryProvider().getApplicationDataDictionary(ApplVerID("10"))
+      != &dictionaries.getApplicationDataDictionary(ApplVerID("10")));
+  CHECK(transport.use_count() == transportOwners);
+  CHECK(application.use_count() == applicationOwners);
+
+  auto detached = SessionTestAccess::detached(
+      [now] { return now; },
+      callback,
+      callback.factory,
+      SessionID(BeginString("FIXT.1.1"), SenderCompID("DETACHED"), TargetCompID("VENUE")),
+      dictionaries,
+      nonstop);
+  CHECK(
+      &detached->getDataDictionaryProvider().getSessionDataDictionary(BeginString("FIXT.1.1"))
+      == &dictionaries.getSessionDataDictionary(BeginString("FIXT.1.1")));
+  CHECK(
+      &detached->getDataDictionaryProvider().getApplicationDataDictionary(ApplVerID("10"))
+      == &dictionaries.getApplicationDataDictionary(ApplVerID("10")));
+  CHECK(transport.use_count() == transportOwners + 1);
+  CHECK(application.use_count() == applicationOwners + 1);
+  detached.reset();
+  CHECK(transport.use_count() == transportOwners);
+  CHECK(application.use_count() == applicationOwners);
+}
 
 TEST_CASE_METHOD(sessionFixture, "SessionTestCase") {
   SECTION("supportsSubMillisecondTimestamps") {

@@ -42,7 +42,21 @@
 namespace FIX {
 namespace {
 constexpr std::size_t MAX_FRAME_BYTES = 65'536;
+constexpr std::size_t MAX_BEGIN_STRING_BYTES = 16;
 constexpr std::size_t CHECKSUM_FIELD_BYTES = 7;
+
+struct BeginStringVisitState {
+  bool enabled{false};
+  std::size_t count{0};
+};
+
+thread_local BeginStringVisitState beginStringVisits;
+
+void countBeginStringVisit() noexcept {
+  if (beginStringVisits.enabled) {
+    ++beginStringVisits.count;
+  }
+}
 
 void cleanse(char *bytes, std::size_t length) noexcept {
 #ifdef HAVE_SSL
@@ -84,7 +98,7 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
   if ((length != 0 && bytes == nullptr) || cursor.stage > 3 || cursor.frameStart > length
       || (cursor.scanOffset > length
           && !(cursor.stage == 0 && cursor.scanOffset == cursor.frameStart + 2 && length - cursor.frameStart < 2))
-      || cursor.bodyLength > MAX_FRAME_BYTES
+      || (cursor.stage != 2 && cursor.bodyLength > MAX_FRAME_BYTES)
       || (cursor.checksumBegin != 0
           && (cursor.checksumBegin < cursor.frameStart
               || cursor.checksumBegin - cursor.frameStart > MAX_FRAME_BYTES))) {
@@ -98,13 +112,23 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
     if ((available != 0 && bytes[cursor.frameStart] != '8') || (available > 1 && bytes[cursor.frameStart + 1] != '=')) {
       return InfiniteDeclaredFrameScanResult::Malformed;
     }
-    while (cursor.scanOffset < length && bytes[cursor.scanOffset] != '\001') {
+    while (cursor.scanOffset < length) {
+      countBeginStringVisit();
+      if (bytes[cursor.scanOffset] == '\001') {
+        break;
+      }
+      if (cursor.scanOffset - (cursor.frameStart + 2) >= MAX_BEGIN_STRING_BYTES) {
+        return InfiniteDeclaredFrameScanResult::Malformed;
+      }
       if (bytes[cursor.scanOffset] == '=' && bytes[cursor.scanOffset - 1] == '8') {
         return InfiniteDeclaredFrameScanResult::Malformed;
       }
       ++cursor.scanOffset;
     }
     if (cursor.scanOffset < length) {
+      if (cursor.scanOffset == cursor.frameStart + 2) {
+        return InfiniteDeclaredFrameScanResult::Malformed;
+      }
       cursor.stage = 1;
     }
   }
@@ -177,6 +201,13 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
     }
   }
   return InfiniteDeclaredFrameScanResult::NeedMore;
+}
+
+void resetInfiniteCompleteFrameBeginStringVisits() noexcept { beginStringVisits = {true, 0}; }
+
+std::size_t stopInfiniteCompleteFrameBeginStringVisits() noexcept {
+  beginStringVisits.enabled = false;
+  return beginStringVisits.count;
 }
 
 InfiniteCompleteFrame::InfiniteCompleteFrame(InfiniteSensitiveString value, std::int64_t observedTaiNs)
