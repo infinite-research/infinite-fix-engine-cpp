@@ -206,9 +206,13 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=OFF \
     resulting archive does not read dictionaries from a runtime path.</p>
 
     <p>The embedded build exposes an explicit
-    <code>infinite_adapter_package</code> target. Configure the exact source
-    commit, tree, merge base, diff SHA-256, accepted specification commit,
-    tree and semantic bundle SHA-256, build image name and digest, and the
+    <code>infinite_adapter_package</code> target. It derives the source commit,
+    tree, merge base, and canonical binary diff SHA-256 from the clean
+    <code>/src</code> Git checkout and the pinned release base. Packaging
+    therefore requires complete, readable Git metadata; source tarballs,
+    shallow or promisor checkouts, missing objects, and tracked or untracked
+    changes are rejected. Configure the accepted specification commit, tree
+    and semantic bundle SHA-256, build image name and digest, and the
     path-independent build command through the corresponding
     <code>IRFQ_INFINITE_*</code> CMake cache values. Packaging is available only
     in the governed container after configuring <code>/src</code> into

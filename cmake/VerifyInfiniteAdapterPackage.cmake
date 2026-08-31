@@ -25,7 +25,6 @@ set(_irfq_manifest_keys
     objcopy
     linker
     ar
-    ranlib
     build_type
     have_ssl
     quickfix_shared_libs
@@ -102,6 +101,134 @@ function(_irfq_require_artifact package_path source_path size_value hash_value l
   _irfq_require_equal("${_package_hash}" "${_source_hash}" "${label} source SHA-256")
 endfunction()
 
+function(_irfq_verify_source_provenance checkout release_base self_test_base allow_self_test_base)
+  if(NOT release_base STREQUAL "386ce46e917ae494ab6e90b1be90fd421cdbe3f9")
+    message(FATAL_ERROR "source release base must equal the pinned production release base")
+  endif()
+  if(allow_self_test_base)
+    if(self_test_base STREQUAL "")
+      message(FATAL_ERROR "package verifier self-test requires its explicit synthetic release base")
+    endif()
+    set(_base "${self_test_base}")
+  else()
+    if(NOT self_test_base STREQUAL "")
+      message(FATAL_ERROR "production verification cannot override the pinned source release base")
+    endif()
+    set(_base "${release_base}")
+  endif()
+  if(NOT IS_ABSOLUTE "${checkout}" OR NOT IS_DIRECTORY "${checkout}" OR IS_SYMLINK "${checkout}")
+    message(FATAL_ERROR "source checkout must be an absolute non-symlink directory")
+  endif()
+  file(REAL_PATH "${checkout}" _checkout)
+  set(_clean_env
+      "${CMAKE_COMMAND}" -E env
+      --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_COMMON_DIR --unset=GIT_INDEX_FILE
+      --unset=GIT_OBJECT_DIRECTORY --unset=GIT_ALTERNATE_OBJECT_DIRECTORIES --unset=GIT_SHALLOW_FILE
+      --unset=GIT_REPLACE_REF_BASE --unset=GIT_CONFIG_COUNT --unset=GIT_CONFIG_PARAMETERS
+      --unset=GIT_CONFIG_SYSTEM --unset=GIT_EXTERNAL_DIFF --unset=GIT_DIFF_OPTS --unset=GIT_PAGER
+      --unset=GIT_NAMESPACE
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
+      GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0
+      LC_ALL=C LANG=C)
+  set(_fixed_config
+      -c core.attributesFile=/dev/null -c core.quotePath=true -c core.bigFileThreshold=512m
+      -c diff.external= -c diff.noprefix=false -c diff.mnemonicPrefix=false
+      -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ -c diff.algorithm=myers
+      -c diff.indentHeuristic=true -c diff.compactionHeuristic=false
+      -c diff.suppressBlankEmpty=false -c diff.interHunkContext=0 -c diff.submodule=short
+      -c diff.orderFile=/dev/null -c color.ui=false)
+
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}" rev-parse --show-toplevel
+    RESULT_VARIABLE _top_result OUTPUT_VARIABLE _top ERROR_VARIABLE _top_error OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _top_result EQUAL 0)
+    message(FATAL_ERROR "verifier cannot read source checkout Git metadata: ${_top_error}")
+  endif()
+  file(REAL_PATH "${_top}" _top)
+  if(NOT _top STREQUAL _checkout)
+    message(FATAL_ERROR "verified source checkout must equal the Git worktree root")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            rev-parse --is-shallow-repository
+    RESULT_VARIABLE _shallow_result OUTPUT_VARIABLE _shallow ERROR_VARIABLE _shallow_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _shallow_result EQUAL 0 OR NOT _shallow STREQUAL "false")
+    message(FATAL_ERROR "verified source checkout must have complete non-shallow metadata: ${_shallow_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            config --get-regexp "^(extensions\\.partialclone|remote\\..*\\.promisor)$"
+    RESULT_VARIABLE _partial_result OUTPUT_VARIABLE _partial ERROR_VARIABLE _partial_error)
+  if(_partial_result EQUAL 0)
+    message(FATAL_ERROR "verified source checkout must not use promisor or partial-clone metadata: ${_partial}")
+  elseif(NOT _partial_result EQUAL 1)
+    message(FATAL_ERROR "verifier could not inspect partial-clone metadata: ${_partial_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+    RESULT_VARIABLE _status_result OUTPUT_VARIABLE _status ERROR_VARIABLE _status_error)
+  if(NOT _status_result EQUAL 0 OR NOT _status STREQUAL "")
+    message(FATAL_ERROR "verified source checkout must be clean: ${_status}${_status_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            rev-parse --verify "HEAD^{commit}"
+    RESULT_VARIABLE _commit_result OUTPUT_VARIABLE _commit ERROR_VARIABLE _commit_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _commit_result EQUAL 0)
+    message(FATAL_ERROR "verifier cannot read source HEAD commit: ${_commit_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            rev-parse --verify "HEAD^{tree}"
+    RESULT_VARIABLE _tree_result OUTPUT_VARIABLE _tree ERROR_VARIABLE _tree_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _tree_result EQUAL 0)
+    message(FATAL_ERROR "verifier cannot read source HEAD tree: ${_tree_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}" cat-file -e "${_base}^{commit}"
+    RESULT_VARIABLE _base_result ERROR_VARIABLE _base_error)
+  if(NOT _base_result EQUAL 0)
+    message(FATAL_ERROR "verifier cannot read source release-base commit: ${_base_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            merge-base --is-ancestor "${_base}" "${_commit}"
+    RESULT_VARIABLE _ancestor_result ERROR_VARIABLE _ancestor_error)
+  if(NOT _ancestor_result EQUAL 0)
+    message(FATAL_ERROR "verified source release base is not an ancestor of HEAD: ${_ancestor_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            merge-base "${_commit}" "${_base}"
+    RESULT_VARIABLE _merge_result OUTPUT_VARIABLE _merge_base ERROR_VARIABLE _merge_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _merge_result EQUAL 0 OR NOT _merge_base STREQUAL _base)
+    message(FATAL_ERROR "verified source merge base must equal the pinned release base: ${_merge_base}${_merge_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}" --no-pager diff
+            --no-ext-diff --no-textconv --no-color --binary --full-index --no-renames --ignore-submodules=none
+            --src-prefix=a/ --dst-prefix=b/ --diff-algorithm=myers --indent-heuristic --unified=3
+            "${_merge_base}" "${_commit}" --
+    COMMAND "${IRFQ_EXPECTED_SHA256SUM}"
+    RESULTS_VARIABLE _diff_results OUTPUT_VARIABLE _diff_output ERROR_VARIABLE _diff_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT "${_diff_results}" STREQUAL "0;0" OR NOT _diff_output MATCHES "^([0-9a-f]+)[ \t]+-$")
+    message(FATAL_ERROR "verifier could not hash the canonical source diff: ${_diff_output}${_diff_error}")
+  endif()
+  set(_diff_sha256 "${CMAKE_MATCH_1}")
+  _irfq_require_hex("${_diff_sha256}" 64 "derived source diff SHA-256")
+
+  set(IRFQ_VERIFIED_SOURCE_COMMIT "${_commit}" PARENT_SCOPE)
+  set(IRFQ_VERIFIED_SOURCE_TREE "${_tree}" PARENT_SCOPE)
+  set(IRFQ_VERIFIED_SOURCE_MERGE_BASE "${_merge_base}" PARENT_SCOPE)
+  set(IRFQ_VERIFIED_SOURCE_DIFF_SHA256 "${_diff_sha256}" PARENT_SCOPE)
+endfunction()
+
 if(SELF_TEST)
   _irfq_require(IRFQ_INFINITE_SELF_TEST_DIR)
   if(NOT IS_ABSOLUTE "${IRFQ_INFINITE_SELF_TEST_DIR}")
@@ -149,6 +276,63 @@ if(SELF_TEST)
   find_program(_irfq_self_ar NAMES ar REQUIRED)
   find_program(_irfq_self_ranlib NAMES ranlib REQUIRED)
   find_program(_irfq_self_readelf NAMES readelf REQUIRED)
+  find_program(_irfq_self_git NAMES git REQUIRED)
+  find_program(_irfq_self_sha256sum NAMES sha256sum REQUIRED)
+
+  set(_irfq_self_source_checkout "${_irfq_self_root}/source")
+  file(MAKE_DIRECTORY "${_irfq_self_source_checkout}")
+  execute_process(COMMAND "${_irfq_self_git}" init -q --object-format=sha1 "${_irfq_self_source_checkout}"
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config user.name
+                          "Infinite package self-test" COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config user.email
+                          self-test@example.invalid COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\n")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+            GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
+            "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" commit -q -m base
+    COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" rev-parse HEAD
+    OUTPUT_VARIABLE _irfq_self_source_base OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\nhead\n")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+            GIT_AUTHOR_DATE=2000-01-02T00:00:00Z GIT_COMMITTER_DATE=2000-01-02T00:00:00Z
+            "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" commit -q -m head
+    COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" rev-parse HEAD
+    OUTPUT_VARIABLE _irfq_self_source_commit OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" rev-parse "HEAD^{tree}"
+    OUTPUT_VARIABLE _irfq_self_source_tree OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${_irfq_self_git}" -c core.attributesFile=/dev/null -c diff.external= -c diff.noprefix=false
+            -c diff.mnemonicPrefix=false -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ -c diff.algorithm=myers
+            -c diff.indentHeuristic=true -c core.quotePath=true -C "${_irfq_self_source_checkout}"
+            --no-pager diff --no-ext-diff --binary --full-index --no-renames
+            "${_irfq_self_source_base}" "${_irfq_self_source_commit}" --
+    COMMAND "${_irfq_self_sha256sum}"
+    OUTPUT_VARIABLE _irfq_self_source_diff_output OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  if(NOT _irfq_self_source_diff_output MATCHES "^([0-9a-f]+)[ \t]+-$")
+    message(FATAL_ERROR "could not derive self-test source diff SHA-256: ${_irfq_self_source_diff_output}")
+  endif()
+  set(_irfq_self_source_diff "${CMAKE_MATCH_1}")
+  _irfq_require_hex("${_irfq_self_source_diff}" 64 "self-test source diff SHA-256")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config diff.noprefix true
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config diff.algorithm histogram
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config diff.indentHeuristic false
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config diff.mnemonicPrefix true
+                  COMMAND_ERROR_IS_FATAL ANY)
   file(WRITE "${_irfq_input_dir}/exports.c"
        "__attribute__((visibility(\"hidden\"))) const unsigned char irfq_infinite_embedded_dictionaries_v1 = 0;\n"
        "void irfq_infinite_abort_v2(void) {}\n"
@@ -170,10 +354,10 @@ if(SELF_TEST)
     message(FATAL_ERROR "could not create self-test archive: ${_irfq_compile_error}${_irfq_ar_error}")
   endif()
 
-  set(_irfq_self_source_commit 1111111111111111111111111111111111111111)
-  set(_irfq_self_source_tree 2222222222222222222222222222222222222222)
-  set(_irfq_self_source_merge_base 3333333333333333333333333333333333333333)
-  set(_irfq_self_source_diff 4444444444444444444444444444444444444444444444444444444444444444)
+  set(_irfq_self_fake_source_commit 1111111111111111111111111111111111111111)
+  set(_irfq_self_fake_source_tree 2222222222222222222222222222222222222222)
+  set(_irfq_self_fake_source_merge_base 3333333333333333333333333333333333333333)
+  set(_irfq_self_fake_source_diff 4444444444444444444444444444444444444444444444444444444444444444)
   set(_irfq_self_spec_commit cb12d80aecd90f52b7fbcc009246dab640ba7a7b)
   set(_irfq_self_spec_tree bae719cd3d4001329f6efbe5e32d92be3549b5f9)
   set(_irfq_self_spec_bundle 4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9)
@@ -194,10 +378,13 @@ if(SELF_TEST)
       "-DIRFQ_PACKAGE_DOUBLE_CONVERSION_LICENSE=${_irfq_self_double_conversion_license}"
       "-DIRFQ_PACKAGE_PUGIXML_LICENSE=${_irfq_self_pugixml_license}"
       "-DIRFQ_PACKAGE_SCOPE_GUARD_LICENSE=${_irfq_self_scope_guard_license}"
-      "-DIRFQ_PACKAGE_SOURCE_COMMIT=${_irfq_self_source_commit}"
-      "-DIRFQ_PACKAGE_SOURCE_TREE=${_irfq_self_source_tree}"
-      "-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=${_irfq_self_source_merge_base}"
-      "-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=${_irfq_self_source_diff}"
+      "-DIRFQ_PACKAGE_SOURCE_CHECKOUT=${_irfq_self_source_checkout}"
+      "-DIRFQ_PACKAGE_SOURCE_RELEASE_BASE=386ce46e917ae494ab6e90b1be90fd421cdbe3f9"
+      "-DIRFQ_PACKAGE_SELF_TEST_RELEASE_BASE=${_irfq_self_source_base}"
+      "-DIRFQ_PACKAGE_SOURCE_COMMIT=${_irfq_self_fake_source_commit}"
+      "-DIRFQ_PACKAGE_SOURCE_TREE=${_irfq_self_fake_source_tree}"
+      "-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=${_irfq_self_fake_source_merge_base}"
+      "-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=${_irfq_self_fake_source_diff}"
       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=${_irfq_self_spec_commit}"
       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=${_irfq_self_spec_tree}"
       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=${_irfq_self_spec_bundle}"
@@ -216,6 +403,8 @@ if(SELF_TEST)
       "-DIRFQ_PACKAGE_LINKER=${_irfq_self_linker}"
       "-DIRFQ_PACKAGE_AR=${_irfq_self_ar}"
       "-DIRFQ_PACKAGE_RANLIB=${_irfq_self_ranlib}"
+      "-DIRFQ_PACKAGE_GIT=${_irfq_self_git}"
+      "-DIRFQ_PACKAGE_SHA256SUM=${_irfq_self_sha256sum}"
       "-DIRFQ_PACKAGE_READELF=${_irfq_self_readelf}"
       "-DIRFQ_PACKAGE_BUILD_TYPE=Release"
       "-DIRFQ_PACKAGE_HAVE_SSL=OFF"
@@ -252,15 +441,119 @@ if(SELF_TEST)
     message(FATAL_ERROR "positive package case failed:\n${_irfq_output}${_irfq_error}")
   endif()
 
+  file(READ "${_irfq_output_dir}/manifest.sha256" _irfq_first_manifest)
+  if(NOT _irfq_first_manifest MATCHES "source_commit=${_irfq_self_source_commit}\n"
+     OR NOT _irfq_first_manifest MATCHES "source_tree=${_irfq_self_source_tree}\n"
+     OR NOT _irfq_first_manifest MATCHES "source_merge_base=${_irfq_self_source_base}\n"
+     OR NOT _irfq_first_manifest MATCHES "source_diff_sha256=${_irfq_self_source_diff}\n")
+    message(FATAL_ERROR "packager trusted caller-supplied source identity claims")
+  endif()
+
+  set(_irfq_alternate_claims ${_irfq_self_common})
+  list(TRANSFORM _irfq_alternate_claims REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_COMMIT=.*" "-DIRFQ_PACKAGE_SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  list(TRANSFORM _irfq_alternate_claims REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_TREE=.*" "-DIRFQ_PACKAGE_SOURCE_TREE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+  list(TRANSFORM _irfq_alternate_claims REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=.*"
+       "-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=cccccccccccccccccccccccccccccccccccccccc")
+  list(TRANSFORM _irfq_alternate_claims REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=.*"
+       "-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_alternate_claims} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_alternate_claims_result
+    OUTPUT_VARIABLE _irfq_alternate_claims_output
+    ERROR_VARIABLE _irfq_alternate_claims_error)
+  if(NOT _irfq_alternate_claims_result EQUAL 0)
+    message(FATAL_ERROR
+            "package rejected irrelevant legacy source claims:\n${_irfq_alternate_claims_output}${_irfq_alternate_claims_error}")
+  endif()
+  file(READ "${_irfq_output_dir}/manifest.sha256" _irfq_second_manifest)
+  if(NOT _irfq_second_manifest STREQUAL _irfq_first_manifest)
+    message(FATAL_ERROR "legacy source claims changed package output")
+  endif()
+
   set(_irfq_missing_identity ${_irfq_self_common})
-  list(FILTER _irfq_missing_identity EXCLUDE REGEX "^-DIRFQ_PACKAGE_SOURCE_COMMIT=")
+  list(FILTER _irfq_missing_identity EXCLUDE REGEX "^-DIRFQ_PACKAGE_SOURCE_CHECKOUT=")
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_missing_identity} -P "${_irfq_package_script}"
     RESULT_VARIABLE _irfq_missing_identity_result
     OUTPUT_QUIET
     ERROR_QUIET)
   if(_irfq_missing_identity_result EQUAL 0)
-    message(FATAL_ERROR "packager accepted a missing explicit source identity")
+    message(FATAL_ERROR "packager accepted a missing source checkout")
+  endif()
+
+  file(APPEND "${_irfq_self_source_checkout}/source.txt" "staged\n")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
+                  COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_dirty_staged_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_dirty_staged_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted staged tracked source state")
+  endif()
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\nhead\n")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
+                  COMMAND_ERROR_IS_FATAL ANY)
+
+  file(APPEND "${_irfq_self_source_checkout}/source.txt" "unstaged\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_dirty_tracked_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_dirty_tracked_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted dirty tracked source state")
+  endif()
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\nhead\n")
+
+  file(WRITE "${_irfq_self_source_checkout}/untracked.txt" "dirty\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_dirty_untracked_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_dirty_untracked_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted untracked source state")
+  endif()
+  file(REMOVE "${_irfq_self_source_checkout}/untracked.txt")
+
+  set(_irfq_missing_base ${_irfq_self_common})
+  list(TRANSFORM _irfq_missing_base REPLACE
+       "^-DIRFQ_PACKAGE_SELF_TEST_RELEASE_BASE=.*"
+       "-DIRFQ_PACKAGE_SELF_TEST_RELEASE_BASE=0000000000000000000000000000000000000000")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_missing_base} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_missing_base_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_missing_base_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted an unreadable release-base object")
+  endif()
+
+  set(_irfq_wrong_pinned_base ${_irfq_self_common})
+  list(TRANSFORM _irfq_wrong_pinned_base REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_RELEASE_BASE=.*"
+       "-DIRFQ_PACKAGE_SOURCE_RELEASE_BASE=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_wrong_pinned_base} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_wrong_pinned_base_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_wrong_pinned_base_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted a caller-selected production release base")
+  endif()
+
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+            GIT_AUTHOR_NAME=Infinite-package-self-test GIT_AUTHOR_EMAIL=self-test@example.invalid
+            GIT_COMMITTER_NAME=Infinite-package-self-test GIT_COMMITTER_EMAIL=self-test@example.invalid
+            GIT_AUTHOR_DATE=2000-01-03T00:00:00Z GIT_COMMITTER_DATE=2000-01-03T00:00:00Z
+            "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" commit-tree "HEAD^{tree}" -m unrelated
+    OUTPUT_VARIABLE _irfq_self_unrelated_base OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  set(_irfq_nonancestor_base ${_irfq_self_common})
+  list(TRANSFORM _irfq_nonancestor_base REPLACE
+       "^-DIRFQ_PACKAGE_SELF_TEST_RELEASE_BASE=.*"
+       "-DIRFQ_PACKAGE_SELF_TEST_RELEASE_BASE=${_irfq_self_unrelated_base}")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_nonancestor_base} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_nonancestor_base_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_nonancestor_base_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted a nonancestor release base")
   endif()
 
   execute_process(
@@ -557,10 +850,16 @@ if(SELF_TEST)
       "-DIRFQ_EXPECTED_DOUBLE_CONVERSION_LICENSE=${_irfq_self_double_conversion_license}"
       "-DIRFQ_EXPECTED_PUGIXML_LICENSE=${_irfq_self_pugixml_license}"
       "-DIRFQ_EXPECTED_SCOPE_GUARD_LICENSE=${_irfq_self_scope_guard_license}"
-      "-DIRFQ_EXPECTED_SOURCE_COMMIT=${_irfq_self_source_commit}"
-      "-DIRFQ_EXPECTED_SOURCE_TREE=${_irfq_self_source_tree}"
-      "-DIRFQ_EXPECTED_SOURCE_MERGE_BASE=${_irfq_self_source_merge_base}"
-      "-DIRFQ_EXPECTED_SOURCE_DIFF_SHA256=${_irfq_self_source_diff}"
+      "-DIRFQ_EXPECTED_SOURCE_CHECKOUT=${_irfq_self_source_checkout}"
+      "-DIRFQ_EXPECTED_SOURCE_RELEASE_BASE=386ce46e917ae494ab6e90b1be90fd421cdbe3f9"
+      "-DIRFQ_EXPECTED_SELF_TEST_RELEASE_BASE=${_irfq_self_source_base}"
+      "-DIRFQ_EXPECTED_GIT=${_irfq_self_git}"
+      "-DIRFQ_EXPECTED_SHA256SUM=${_irfq_self_sha256sum}"
+      "-DIRFQ_VERIFY_SELF_TEST=ON"
+      "-DIRFQ_EXPECTED_SOURCE_COMMIT=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      "-DIRFQ_EXPECTED_SOURCE_TREE=ffffffffffffffffffffffffffffffffffffffff"
+      "-DIRFQ_EXPECTED_SOURCE_MERGE_BASE=9999999999999999999999999999999999999999"
+      "-DIRFQ_EXPECTED_SOURCE_DIFF_SHA256=8888888888888888888888888888888888888888888888888888888888888888"
       "-DIRFQ_EXPECTED_BUILD_COMMAND=${_irfq_self_build_command}")
 
   function(_irfq_self_verify directory expect_success label)
@@ -612,6 +911,21 @@ if(SELF_TEST)
          _manifest "${_manifest}")
   file(WRITE "${IRFQ_SELF_CASE}/manifest.sha256" "${_manifest}")
   _irfq_self_verify("${IRFQ_SELF_CASE}" FALSE reordered-key)
+
+  _irfq_self_copy_case(injected-ranlib)
+  file(READ "${IRFQ_SELF_CASE}/manifest.sha256" _manifest)
+  string(REPLACE "ar=GNU ar 2.42\n" "ar=GNU ar 2.42\nranlib=GNU ranlib 2.42\n" _manifest "${_manifest}")
+  file(WRITE "${IRFQ_SELF_CASE}/manifest.sha256" "${_manifest}")
+  _irfq_self_verify("${IRFQ_SELF_CASE}" FALSE injected-ranlib)
+
+  _irfq_self_copy_case(changed-source-diff)
+  file(READ "${IRFQ_SELF_CASE}/manifest.sha256" _manifest)
+  string(REGEX REPLACE
+         "source_diff_sha256=[0-9a-f]+"
+         "source_diff_sha256=7777777777777777777777777777777777777777777777777777777777777777"
+         _manifest "${_manifest}")
+  file(WRITE "${IRFQ_SELF_CASE}/manifest.sha256" "${_manifest}")
+  _irfq_self_verify("${IRFQ_SELF_CASE}" FALSE changed-source-diff)
 
   _irfq_self_copy_case(empty-value)
   file(READ "${IRFQ_SELF_CASE}/manifest.sha256" _manifest)
@@ -695,13 +1009,34 @@ foreach(_required IN ITEMS
     IRFQ_EXPECTED_DOUBLE_CONVERSION_LICENSE
     IRFQ_EXPECTED_PUGIXML_LICENSE
     IRFQ_EXPECTED_SCOPE_GUARD_LICENSE
-    IRFQ_EXPECTED_SOURCE_COMMIT
-    IRFQ_EXPECTED_SOURCE_TREE
-    IRFQ_EXPECTED_SOURCE_MERGE_BASE
-    IRFQ_EXPECTED_SOURCE_DIFF_SHA256
+    IRFQ_EXPECTED_SOURCE_CHECKOUT
+    IRFQ_EXPECTED_SOURCE_RELEASE_BASE
+    IRFQ_EXPECTED_GIT
+    IRFQ_EXPECTED_SHA256SUM
     IRFQ_EXPECTED_BUILD_COMMAND)
   _irfq_require(${_required})
 endforeach()
+
+if(NOT IRFQ_EXPECTED_GIT STREQUAL "/usr/bin/git" OR NOT IRFQ_EXPECTED_SHA256SUM STREQUAL "/usr/bin/sha256sum")
+  message(FATAL_ERROR "package verification requires the governed Git and SHA-256 tools")
+endif()
+set(_irfq_verify_self_test FALSE)
+if(DEFINED IRFQ_VERIFY_SELF_TEST)
+  if(IRFQ_VERIFY_SELF_TEST STREQUAL "ON" OR IRFQ_VERIFY_SELF_TEST STREQUAL "TRUE")
+    set(_irfq_verify_self_test TRUE)
+  elseif(NOT IRFQ_VERIFY_SELF_TEST STREQUAL "OFF" AND NOT IRFQ_VERIFY_SELF_TEST STREQUAL "FALSE")
+    message(FATAL_ERROR "IRFQ_VERIFY_SELF_TEST must be a canonical boolean")
+  endif()
+endif()
+set(_irfq_verify_self_test_base "")
+if(DEFINED IRFQ_EXPECTED_SELF_TEST_RELEASE_BASE)
+  set(_irfq_verify_self_test_base "${IRFQ_EXPECTED_SELF_TEST_RELEASE_BASE}")
+endif()
+_irfq_verify_source_provenance(
+  "${IRFQ_EXPECTED_SOURCE_CHECKOUT}"
+  "${IRFQ_EXPECTED_SOURCE_RELEASE_BASE}"
+  "${_irfq_verify_self_test_base}"
+  "${_irfq_verify_self_test}")
 
 if(NOT IS_ABSOLUTE "${IRFQ_PACKAGE_DIR}" OR NOT IS_DIRECTORY "${IRFQ_PACKAGE_DIR}" OR IS_SYMLINK "${IRFQ_PACKAGE_DIR}")
   message(FATAL_ERROR "IRFQ_PACKAGE_DIR must be an absolute non-symlink directory")
@@ -777,10 +1112,10 @@ foreach(_sha_field IN ITEMS
   _irfq_require_hex("${_irfq_value_${_sha_field}}" 64 "${_sha_field}")
 endforeach()
 
-_irfq_require_equal("${_irfq_value_source_commit}" "${IRFQ_EXPECTED_SOURCE_COMMIT}" source_commit)
-_irfq_require_equal("${_irfq_value_source_tree}" "${IRFQ_EXPECTED_SOURCE_TREE}" source_tree)
-_irfq_require_equal("${_irfq_value_source_merge_base}" "${IRFQ_EXPECTED_SOURCE_MERGE_BASE}" source_merge_base)
-_irfq_require_equal("${_irfq_value_source_diff_sha256}" "${IRFQ_EXPECTED_SOURCE_DIFF_SHA256}" source_diff_sha256)
+_irfq_require_equal("${_irfq_value_source_commit}" "${IRFQ_VERIFIED_SOURCE_COMMIT}" source_commit)
+_irfq_require_equal("${_irfq_value_source_tree}" "${IRFQ_VERIFIED_SOURCE_TREE}" source_tree)
+_irfq_require_equal("${_irfq_value_source_merge_base}" "${IRFQ_VERIFIED_SOURCE_MERGE_BASE}" source_merge_base)
+_irfq_require_equal("${_irfq_value_source_diff_sha256}" "${IRFQ_VERIFIED_SOURCE_DIFF_SHA256}" source_diff_sha256)
 _irfq_require_equal("${_irfq_value_specification_commit}" "cb12d80aecd90f52b7fbcc009246dab640ba7a7b" specification_commit)
 _irfq_require_equal("${_irfq_value_specification_tree}" "bae719cd3d4001329f6efbe5e32d92be3549b5f9" specification_tree)
 _irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9" specification_bundle_sha256)
@@ -794,7 +1129,6 @@ _irfq_require_equal("${_irfq_value_ninja}" "ninja 1.11.1" ninja)
 _irfq_require_equal("${_irfq_value_objcopy}" "GNU objcopy 2.42" objcopy)
 _irfq_require_equal("${_irfq_value_linker}" "GNU ld 2.42" linker)
 _irfq_require_equal("${_irfq_value_ar}" "GNU ar 2.42" ar)
-_irfq_require_equal("${_irfq_value_ranlib}" "GNU ranlib 2.42" ranlib)
 _irfq_require_equal("${_irfq_value_build_type}" "Release" build_type)
 _irfq_require_equal("${_irfq_value_have_ssl}" "OFF" have_ssl)
 _irfq_require_equal("${_irfq_value_quickfix_shared_libs}" "OFF" quickfix_shared_libs)

@@ -192,10 +192,7 @@ endif ()
 add_subdirectory(src)
 
 if(IRFQ_INFINITE_EMBED_DICTIONARIES)
-  set(IRFQ_INFINITE_SOURCE_COMMIT "" CACHE STRING "Exact source commit for the Infinite adapter package")
-  set(IRFQ_INFINITE_SOURCE_TREE "" CACHE STRING "Exact source tree for the Infinite adapter package")
-  set(IRFQ_INFINITE_SOURCE_MERGE_BASE "" CACHE STRING "Exact source merge base for the Infinite adapter package")
-  set(IRFQ_INFINITE_SOURCE_DIFF_SHA256 "" CACHE STRING "Exact source diff SHA-256 for the Infinite adapter package")
+  set(IRFQ_INFINITE_SOURCE_RELEASE_BASE 386ce46e917ae494ab6e90b1be90fd421cdbe3f9)
   set(IRFQ_INFINITE_SPECIFICATION_COMMIT "" CACHE STRING "Exact specification commit for the Infinite adapter package")
   set(IRFQ_INFINITE_SPECIFICATION_TREE "" CACHE STRING "Exact specification tree for the Infinite adapter package")
   set(IRFQ_INFINITE_SPECIFICATION_BUNDLE_SHA256 "" CACHE STRING "Exact semantic specification bundle SHA-256")
@@ -222,10 +219,8 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
             "-DIRFQ_PACKAGE_DOUBLE_CONVERSION_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/double-conversion-BSD-3-Clause.txt"
             "-DIRFQ_PACKAGE_PUGIXML_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/pugixml-MIT.txt"
             "-DIRFQ_PACKAGE_SCOPE_GUARD_LICENSE=${CMAKE_CURRENT_SOURCE_DIR}/licenses/scope_guard-Unlicense.txt"
-            "-DIRFQ_PACKAGE_SOURCE_COMMIT=${IRFQ_INFINITE_SOURCE_COMMIT}"
-            "-DIRFQ_PACKAGE_SOURCE_TREE=${IRFQ_INFINITE_SOURCE_TREE}"
-            "-DIRFQ_PACKAGE_SOURCE_MERGE_BASE=${IRFQ_INFINITE_SOURCE_MERGE_BASE}"
-            "-DIRFQ_PACKAGE_SOURCE_DIFF_SHA256=${IRFQ_INFINITE_SOURCE_DIFF_SHA256}"
+            "-DIRFQ_PACKAGE_SOURCE_CHECKOUT=${CMAKE_SOURCE_DIR}"
+            "-DIRFQ_PACKAGE_SOURCE_RELEASE_BASE=${IRFQ_INFINITE_SOURCE_RELEASE_BASE}"
             "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=${IRFQ_INFINITE_SPECIFICATION_COMMIT}"
             "-DIRFQ_PACKAGE_SPECIFICATION_TREE=${IRFQ_INFINITE_SPECIFICATION_TREE}"
             "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=${IRFQ_INFINITE_SPECIFICATION_BUNDLE_SHA256}"
@@ -244,6 +239,8 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
             "-DIRFQ_PACKAGE_LINKER=${CMAKE_LINKER}"
             "-DIRFQ_PACKAGE_AR=${CMAKE_AR}"
             "-DIRFQ_PACKAGE_RANLIB=${CMAKE_RANLIB}"
+            "-DIRFQ_PACKAGE_GIT=/usr/bin/git"
+            "-DIRFQ_PACKAGE_SHA256SUM=/usr/bin/sha256sum"
             "-DIRFQ_PACKAGE_READELF=${IRFQ_INFINITE_READELF}"
             "-DIRFQ_PACKAGE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
             "-DIRFQ_PACKAGE_HAVE_SSL=${HAVE_SSL}"
@@ -271,6 +268,12 @@ if(IRFQ_INFINITE_EMBED_DICTIONARIES)
             "-DIRFQ_PACKAGE_STATIC_LINKER_FLAGS=${CMAKE_STATIC_LINKER_FLAGS}"
             "-DIRFQ_PACKAGE_STATIC_LINKER_FLAGS_RELEASE=${CMAKE_STATIC_LINKER_FLAGS_RELEASE}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageInfiniteAdapter.cmake"
+    BYPRODUCTS
+      "${CMAKE_BINARY_DIR}/infinite-adapter-package/libquickfix.a"
+      "${CMAKE_BINARY_DIR}/infinite-adapter-package/InfiniteFrameAdapter.h"
+      "${CMAKE_BINARY_DIR}/infinite-adapter-package/infinite-frame-adapter-abi.v2.tsv"
+      "${CMAKE_BINARY_DIR}/infinite-adapter-package/LICENSES.txt"
+      "${CMAKE_BINARY_DIR}/infinite-adapter-package/manifest.sha256"
     DEPENDS
       quickfix
       "${CMAKE_CURRENT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.h"
