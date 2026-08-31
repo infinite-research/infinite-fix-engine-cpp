@@ -1172,6 +1172,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
             || std::find(outputMsgTypes.begin(), outputMsgTypes.end(), MsgType_Logout) == outputMsgTypes.end())) {
       throw std::invalid_argument("Incomplete Reject and Logout terminal output");
     }
+    const auto nextTestRequestCount = responder.disconnected || session.m_state.sentLogout()
+                                          ? 0U
+                                          : static_cast<std::uint32_t>(session.m_state.testRequest());
     return {
         std::move(responder.outputs),
         std::move(outputMsgTypes),
@@ -1181,7 +1184,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         sequenceValid ? sequence : 0,
         stores.nextSender(),
         stores.nextTarget(),
-        static_cast<std::uint32_t>(session.m_state.testRequest()),
+        nextTestRequestCount,
         msgType == MsgType_Logon && heartbeatRejectReason == 0
             ? validatedLogonHeartbeat
             : static_cast<std::uint32_t>(session.m_state.heartBtInt()),

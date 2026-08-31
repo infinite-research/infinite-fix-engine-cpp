@@ -2264,10 +2264,8 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   write64(plan->state.data() + 56, plan->resultRevision);
   write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
-  if (!rejectedAttachedSessionWindow) {
-    write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
-    write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
-  }
+  write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
+  write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
   write32(plan->state.data() + 192, inbound.testRequestCount);
   const auto expectedTarget = targetSequence;
   const auto appendOutputs = [&] {
@@ -2301,6 +2299,11 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
       write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
       writeSenderSuccessor(plan->state, inbound.nextSenderSequence);
+    }
+    if (heldAttached
+        && std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5")
+               != inbound.outputMsgTypes.end()) {
+      write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(16));
     }
   };
   const auto appendDisposition = [&](std::uint32_t disposition, std::uint32_t reason) {
@@ -4518,8 +4521,11 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           write64(plan.state.data() + 104, read64(plan.state.data() + 88));
           writeSenderSuccessor(plan.state, nextSender);
         }
+        const auto sentLogout = std::find(outputTypes.begin(), outputTypes.end(), "5") != outputTypes.end();
+        if (sentLogout) {
+          write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(16));
+        }
         if (request->decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2 && inbound.disconnected) {
-          const auto sentLogout = std::find(outputTypes.begin(), outputTypes.end(), "5") != outputTypes.end();
           const auto logoutFlags
               = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
           write64(plan.state.data() + 180, read64(plan.state.data() + 180) | UINT64_C(256) | logoutFlags);
