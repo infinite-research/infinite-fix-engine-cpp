@@ -1398,7 +1398,7 @@ TEST_CASE(
         read32(result.native_state.data + 292),
         read64(result.native_state.data + 300)};
     CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
-    return outcome;
+    return std::pair{output, outcome};
   };
 
   CHECK(run(true) == run(false));

@@ -3573,6 +3573,12 @@ irfq_infinite_status_v2 resumeResendStore(
              && (request.store_rows[index].store_class == IRFQ_INFINITE_STORE_CLASS_REVOCABLE_SUPPRESSED_V2
                  || request.store_rows[index].store_class == IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2
                  || request.store_rows[index].store_class == IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2));
+    auto originalSendingTimeIndex = runBegin;
+    while (originalSendingTimeIndex < index
+           && request.store_rows[originalSendingTimeIndex].store_class == IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2) {
+      ++originalSendingTimeIndex;
+    }
+    const std::string emptyOriginalSendingTime;
     const auto beginSequence = request.store_rows[runBegin].sequence;
     const auto endSequence = request.store_rows[index - 1].sequence + 1;
     const auto gap = FIX::InfiniteSessionPlanner::gapFill(
@@ -3592,7 +3598,8 @@ irfq_infinite_status_v2 resumeResendStore(
         read64(session.state.data() + 152),
         &session.dictionaries,
         &session.staticProfile,
-        retained[runBegin].originalSendingTime);
+        originalSendingTimeIndex == index ? emptyOriginalSendingTime
+                                          : retained[originalSendingTimeIndex].originalSendingTime);
     if (gap.output.empty() || gap.output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2) {
       return IRFQ_INFINITE_STATUS_LIMIT_EXCEEDED_V2;
     }
