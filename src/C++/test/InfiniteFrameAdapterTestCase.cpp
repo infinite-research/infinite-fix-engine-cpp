@@ -39,6 +39,12 @@
 #include <thread>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace FIX {
 irfq_infinite_session_v2 *createInfiniteFrameAdapterStockNonconformanceSmokeSessionWithDataDictionaries(
     const std::uint8_t *config,
@@ -1073,7 +1079,125 @@ std::string canonicalBody(const std::string &wire) {
   parsed.calculateString(body);
   return body;
 }
+
+#if defined(__unix__) || defined(__APPLE__)
+enum class CallKind {
+  Prepare,
+  Resume
+};
+
+int runGuardedHeaderCall(CallKind kind) {
+  const auto child = fork();
+  if (child == 0) {
+    const auto pageSize = sysconf(_SC_PAGESIZE);
+    if (pageSize <= 0) {
+      _exit(255);
+    }
+    auto *pages = static_cast<std::uint8_t *>(mmap(
+        nullptr,
+        static_cast<std::size_t>(pageSize) * 2,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0));
+    if (pages == MAP_FAILED || mprotect(pages + pageSize, pageSize, PROT_NONE) != 0) {
+      _exit(255);
+    }
+    auto *header
+        = reinterpret_cast<irfq_infinite_output_header_v2 *>(pages + pageSize - sizeof(irfq_infinite_output_header_v2));
+    *header = {};
+    header->structure_size = sizeof(irfq_infinite_output_header_v2);
+    header->abi_version = IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V2;
+    auto *response = reinterpret_cast<irfq_infinite_prepare_response_v2 *>(header);
+    irfq_infinite_prepare_request_v2 prepare{};
+    irfq_infinite_resume_request_v2 resume{};
+    init(prepare);
+    init(resume);
+    const auto status = kind == CallKind::Prepare ? irfq_infinite_prepare_v2(nullptr, &prepare, response)
+                                                  : irfq_infinite_resume_v2(nullptr, &resume, response);
+    const bool expected
+        = status == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2 && header->status == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2;
+    munmap(pages, static_cast<std::size_t>(pageSize) * 2);
+    _exit(expected ? static_cast<int>(status) : 254);
+  }
+  if (child < 0) {
+    return -1;
+  }
+  int status = 0;
+  if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) {
+    return -1;
+  }
+  return WEXITSTATUS(status);
+}
+#endif
 } // namespace
+
+#if defined(__unix__) || defined(__APPLE__)
+TEST_CASE(
+    "InfiniteFrameAdapterV2 validates output headers before reading response tails",
+    "[infinite][adapter][v2][abi-validation]") {
+  CHECK(runGuardedHeaderCall(CallKind::Prepare) == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2);
+  CHECK(runGuardedHeaderCall(CallKind::Resume) == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2);
+}
+#endif
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 rejects misaligned typed buffers before plan access",
+    "[infinite][adapter][v2][abi-validation]") {
+  const auto config = otherwiseValidUnavailableProfile();
+
+  SECTION("prepare actions") {
+    auto *session = stockLoggedOnSession(config);
+    REQUIRE(session != nullptr);
+    InboundCall inbound(session, participantFrame("AJ", 2, quoteResponseBody("MISALIGNED-ACTIONS")), 0xa5);
+    PlanBuffers invalidBuffers;
+    auto invalid = invalidBuffers.response();
+    alignas(irfq_infinite_declarative_action_v2)
+        std::array<std::uint8_t, sizeof(irfq_infinite_declarative_action_v2) + 1>
+            storage{};
+    invalid.actions = reinterpret_cast<irfq_infinite_declarative_action_v2 *>(storage.data() + 1);
+    invalid.action_capacity = 1;
+    CHECK(irfq_infinite_prepare_v2(session, &inbound.request, &invalid) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+
+    PlanBuffers retryBuffers;
+    auto retry = retryBuffers.response();
+    CHECK(
+        irfq_infinite_prepare_v2(session, &inbound.request, &retry)
+        == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  SECTION("resume store rows") {
+    auto *session = resendRecoverySession(config, 2, 3, 2);
+    REQUIRE(session != nullptr);
+    ContinueResendCall call(session, 2, 3, 2);
+    PlanBuffers pendingBuffers;
+    auto pending = pendingBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &call.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+
+    const auto wire = participantFrame('0', 2);
+    const auto row = retainedRow(2, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2, "0", "", wire);
+    alignas(irfq_infinite_store_row_v2) std::array<std::uint8_t, sizeof(irfq_infinite_store_row_v2) + 1> storage{};
+    std::memcpy(storage.data() + 1, &row, sizeof(row));
+    irfq_infinite_resume_request_v2 resume{};
+    init(resume);
+    resume.prepare_id = pending.prepare_id;
+    resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+    resume.store_range_begin = 2;
+    resume.store_range_end_exclusive = 3;
+    resume.store_rows = reinterpret_cast<const irfq_infinite_store_row_v2 *>(storage.data() + 1);
+    resume.store_row_count = 1;
+    PlanBuffers resultBuffers;
+    auto result = resultBuffers.response();
+    CHECK(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+
+    resume.store_rows = &row;
+    PlanBuffers retryBuffers;
+    auto retry = retryBuffers.response();
+    CHECK(irfq_infinite_resume_v2(session, &resume, &retry) == IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+}
 
 TEST_CASE(
     "InfiniteFrameAdapterV2 preserves original application body bytes for stored replay",

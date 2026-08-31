@@ -150,7 +150,7 @@ template <typename T> irfq_infinite_status_v2 publish(T *response, irfq_infinite
 }
 
 template <typename Request, typename Response>
-irfq_infinite_status_v2 validateEnvelope(const Request *request, Response *response) noexcept {
+irfq_infinite_status_v2 validateEnvelopeBeforeClear(const Request *request, Response *response) noexcept {
   if (!aligned(response)) {
     return IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
   }
@@ -165,6 +165,15 @@ irfq_infinite_status_v2 validateEnvelope(const Request *request, Response *respo
   if (!range(request, sizeof(*request), requestRange) || !range(response, sizeof(*response), responseRange)
       || overlaps(requestRange, responseRange)) {
     return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  }
+  return IRFQ_INFINITE_STATUS_OK_V2;
+}
+
+template <typename Request, typename Response>
+irfq_infinite_status_v2 validateEnvelope(const Request *request, Response *response) noexcept {
+  const auto status = validateEnvelopeBeforeClear(request, response);
+  if (status != IRFQ_INFINITE_STATUS_OK_V2) {
+    return status;
   }
   clearResponse(response);
   return IRFQ_INFINITE_STATUS_OK_V2;
@@ -1168,6 +1177,20 @@ struct PrepareOutputView {
   std::uint32_t actionCapacity{0};
 };
 
+template <typename Request>
+irfq_infinite_status_v2 validatePrepareEnvelope(
+    const Request *request,
+    irfq_infinite_prepare_response_v2 *response,
+    PrepareOutputView &view) noexcept {
+  const auto status = validateEnvelopeBeforeClear(request, response);
+  if (status != IRFQ_INFINITE_STATUS_OK_V2) {
+    return status;
+  }
+  view = {response->native_state, response->output, response->actions, response->action_capacity};
+  clearResponse(response);
+  return IRFQ_INFINITE_STATUS_OK_V2;
+}
+
 bool validPrepareOutput(
     const irfq_infinite_prepare_request_v2 &request,
     const irfq_infinite_prepare_response_v2 &response,
@@ -1176,6 +1199,7 @@ bool validPrepareOutput(
       || view.output.length != 0 || view.output.capacity > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2
       || (view.output.capacity != 0 && view.output.data == nullptr)
       || view.actionCapacity > IRFQ_INFINITE_MAX_ACTIONS_V2 || (view.actionCapacity != 0 && view.actions == nullptr)
+      || (view.actionCapacity != 0 && !aligned(view.actions))
       || (view.actionCapacity == 0 && view.actions != nullptr)) {
     return false;
   }
@@ -1214,7 +1238,8 @@ bool validResumeOutput(
       || view.output.length != 0 || view.output.capacity > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2
       || (view.output.capacity != 0 && view.output.data == nullptr)
       || view.actionCapacity > IRFQ_INFINITE_MAX_ACTIONS_V2 || (view.actionCapacity != 0 && view.actions == nullptr)
-      || (view.actionCapacity == 0 && view.actions != nullptr)) {
+      || (view.actionCapacity != 0 && !aligned(view.actions)) || (view.actionCapacity == 0 && view.actions != nullptr)
+      || (request.store_row_count != 0 && !aligned(request.store_rows))) {
     return false;
   }
   Range requestRange;
@@ -3834,10 +3859,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_prepare_v2(
     irfq_infinite_prepare_response_v2 *response) noexcept {
   try {
     PrepareOutputView outputView;
-    if (aligned(response)) {
-      outputView = {response->native_state, response->output, response->actions, response->action_capacity};
-    }
-    const auto envelope = validateEnvelope(request, response);
+    const auto envelope = validatePrepareEnvelope(request, response, outputView);
     if (envelope != IRFQ_INFINITE_STATUS_OK_V2) {
       return envelope;
     }
@@ -4027,10 +4049,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
   };
   try {
     PrepareOutputView outputView;
-    if (aligned(response)) {
-      outputView = {response->native_state, response->output, response->actions, response->action_capacity};
-    }
-    const auto envelope = validateEnvelope(request, response);
+    const auto envelope = validatePrepareEnvelope(request, response, outputView);
     if (envelope != IRFQ_INFINITE_STATUS_OK_V2) {
       return failPending(envelope);
     }
