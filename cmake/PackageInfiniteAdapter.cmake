@@ -60,7 +60,7 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
       --unset=GIT_OBJECT_DIRECTORY --unset=GIT_ALTERNATE_OBJECT_DIRECTORIES --unset=GIT_SHALLOW_FILE
       --unset=GIT_REPLACE_REF_BASE --unset=GIT_CONFIG_COUNT --unset=GIT_CONFIG_PARAMETERS
       --unset=GIT_CONFIG_SYSTEM --unset=GIT_EXTERNAL_DIFF --unset=GIT_DIFF_OPTS --unset=GIT_PAGER
-      --unset=GIT_NAMESPACE
+      --unset=GIT_NAMESPACE --unset=GIT_ATTR_SOURCE
       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
       GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0
       LC_ALL=C LANG=C)
@@ -85,6 +85,16 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
   endif()
   execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            rev-parse --path-format=absolute --git-path info/attributes
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _info_attributes ERROR_VARIABLE _error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "could not resolve source checkout info attributes: ${_error}")
+  elseif(EXISTS "${_info_attributes}" OR IS_SYMLINK "${_info_attributes}")
+    message(FATAL_ERROR "source checkout must not define Git info attributes: ${_info_attributes}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
             rev-parse --is-shallow-repository
     RESULT_VARIABLE _result OUTPUT_VARIABLE _shallow ERROR_VARIABLE _error OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT _result EQUAL 0 OR NOT _shallow STREQUAL "false")
@@ -101,7 +111,28 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
   endif()
   execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
-            status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+            ls-files -v
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _index_state ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0 OR _index_state MATCHES "(^|\n)[^H] ")
+    message(FATAL_ERROR "source checkout index contains special tracked-file flags: ${_index_state}${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            diff-index --quiet --cached HEAD --
+    RESULT_VARIABLE _result ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "source checkout index must equal HEAD: ${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none HEAD --
+    RESULT_VARIABLE _result ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "source checkout tracked bytes must equal HEAD: ${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none
     RESULT_VARIABLE _result OUTPUT_VARIABLE _status ERROR_VARIABLE _error)
   if(NOT _result EQUAL 0 OR NOT _status STREQUAL "")
     message(FATAL_ERROR "source checkout must have no tracked or untracked changes: ${_status}${_error}")
@@ -123,6 +154,13 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
     RESULT_VARIABLE _result ERROR_VARIABLE _error)
   if(NOT _result EQUAL 0)
     message(FATAL_ERROR "source release-base commit is unreadable: ${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            fsck --connectivity-only --no-dangling --no-reflogs --no-progress "${_commit}" "${_base}"
+    RESULT_VARIABLE _result ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "source checkout has missing reachable Git objects: ${_error}")
   endif()
   execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
@@ -239,8 +277,14 @@ if(DEFINED IRFQ_PACKAGE_SELF_TEST)
   set(_irfq_self_test_mode TRUE)
 endif()
 if(_irfq_self_test_mode)
-  if(NOT IRFQ_PACKAGE_BINARY_DIR MATCHES "^/build/irfq-package-self-test-[A-Za-z0-9_.-]+/binary$")
+  file(REAL_PATH "${IRFQ_PACKAGE_BINARY_DIR}" _irfq_self_test_binary)
+  if(NOT _irfq_self_test_binary MATCHES "^/build/irfq-package-self-test-[A-Za-z0-9_.-]+/binary$")
     message(FATAL_ERROR "package self-test binary directory is not isolated under /build")
+  endif()
+  cmake_path(GET _irfq_self_test_binary PARENT_PATH _irfq_self_test_root)
+  file(REAL_PATH "${IRFQ_PACKAGE_SOURCE_CHECKOUT}" _irfq_self_test_source)
+  if(NOT _irfq_self_test_source STREQUAL "${_irfq_self_test_root}/source")
+    message(FATAL_ERROR "package self-test source must be isolated under the same self-test root")
   endif()
 elseif(NOT IRFQ_PACKAGE_BINARY_DIR STREQUAL "/build")
   message(FATAL_ERROR "packaging requires the governed /build binary path")

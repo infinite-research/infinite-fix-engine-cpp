@@ -126,7 +126,7 @@ function(_irfq_verify_source_provenance checkout release_base self_test_base all
       --unset=GIT_OBJECT_DIRECTORY --unset=GIT_ALTERNATE_OBJECT_DIRECTORIES --unset=GIT_SHALLOW_FILE
       --unset=GIT_REPLACE_REF_BASE --unset=GIT_CONFIG_COUNT --unset=GIT_CONFIG_PARAMETERS
       --unset=GIT_CONFIG_SYSTEM --unset=GIT_EXTERNAL_DIFF --unset=GIT_DIFF_OPTS --unset=GIT_PAGER
-      --unset=GIT_NAMESPACE
+      --unset=GIT_NAMESPACE --unset=GIT_ATTR_SOURCE
       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1
       GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0
       LC_ALL=C LANG=C)
@@ -151,6 +151,16 @@ function(_irfq_verify_source_provenance checkout release_base self_test_base all
   endif()
   execute_process(
     COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            rev-parse --path-format=absolute --git-path info/attributes
+    RESULT_VARIABLE _attributes_result OUTPUT_VARIABLE _info_attributes ERROR_VARIABLE _attributes_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _attributes_result EQUAL 0)
+    message(FATAL_ERROR "verifier could not resolve source info attributes: ${_attributes_error}")
+  elseif(EXISTS "${_info_attributes}" OR IS_SYMLINK "${_info_attributes}")
+    message(FATAL_ERROR "verified source checkout must not define Git info attributes: ${_info_attributes}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
             rev-parse --is-shallow-repository
     RESULT_VARIABLE _shallow_result OUTPUT_VARIABLE _shallow ERROR_VARIABLE _shallow_error
     OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -168,7 +178,28 @@ function(_irfq_verify_source_provenance checkout release_base self_test_base all
   endif()
   execute_process(
     COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
-            status --porcelain=v1 --untracked-files=all --ignore-submodules=none
+            ls-files -v
+    RESULT_VARIABLE _flags_result OUTPUT_VARIABLE _index_flags ERROR_VARIABLE _flags_error)
+  if(NOT _flags_result EQUAL 0 OR _index_flags MATCHES "(^|\n)[^H] ")
+    message(FATAL_ERROR "verified source index contains special tracked-file flags: ${_index_flags}${_flags_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            diff-index --quiet --cached HEAD --
+    RESULT_VARIABLE _index_result ERROR_VARIABLE _index_error)
+  if(NOT _index_result EQUAL 0)
+    message(FATAL_ERROR "verified source index must equal HEAD: ${_index_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none HEAD --
+    RESULT_VARIABLE _worktree_result ERROR_VARIABLE _worktree_error)
+  if(NOT _worktree_result EQUAL 0)
+    message(FATAL_ERROR "verified source tracked bytes must equal HEAD: ${_worktree_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none
     RESULT_VARIABLE _status_result OUTPUT_VARIABLE _status ERROR_VARIABLE _status_error)
   if(NOT _status_result EQUAL 0 OR NOT _status STREQUAL "")
     message(FATAL_ERROR "verified source checkout must be clean: ${_status}${_status_error}")
@@ -194,6 +225,13 @@ function(_irfq_verify_source_provenance checkout release_base self_test_base all
     RESULT_VARIABLE _base_result ERROR_VARIABLE _base_error)
   if(NOT _base_result EQUAL 0)
     message(FATAL_ERROR "verifier cannot read source release-base commit: ${_base_error}")
+  endif()
+  execute_process(
+    COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
+            fsck --connectivity-only --no-dangling --no-reflogs --no-progress "${_commit}" "${_base}"
+    RESULT_VARIABLE _connectivity_result ERROR_VARIABLE _connectivity_error)
+  if(NOT _connectivity_result EQUAL 0)
+    message(FATAL_ERROR "verified source has missing reachable Git objects: ${_connectivity_error}")
   endif()
   execute_process(
     COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
@@ -289,7 +327,9 @@ if(SELF_TEST)
   execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config user.email
                           self-test@example.invalid COMMAND_ERROR_IS_FATAL ANY)
   file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\n")
-  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
+  file(WRITE "${_irfq_self_source_checkout}/stable.txt" "stable\n")
+  file(WRITE "${_irfq_self_source_checkout}/.gitignore" "ignored.txt\n")
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt stable.txt .gitignore
                   COMMAND_ERROR_IS_FATAL ANY)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
@@ -486,6 +526,21 @@ if(SELF_TEST)
     message(FATAL_ERROR "packager accepted a missing source checkout")
   endif()
 
+  set(_irfq_source_escape "${_irfq_self_root}-source-escape")
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" worktree add --detach --quiet
+            "${_irfq_source_escape}" "${_irfq_self_source_commit}"
+    COMMAND_ERROR_IS_FATAL ANY)
+  set(_irfq_source_escape_common ${_irfq_self_common})
+  list(TRANSFORM _irfq_source_escape_common REPLACE
+       "^-DIRFQ_PACKAGE_SOURCE_CHECKOUT=.*" "-DIRFQ_PACKAGE_SOURCE_CHECKOUT=${_irfq_source_escape}")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_source_escape_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_source_escape_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_source_escape_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted a self-test source outside its isolated root")
+  endif()
+
   file(APPEND "${_irfq_self_source_checkout}/source.txt" "staged\n")
   execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" add source.txt
                   COMMAND_ERROR_IS_FATAL ANY)
@@ -516,6 +571,86 @@ if(SELF_TEST)
     message(FATAL_ERROR "packager accepted untracked source state")
   endif()
   file(REMOVE "${_irfq_self_source_checkout}/untracked.txt")
+
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+                          update-index --assume-unchanged source.txt COMMAND_ERROR_IS_FATAL ANY)
+  file(APPEND "${_irfq_self_source_checkout}/source.txt" "hidden drift\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_assume_unchanged_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_assume_unchanged_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted assume-unchanged tracked drift")
+  endif()
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+                          update-index --no-assume-unchanged source.txt COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\nhead\n")
+
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+                          update-index --skip-worktree source.txt COMMAND_ERROR_IS_FATAL ANY)
+  file(APPEND "${_irfq_self_source_checkout}/source.txt" "hidden drift\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_skip_worktree_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_skip_worktree_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted skip-worktree tracked drift")
+  endif()
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+                          update-index --no-skip-worktree source.txt COMMAND_ERROR_IS_FATAL ANY)
+  file(WRITE "${_irfq_self_source_checkout}/source.txt" "base\nhead\n")
+
+  file(WRITE "${_irfq_self_source_checkout}/ignored.txt" "hidden\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_ignored_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_ignored_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted an ignored untracked file")
+  endif()
+  file(REMOVE "${_irfq_self_source_checkout}/ignored.txt")
+
+  file(WRITE "${_irfq_self_source_checkout}/.git/info/attributes" "*.txt -diff\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_info_attributes_result OUTPUT_QUIET ERROR_QUIET)
+  if(_irfq_info_attributes_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted checkout-local Git info attributes")
+  endif()
+  file(REMOVE "${_irfq_self_source_checkout}/.git/info/attributes")
+
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env GIT_ATTR_SOURCE=${_irfq_self_source_base}
+            "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_attr_source_result OUTPUT_QUIET ERROR_QUIET)
+  if(NOT _irfq_attr_source_result EQUAL 0)
+    message(FATAL_ERROR "packager did not neutralize GIT_ATTR_SOURCE")
+  endif()
+  file(READ "${_irfq_output_dir}/manifest.sha256" _irfq_attr_source_manifest)
+  if(NOT _irfq_attr_source_manifest STREQUAL _irfq_first_manifest)
+    message(FATAL_ERROR "GIT_ATTR_SOURCE changed package provenance")
+  endif()
+
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" rev-parse HEAD:stable.txt
+    OUTPUT_VARIABLE _irfq_stable_blob OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  execute_process(
+    COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+            rev-parse --path-format=absolute --git-path objects
+    OUTPUT_VARIABLE _irfq_object_dir OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  string(SUBSTRING "${_irfq_stable_blob}" 0 2 _irfq_object_prefix)
+  string(SUBSTRING "${_irfq_stable_blob}" 2 -1 _irfq_object_suffix)
+  set(_irfq_stable_object "${_irfq_object_dir}/${_irfq_object_prefix}/${_irfq_object_suffix}")
+  file(RENAME "${_irfq_stable_object}" "${_irfq_stable_object}.missing" RESULT _irfq_hide_object_result)
+  if(NOT _irfq_hide_object_result STREQUAL "0")
+    message(FATAL_ERROR "could not hide reachable self-test blob: ${_irfq_hide_object_result}")
+  endif()
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_missing_reachable_result OUTPUT_QUIET ERROR_QUIET)
+  file(RENAME "${_irfq_stable_object}.missing" "${_irfq_stable_object}" RESULT _irfq_restore_object_result)
+  if(NOT _irfq_restore_object_result STREQUAL "0")
+    message(FATAL_ERROR "could not restore reachable self-test blob: ${_irfq_restore_object_result}")
+  elseif(_irfq_missing_reachable_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted a missing reachable source blob")
+  endif()
 
   set(_irfq_missing_base ${_irfq_self_common})
   list(TRANSFORM _irfq_missing_base REPLACE
@@ -870,10 +1005,10 @@ if(SELF_TEST)
               ${_irfq_self_verify_common}
               -P "${CMAKE_CURRENT_LIST_FILE}"
       RESULT_VARIABLE _result
-      OUTPUT_QUIET
-      ERROR_QUIET)
+      OUTPUT_VARIABLE _output
+      ERROR_VARIABLE _error)
     if(expect_success AND NOT _result EQUAL 0)
-      message(FATAL_ERROR "${label}: verifier unexpectedly rejected the package")
+      message(FATAL_ERROR "${label}: verifier unexpectedly rejected the package:\n${_output}${_error}")
     elseif(NOT expect_success AND _result EQUAL 0)
       message(FATAL_ERROR "${label}: verifier unexpectedly accepted the package")
     endif()
@@ -889,6 +1024,18 @@ if(SELF_TEST)
   endfunction()
 
   _irfq_self_verify("${_irfq_output_dir}" TRUE positive)
+
+  set(_irfq_escape_root "${_irfq_self_root}-verifier-escape")
+  set(_irfq_escape_package "${_irfq_escape_root}/package")
+  file(MAKE_DIRECTORY "${_irfq_escape_package}")
+  foreach(_file IN LISTS _irfq_package_files)
+    file(COPY_FILE "${_irfq_output_dir}/${_file}" "${_irfq_escape_package}/${_file}")
+  endforeach()
+  _irfq_self_verify("${_irfq_escape_package}" FALSE self-test-root-escape)
+  set(_irfq_escape_link "${_irfq_self_root}/verifier-escape-parent")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink "${_irfq_escape_root}" "${_irfq_escape_link}"
+                  COMMAND_ERROR_IS_FATAL ANY)
+  _irfq_self_verify("${_irfq_escape_link}/package" FALSE self-test-symlink-root-escape)
 
   _irfq_self_copy_case(unknown-key)
   file(APPEND "${IRFQ_SELF_CASE}/manifest.sha256" "unknown=value\n")
@@ -996,6 +1143,10 @@ if(SELF_TEST)
   file(WRITE "${IRFQ_SELF_CASE}/extra" "unexpected\n")
   _irfq_self_verify("${IRFQ_SELF_CASE}" FALSE extra-file)
 
+  execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}"
+                          worktree remove "${_irfq_source_escape}" COMMAND_ERROR_IS_FATAL ANY)
+  file(REMOVE "${_irfq_escape_link}")
+  file(REMOVE_RECURSE "${_irfq_escape_root}")
   message(STATUS "Infinite adapter package self-test passed")
   return()
 endif()
@@ -1032,6 +1183,18 @@ endif()
 set(_irfq_verify_self_test_base "")
 if(DEFINED IRFQ_EXPECTED_SELF_TEST_RELEASE_BASE)
   set(_irfq_verify_self_test_base "${IRFQ_EXPECTED_SELF_TEST_RELEASE_BASE}")
+endif()
+if(_irfq_verify_self_test)
+  file(REAL_PATH "${IRFQ_EXPECTED_SOURCE_CHECKOUT}" _irfq_verify_self_test_source)
+  if(NOT _irfq_verify_self_test_source MATCHES "^/build/irfq-package-self-test-[A-Za-z0-9_.-]+/source$")
+    message(FATAL_ERROR "verifier self-test source must be isolated under /build")
+  endif()
+  cmake_path(GET _irfq_verify_self_test_source PARENT_PATH _irfq_verify_self_test_root)
+  file(REAL_PATH "${IRFQ_PACKAGE_DIR}" _irfq_verify_self_test_package)
+  string(FIND "${_irfq_verify_self_test_package}/" "${_irfq_verify_self_test_root}/" _irfq_self_test_prefix)
+  if(_irfq_verify_self_test_package STREQUAL _irfq_verify_self_test_root OR NOT _irfq_self_test_prefix EQUAL 0)
+    message(FATAL_ERROR "verifier self-test package and source must share the exact isolated root")
+  endif()
 endif()
 _irfq_verify_source_provenance(
   "${IRFQ_EXPECTED_SOURCE_CHECKOUT}"
