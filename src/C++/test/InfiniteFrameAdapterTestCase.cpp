@@ -5701,17 +5701,432 @@ TEST_CASE(
   }
 }
 
-TEST_CASE("InfiniteFrameAdapterV2 fixture pins C ABI layout with LF bytes", "[infinite][adapter][v2][abi]") {
+namespace {
+struct AbiFixtureRow {
+  std::string kind;
+  std::string name;
+  std::string value;
+
+  bool operator==(const AbiFixtureRow &other) const {
+    return kind == other.kind && name == other.name && value == other.value;
+  }
+};
+
+void appendAbiText(std::vector<AbiFixtureRow> &rows, const char *kind, const char *name, const char *value) {
+  rows.push_back({kind, name, value});
+}
+
+template <typename T>
+void appendAbiNumber(std::vector<AbiFixtureRow> &rows, const char *kind, const char *name, T value) {
+  rows.push_back({kind, name, std::to_string(value)});
+}
+
+std::vector<AbiFixtureRow> expectedAbiFixtureRows() {
+  std::vector<AbiFixtureRow> rows;
+  rows.reserve(317);
+
+#define ABI_TEXT(kind, name, value) appendAbiText(rows, #kind, #name, value)
+#define ABI_NUMBER(kind, name, value) appendAbiNumber(rows, #kind, #name, value)
+#define ABI_LAYOUT(type)                                                                                               \
+  ABI_NUMBER(size, type, sizeof(type));                                                                                \
+  ABI_NUMBER(align, type, alignof(type))
+#define ABI_OFFSET(type, field) ABI_NUMBER(offset, type.field, offsetof(type, field))
+
+  ABI_TEXT(kind, name, "value");
+  ABI_TEXT(contract, byte_order, "little_endian");
+  ABI_TEXT(contract, semantic_calls, "scan>session_create>prepare>resume>apply_committed|abort>destroy");
+  ABI_TEXT(contract, handle_ownership, "exclusive_nonoverlap_join_before_destroy");
+  ABI_TEXT(contract, borrowed_input_lifetime, "synchronous_call_only");
+  ABI_TEXT(contract, output_ownership, "caller_owned_bounded");
+  ABI_TEXT(contract, pending_plan, "one_per_session_one_stage");
+  ABI_TEXT(contract, native_state_digest, "SHA-256(\"IRFQ-FIX-NATIVE-STATE-V1\"||0x00||native_state_bstr)");
+
+  ABI_NUMBER(constant, abi_version, IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V2);
+  ABI_NUMBER(constant, snapshot_codec_version, IRFQ_INFINITE_SNAPSHOT_CODEC_VERSION_V2);
+  ABI_NUMBER(constant, native_state_schema_version, IRFQ_INFINITE_NATIVE_STATE_SCHEMA_VERSION_V2);
+  ABI_NUMBER(constant, native_state_bytes, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2);
+  ABI_NUMBER(constant, max_scan_bytes, IRFQ_INFINITE_MAX_SCAN_BYTES_V2);
+  ABI_NUMBER(constant, max_frame_bytes, IRFQ_INFINITE_MAX_FRAME_BYTES_V2);
+  ABI_NUMBER(constant, max_native_state_bytes, IRFQ_INFINITE_MAX_NATIVE_STATE_BYTES_V2);
+  ABI_NUMBER(constant, max_prepare_payload_bytes, IRFQ_INFINITE_MAX_PREPARE_PAYLOAD_BYTES_V2);
+  ABI_NUMBER(constant, max_store_range_bytes, IRFQ_INFINITE_MAX_STORE_RANGE_BYTES_V2);
+  ABI_NUMBER(constant, max_application_wire_bytes, IRFQ_INFINITE_MAX_APPLICATION_WIRE_BYTES_V2);
+  ABI_NUMBER(constant, max_output_bytes, IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2);
+  ABI_NUMBER(constant, max_store_items, IRFQ_INFINITE_MAX_STORE_ITEMS_V2);
+  ABI_NUMBER(constant, max_application_units, IRFQ_INFINITE_MAX_APPLICATION_UNITS_V2);
+  ABI_NUMBER(constant, max_output_frames, IRFQ_INFINITE_MAX_OUTPUT_FRAMES_V2);
+  ABI_NUMBER(constant, max_actions, IRFQ_INFINITE_MAX_ACTIONS_V2);
+  ABI_NUMBER(constant, max_resume_steps, IRFQ_INFINITE_MAX_RESUME_STEPS_V2);
+  ABI_NUMBER(constant, max_message_type_bytes, IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2);
+  ABI_NUMBER(constant, max_test_request_id_bytes, IRFQ_INFINITE_MAX_TEST_REQUEST_ID_BYTES_V2);
+  ABI_NUMBER(
+      constant,
+      max_gateway_inbound_disposition_id_bytes,
+      IRFQ_INFINITE_MAX_GATEWAY_INBOUND_DISPOSITION_ID_BYTES_V2);
+  ABI_NUMBER(constant, fix_sequence_bound, IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2);
+
+  ABI_NUMBER(status, OK, IRFQ_INFINITE_STATUS_OK_V2);
+  ABI_NUMBER(status, INVALID_ARGUMENT, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  ABI_NUMBER(status, ABI_MISMATCH, IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2);
+  ABI_NUMBER(status, NEED_MORE, IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+  ABI_NUMBER(status, FRAME_READY, IRFQ_INFINITE_STATUS_FRAME_READY_V2);
+  ABI_NUMBER(status, NEED_STORE_RANGE, IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+  ABI_NUMBER(status, NEED_APPLICATION_DECISION, IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+  ABI_NUMBER(status, NEED_EPOCH_RESET_DECISION, IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2);
+  ABI_NUMBER(status, NEED_OUTPUT, IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2);
+  ABI_NUMBER(status, READY, IRFQ_INFINITE_STATUS_READY_V2);
+  ABI_NUMBER(status, PLAN_PENDING, IRFQ_INFINITE_STATUS_PLAN_PENDING_V2);
+  ABI_NUMBER(status, STALE_PLAN, IRFQ_INFINITE_STATUS_STALE_PLAN_V2);
+  ABI_NUMBER(status, REVISION_MISMATCH, IRFQ_INFINITE_STATUS_REVISION_MISMATCH_V2);
+  ABI_NUMBER(status, DIGEST_MISMATCH, IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
+  ABI_NUMBER(status, INTERNAL_ERROR, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
+  ABI_NUMBER(status, PROFILE_UNAVAILABLE, IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  ABI_NUMBER(status, LIMIT_EXCEEDED, IRFQ_INFINITE_STATUS_LIMIT_EXCEEDED_V2);
+
+  ABI_NUMBER(boolean, NO, IRFQ_INFINITE_NO_V2);
+  ABI_NUMBER(boolean, YES, IRFQ_INFINITE_YES_V2);
+  ABI_NUMBER(scan, BEGIN_STRING, IRFQ_INFINITE_SCAN_BEGIN_STRING_V2);
+  ABI_NUMBER(scan, BODY_LENGTH_PREFIX, IRFQ_INFINITE_SCAN_BODY_LENGTH_PREFIX_V2);
+  ABI_NUMBER(scan, BODY_LENGTH, IRFQ_INFINITE_SCAN_BODY_LENGTH_V2);
+  ABI_NUMBER(scan, BODY, IRFQ_INFINITE_SCAN_BODY_V2);
+  ABI_NUMBER(prepare, REGISTERED_INBOUND, IRFQ_INFINITE_PREPARE_REGISTERED_INBOUND_V2);
+  ABI_NUMBER(prepare, AUTHORIZED_APPLICATION, IRFQ_INFINITE_PREPARE_AUTHORIZED_APPLICATION_V2);
+  ABI_NUMBER(prepare, RUST_TIMER, IRFQ_INFINITE_PREPARE_RUST_TIMER_V2);
+  ABI_NUMBER(prepare, RUST_SESSION_CONTROL, IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2);
+  ABI_NUMBER(stage, HEAD, IRFQ_INFINITE_STAGE_HEAD_V2);
+  ABI_NUMBER(stage, READ_R2, IRFQ_INFINITE_STAGE_READ_R2_V2);
+  ABI_NUMBER(stage, TARGET_CAS, IRFQ_INFINITE_STAGE_TARGET_CAS_V2);
+  ABI_NUMBER(stage, RESET_FINAL, IRFQ_INFINITE_STAGE_RESET_FINAL_V2);
+  ABI_NUMBER(stage, EVENT, IRFQ_INFINITE_STAGE_EVENT_V2);
+  ABI_NUMBER(event, INBOUND_FRAME, IRFQ_INFINITE_EVENT_INBOUND_FRAME_V2);
+  ABI_NUMBER(event, ORIGINAL_APPLICATION, IRFQ_INFINITE_EVENT_ORIGINAL_APPLICATION_V2);
+  ABI_NUMBER(event, STORED_FRAME_RETRANSMIT, IRFQ_INFINITE_EVENT_STORED_FRAME_RETRANSMIT_V2);
+  ABI_NUMBER(event, APPLICATION_REPLAY_BEGIN, IRFQ_INFINITE_EVENT_APPLICATION_REPLAY_BEGIN_V2);
+  ABI_NUMBER(event, READ_RESULT_BEGIN, IRFQ_INFINITE_EVENT_READ_RESULT_BEGIN_V2);
+  ABI_NUMBER(event, TIMER_TICK, IRFQ_INFINITE_EVENT_TIMER_TICK_V2);
+  ABI_NUMBER(event, SCHEDULED_RESET_TRIGGER, IRFQ_INFINITE_EVENT_SCHEDULED_RESET_TRIGGER_V2);
+  ABI_NUMBER(event, ADMIN_LOGON, IRFQ_INFINITE_EVENT_ADMIN_LOGON_V2);
+  ABI_NUMBER(event, ADMIN_LOGOUT, IRFQ_INFINITE_EVENT_ADMIN_LOGOUT_V2);
+  ABI_NUMBER(event, ADMIN_REJECT, IRFQ_INFINITE_EVENT_ADMIN_REJECT_V2);
+  ABI_NUMBER(event, ADMIN_RESEND_REQUEST, IRFQ_INFINITE_EVENT_ADMIN_RESEND_REQUEST_V2);
+  ABI_NUMBER(event, ADMIN_HEARTBEAT, IRFQ_INFINITE_EVENT_ADMIN_HEARTBEAT_V2);
+  ABI_NUMBER(event, ADMIN_TEST_REQUEST, IRFQ_INFINITE_EVENT_ADMIN_TEST_REQUEST_V2);
+  ABI_NUMBER(event, CONTINUE_RESEND, IRFQ_INFINITE_EVENT_CONTINUE_RESEND_V2);
+  ABI_NUMBER(event, CONTINUE_QUEUED_INBOUND, IRFQ_INFINITE_EVENT_CONTINUE_QUEUED_INBOUND_V2);
+  ABI_NUMBER(event, CONTINUE_APPLICATION_BLOCK, IRFQ_INFINITE_EVENT_CONTINUE_APPLICATION_BLOCK_V2);
+  ABI_NUMBER(event, CONTINUE_READ_RESULT, IRFQ_INFINITE_EVENT_CONTINUE_READ_RESULT_V2);
+  ABI_NUMBER(event, ADVANCE_TARGET, IRFQ_INFINITE_EVENT_ADVANCE_TARGET_V2);
+  ABI_NUMBER(event, FINALIZE_RESET, IRFQ_INFINITE_EVENT_FINALIZE_RESET_V2);
+  ABI_NUMBER(event, TRANSPORT_CLOSED, IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2);
+  ABI_NUMBER(event, ADVANCE_PROCESSING_FRONTIER, IRFQ_INFINITE_EVENT_ADVANCE_PROCESSING_FRONTIER_V2);
+  ABI_NUMBER(resume, STORE_RANGE, IRFQ_INFINITE_RESUME_STORE_RANGE_V2);
+  ABI_NUMBER(resume, APPLICATION_DECISION, IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2);
+  ABI_NUMBER(resume, EPOCH_RESET_DECISION, IRFQ_INFINITE_RESUME_EPOCH_RESET_DECISION_V2);
+  ABI_NUMBER(resume, OUTPUT, IRFQ_INFINITE_RESUME_OUTPUT_V2);
+  ABI_NUMBER(application_decision, ALLOW, IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2);
+  ABI_NUMBER(application_decision, REJECT, IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2);
+  ABI_NUMBER(epoch_reset_decision, START_SAGA, IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2);
+  ABI_NUMBER(epoch_reset_decision, REJECT_TRIGGER, IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2);
+  ABI_NUMBER(sequence_state, ABSENT, IRFQ_INFINITE_SEQUENCE_ABSENT_V2);
+  ABI_NUMBER(sequence_state, VALUE, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+  ABI_NUMBER(sequence_state, EXHAUSTED, IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+  ABI_NUMBER(application_block, NONE, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
+  ABI_NUMBER(application_block, ORIGINAL, IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2);
+  ABI_NUMBER(application_block, SEMANTIC_REPLAY, IRFQ_INFINITE_APPLICATION_BLOCK_SEMANTIC_REPLAY_V2);
+  ABI_NUMBER(input_source, NONE, IRFQ_INFINITE_INPUT_NONE_V2);
+  ABI_NUMBER(input_source, PREPARE_PAYLOAD, IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2);
+  ABI_NUMBER(input_source, STORE_ROW, IRFQ_INFINITE_INPUT_STORE_ROW_V2);
+  ABI_NUMBER(store_class, MANDATORY_APPLICATION, IRFQ_INFINITE_STORE_CLASS_MANDATORY_APPLICATION_V2);
+  ABI_NUMBER(store_class, REVOCABLE_SUPPRESSED, IRFQ_INFINITE_STORE_CLASS_REVOCABLE_SUPPRESSED_V2);
+  ABI_NUMBER(store_class, AH0_RESULT_BLOCK, IRFQ_INFINITE_STORE_CLASS_AH0_RESULT_BLOCK_V2);
+  ABI_NUMBER(store_class, SESSION_ADMIN, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2);
+  ABI_NUMBER(store_class, PROVEN_GAP, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2);
+  ABI_NUMBER(action, APPLICATION_DISPATCH, IRFQ_INFINITE_ACTION_APPLICATION_DISPATCH_V2);
+  ABI_NUMBER(action, INBOUND_PROTOCOL_DISPOSITION, IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+  ABI_NUMBER(action, QUEUE_INSERT, IRFQ_INFINITE_ACTION_QUEUE_INSERT_V2);
+  ABI_NUMBER(action, QUEUE_ERASE_RANGE, IRFQ_INFINITE_ACTION_QUEUE_ERASE_RANGE_V2);
+  ABI_NUMBER(action, OUTPUT_FRAME, IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+  ABI_NUMBER(action, DISCONNECT, IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+  ABI_NUMBER(action, RESET_TRIGGER, IRFQ_INFINITE_ACTION_RESET_TRIGGER_V2);
+  ABI_NUMBER(action, TARGET_ADVANCE, IRFQ_INFINITE_ACTION_TARGET_ADVANCE_V2);
+  ABI_NUMBER(output_class, NONE, IRFQ_INFINITE_OUTPUT_NONE_V2);
+  ABI_NUMBER(output_class, ORIGINAL_APPLICATION, IRFQ_INFINITE_OUTPUT_ORIGINAL_APPLICATION_V2);
+  ABI_NUMBER(output_class, SESSION_RETRANSMIT, IRFQ_INFINITE_OUTPUT_SESSION_RETRANSMIT_V2);
+  ABI_NUMBER(output_class, SEMANTIC_REPLAY, IRFQ_INFINITE_OUTPUT_SEMANTIC_REPLAY_V2);
+  ABI_NUMBER(output_class, SESSION_ADMIN, IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+  ABI_NUMBER(output_class, GAP_FILL, IRFQ_INFINITE_OUTPUT_GAP_FILL_V2);
+  ABI_NUMBER(disposition, DURABLE_CONSUME, IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+  ABI_NUMBER(disposition, DURABLE_NO_CONSUME, IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+  ABI_NUMBER(disposition, PENDING_CORE, IRFQ_INFINITE_DISPOSITION_PENDING_CORE_V2);
+  ABI_NUMBER(disposition, PENDING_READ, IRFQ_INFINITE_DISPOSITION_PENDING_READ_V2);
+  ABI_NUMBER(disposition, PENDING_RESET_LOGON, IRFQ_INFINITE_DISPOSITION_PENDING_RESET_LOGON_V2);
+  ABI_NUMBER(reason, NONE, IRFQ_INFINITE_REASON_NONE_V2);
+  ABI_NUMBER(reason, IDENTITY_MISMATCH, IRFQ_INFINITE_REASON_IDENTITY_MISMATCH_V2);
+  ABI_NUMBER(reason, SESSION_TIME, IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+  ABI_NUMBER(reason, LATENCY, IRFQ_INFINITE_REASON_LATENCY_V2);
+  ABI_NUMBER(reason, SEQUENCE, IRFQ_INFINITE_REASON_SEQUENCE_V2);
+  ABI_NUMBER(reason, DICTIONARY, IRFQ_INFINITE_REASON_DICTIONARY_V2);
+  ABI_NUMBER(reason, RESET_REJECTED, IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
+  ABI_NUMBER(reason, HEARTBEAT_TIMEOUT, IRFQ_INFINITE_REASON_HEARTBEAT_TIMEOUT_V2);
+  ABI_NUMBER(reason, PROTOCOL, IRFQ_INFINITE_REASON_PROTOCOL_V2);
+  ABI_NUMBER(reason, INTEGRITY, IRFQ_INFINITE_REASON_INTEGRITY_V2);
+
+  ABI_LAYOUT(irfq_infinite_input_header_v2);
+  ABI_OFFSET(irfq_infinite_input_header_v2, structure_size);
+  ABI_OFFSET(irfq_infinite_input_header_v2, abi_version);
+  ABI_OFFSET(irfq_infinite_input_header_v2, reserved);
+  ABI_LAYOUT(irfq_infinite_output_header_v2);
+  ABI_OFFSET(irfq_infinite_output_header_v2, structure_size);
+  ABI_OFFSET(irfq_infinite_output_header_v2, abi_version);
+  ABI_OFFSET(irfq_infinite_output_header_v2, status);
+  ABI_OFFSET(irfq_infinite_output_header_v2, reserved);
+  ABI_LAYOUT(irfq_infinite_slice_v2);
+  ABI_OFFSET(irfq_infinite_slice_v2, data);
+  ABI_OFFSET(irfq_infinite_slice_v2, length);
+  ABI_LAYOUT(irfq_infinite_buffer_v2);
+  ABI_OFFSET(irfq_infinite_buffer_v2, data);
+  ABI_OFFSET(irfq_infinite_buffer_v2, capacity);
+  ABI_OFFSET(irfq_infinite_buffer_v2, length);
+  ABI_LAYOUT(irfq_infinite_scan_cursor_v2);
+  ABI_OFFSET(irfq_infinite_scan_cursor_v2, scan_offset);
+  ABI_OFFSET(irfq_infinite_scan_cursor_v2, body_length);
+  ABI_OFFSET(irfq_infinite_scan_cursor_v2, checksum_begin);
+  ABI_OFFSET(irfq_infinite_scan_cursor_v2, stage);
+  ABI_OFFSET(irfq_infinite_scan_cursor_v2, body_length_has_digit);
+  ABI_LAYOUT(irfq_infinite_scan_request_v2);
+  ABI_OFFSET(irfq_infinite_scan_request_v2, header);
+  ABI_OFFSET(irfq_infinite_scan_request_v2, input);
+  ABI_OFFSET(irfq_infinite_scan_request_v2, cursor);
+  ABI_LAYOUT(irfq_infinite_scan_response_v2);
+  ABI_OFFSET(irfq_infinite_scan_response_v2, header);
+  ABI_OFFSET(irfq_infinite_scan_response_v2, cursor);
+  ABI_OFFSET(irfq_infinite_scan_response_v2, complete_prefix_length);
+  ABI_LAYOUT(irfq_infinite_prepare_id_v2);
+  ABI_OFFSET(irfq_infinite_prepare_id_v2, high);
+  ABI_OFFSET(irfq_infinite_prepare_id_v2, low);
+  ABI_LAYOUT(irfq_infinite_session_create_request_v2);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, header);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, snapshot_codec_version);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, reserved);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, canonical_session_create_config);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, session_epoch);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, cache_revision);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, creation_tai_ns);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, creation_utc_ns);
+  ABI_OFFSET(irfq_infinite_session_create_request_v2, native_state);
+  ABI_LAYOUT(irfq_infinite_session_create_response_v2);
+  ABI_OFFSET(irfq_infinite_session_create_response_v2, header);
+  ABI_OFFSET(irfq_infinite_session_create_response_v2, session);
+  ABI_OFFSET(irfq_infinite_session_create_response_v2, cache_epoch);
+  ABI_OFFSET(irfq_infinite_session_create_response_v2, cache_revision);
+  ABI_LAYOUT(irfq_infinite_prepare_request_v2);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, header);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, kind);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, stage);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, event);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, application_block_mode);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, event_identity_sha256);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, expected_epoch);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, expected_revision);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, now_tai_ns);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, now_utc_ns);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, next_original_state);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, reserved);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, next_original_value);
+  ABI_OFFSET(irfq_infinite_prepare_request_v2, payload);
+  ABI_LAYOUT(irfq_infinite_declarative_action_v2);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, kind);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, output_class);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, disposition);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, msg_type_length);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, msg_type);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, input_source);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, input_item_index);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, sequence_begin);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, sequence_end_exclusive);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, input_offset);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, input_length);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, output_offset);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, output_length);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, binding_sha256);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, reason_code);
+  ABI_OFFSET(irfq_infinite_declarative_action_v2, reserved);
+  ABI_LAYOUT(irfq_infinite_prepare_response_v2);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, header);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, prepare_id);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, step);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, kind);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, stage);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, event);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, event_identity_sha256);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, base_epoch);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, base_revision);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, store_range_begin);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, store_range_end_exclusive);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, subject_sequence);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, subject_sha256);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, msg_type);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, msg_type_length);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, input_source);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, input_item_index);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, reserved);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, input_offset);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, input_length);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, required_output_capacity);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, result_epoch);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, result_revision);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, native_state);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, output);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, native_state_sha256);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, actions);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, action_capacity);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, action_count);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, output_frame_count);
+  ABI_OFFSET(irfq_infinite_prepare_response_v2, has_more);
+  ABI_LAYOUT(irfq_infinite_store_row_v2);
+  ABI_OFFSET(irfq_infinite_store_row_v2, sequence);
+  ABI_OFFSET(irfq_infinite_store_row_v2, store_class);
+  ABI_OFFSET(irfq_infinite_store_row_v2, msg_type_length);
+  ABI_OFFSET(irfq_infinite_store_row_v2, frame_length);
+  ABI_OFFSET(irfq_infinite_store_row_v2, reserved);
+  ABI_OFFSET(irfq_infinite_store_row_v2, frame_sha256);
+  ABI_OFFSET(irfq_infinite_store_row_v2, body_sha256);
+  ABI_OFFSET(irfq_infinite_store_row_v2, msg_type);
+  ABI_OFFSET(irfq_infinite_store_row_v2, frame);
+  ABI_LAYOUT(irfq_infinite_resume_request_v2);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, header);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, prepare_id);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, step);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, kind);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, subject_sequence);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, subject_sha256);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, decision);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, input_source);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, input_item_index);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, reserved);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, input_source_bytes);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, store_range_begin);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, store_range_end_exclusive);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, store_rows);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, store_row_count);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, reserved2);
+  ABI_OFFSET(irfq_infinite_resume_request_v2, gateway_inbound_disposition_id);
+  ABI_LAYOUT(irfq_infinite_apply_committed_request_v2);
+  ABI_OFFSET(irfq_infinite_apply_committed_request_v2, header);
+  ABI_OFFSET(irfq_infinite_apply_committed_request_v2, prepare_id);
+  ABI_OFFSET(irfq_infinite_apply_committed_request_v2, result_revision);
+  ABI_OFFSET(irfq_infinite_apply_committed_request_v2, native_state_sha256);
+  ABI_LAYOUT(irfq_infinite_abort_request_v2);
+  ABI_OFFSET(irfq_infinite_abort_request_v2, header);
+  ABI_OFFSET(irfq_infinite_abort_request_v2, prepare_id);
+  ABI_LAYOUT(irfq_infinite_operation_response_v2);
+  ABI_OFFSET(irfq_infinite_operation_response_v2, header);
+  ABI_OFFSET(irfq_infinite_operation_response_v2, cache_revision);
+
+  ABI_NUMBER(reserved_zero, irfq_infinite_input_header_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_output_header_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_session_create_request_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_prepare_request_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_declarative_action_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_prepare_response_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_store_row_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_resume_request_v2.reserved, 0);
+  ABI_NUMBER(reserved_zero, irfq_infinite_resume_request_v2.reserved2, 0);
+  ABI_TEXT(symbol, irfq_infinite_scan_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_session_create_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_prepare_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_resume_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_apply_committed_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_abort_v2, "function");
+  ABI_TEXT(symbol, irfq_infinite_destroy_v2, "function");
+
+#undef ABI_OFFSET
+#undef ABI_LAYOUT
+#undef ABI_NUMBER
+#undef ABI_TEXT
+
+  return rows;
+}
+
+bool validAbiFixture(const std::string &bytes) {
+  if (bytes.empty() || bytes.back() != '\n' || bytes.find('\r') != std::string::npos) {
+    return false;
+  }
+
+  std::vector<AbiFixtureRow> rows;
+  for (std::size_t begin = 0; begin < bytes.size();) {
+    const auto end = bytes.find('\n', begin);
+    if (end == std::string::npos || end == begin) {
+      return false;
+    }
+    const auto firstTab = bytes.find('\t', begin);
+    if (firstTab == std::string::npos || firstTab >= end || firstTab == begin) {
+      return false;
+    }
+    const auto secondTab = bytes.find('\t', firstTab + 1);
+    if (secondTab == std::string::npos || secondTab >= end || secondTab == firstTab + 1
+        || bytes.find('\t', secondTab + 1) < end || secondTab + 1 == end) {
+      return false;
+    }
+    rows.push_back(
+        {bytes.substr(begin, firstTab - begin),
+         bytes.substr(firstTab + 1, secondTab - firstTab - 1),
+         bytes.substr(secondTab + 1, end - secondTab - 1)});
+    begin = end + 1;
+  }
+  return rows == expectedAbiFixtureRows();
+}
+
+void replaceAbiFixtureText(std::string &bytes, const std::string &from, const std::string &to) {
+  const auto position = bytes.find(from);
+  REQUIRE(position != std::string::npos);
+  bytes.replace(position, from.size(), to);
+}
+} // namespace
+
+TEST_CASE("InfiniteFrameAdapterV2 fixture pins the exact compiled C ABI", "[infinite][adapter][v2][abi]") {
   std::ifstream stream(INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH, std::ios::binary);
   REQUIRE(stream.good());
   const std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-  CHECK(bytes.find('\r') == std::string::npos);
-  CHECK(bytes.find("constant\tabi_version\t131072\n") != std::string::npos);
-  CHECK(bytes.find("size\tirfq_infinite_prepare_response_v2\t320\n") != std::string::npos);
-  CHECK(bytes.find("offset\tirfq_infinite_prepare_response_v2.actions\t296\n") != std::string::npos);
-  CHECK(bytes.find("size\tirfq_infinite_resume_request_v2\t160\n") != std::string::npos);
-  CHECK(
-      bytes.find("offset\tirfq_infinite_resume_request_v2.gateway_inbound_disposition_id\t144\n") != std::string::npos);
+  REQUIRE(validAbiFixture(bytes));
+
+  auto crlf = bytes;
+  replaceAbiFixtureText(crlf, "\n", "\r\n");
+  CHECK_FALSE(validAbiFixture(crlf));
+
+  auto duplicate = bytes;
+  replaceAbiFixtureText(
+      duplicate,
+      "constant\tabi_version\t131072\n",
+      "constant\tabi_version\t131072\nconstant\tabi_version\t131072\n");
+  CHECK_FALSE(validAbiFixture(duplicate));
+
+  auto unknown = bytes;
+  replaceAbiFixtureText(unknown, "constant\tabi_version\t", "constant\tunknown_version\t");
+  CHECK_FALSE(validAbiFixture(unknown));
+
+  auto missing = bytes;
+  replaceAbiFixtureText(missing, "boolean\tYES\t1\n", "");
+  CHECK_FALSE(validAbiFixture(missing));
+
+  auto reordered = bytes;
+  replaceAbiFixtureText(reordered, "boolean\tNO\t0\nboolean\tYES\t1\n", "boolean\tYES\t1\nboolean\tNO\t0\n");
+  CHECK_FALSE(validAbiFixture(reordered));
+
+  auto wrongValue = bytes;
+  replaceAbiFixtureText(
+      wrongValue,
+      "constant\tmax_native_state_bytes\t312\n",
+      "constant\tmax_native_state_bytes\t313\n");
+  CHECK_FALSE(validAbiFixture(wrongValue));
+
+  auto trailing = bytes;
+  trailing += "symbol\tirfq_infinite_destroy_v2\tfunction\n";
+  CHECK_FALSE(validAbiFixture(trailing));
+
+  auto noFinalLf = bytes;
+  noFinalLf.pop_back();
+  CHECK_FALSE(validAbiFixture(noFinalLf));
 }
 
 TEST_CASE("InfiniteFrameAdapterV2 exposes the frozen v2 numeric domains", "[infinite][adapter][v2][abi]") {
