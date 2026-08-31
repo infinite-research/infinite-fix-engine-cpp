@@ -66,6 +66,8 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
       LC_ALL=C LANG=C)
   set(_git_config
       -c safe.directory=${_checkout}
+      -c core.trustctime=true -c core.checkStat=default -c core.fileMode=true
+      -c core.fsmonitor=false -c core.untrackedCache=false
       -c core.attributesFile=/dev/null -c core.quotePath=true -c core.bigFileThreshold=512m
       -c diff.external= -c diff.noprefix=false -c diff.mnemonicPrefix=false
       -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ -c diff.algorithm=myers
@@ -117,37 +119,104 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
     message(FATAL_ERROR "source checkout index contains special tracked-file flags: ${_index_state}${_error}")
   endif()
   execute_process(
-    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
-            diff-index --quiet --cached HEAD --
-    RESULT_VARIABLE _result ERROR_VARIABLE _error)
-  if(NOT _result EQUAL 0)
-    message(FATAL_ERROR "source checkout index must equal HEAD: ${_error}")
-  endif()
-  execute_process(
-    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
-            diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none HEAD --
-    RESULT_VARIABLE _result ERROR_VARIABLE _error)
-  if(NOT _result EQUAL 0)
-    message(FATAL_ERROR "source checkout tracked bytes must equal HEAD: ${_error}")
-  endif()
-  execute_process(
-    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
-            status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none
-    RESULT_VARIABLE _result OUTPUT_VARIABLE _status ERROR_VARIABLE _error)
-  if(NOT _result EQUAL 0 OR NOT _status STREQUAL "")
-    message(FATAL_ERROR "source checkout must have no tracked or untracked changes: ${_status}${_error}")
-  endif()
-  execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}" rev-parse --verify "HEAD^{commit}"
     RESULT_VARIABLE _result OUTPUT_VARIABLE _commit ERROR_VARIABLE _error OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT _result EQUAL 0)
     message(FATAL_ERROR "source HEAD commit is unreadable: ${_error}")
   endif()
   execute_process(
-    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}" rev-parse --verify "HEAD^{tree}"
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            rev-parse --verify "${_commit}^{tree}"
     RESULT_VARIABLE _result OUTPUT_VARIABLE _tree ERROR_VARIABLE _error OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT _result EQUAL 0)
     message(FATAL_ERROR "source HEAD tree is unreadable: ${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            ls-tree -r --full-tree "--format=%(objectmode)" "${_commit}"
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _head_modes ERROR_VARIABLE _error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "could not inspect source HEAD modes: ${_error}")
+  endif()
+  string(REPLACE "\n" ";" _head_modes "${_head_modes}")
+  foreach(_head_mode IN LISTS _head_modes)
+    if(NOT _head_mode STREQUAL "100644" AND NOT _head_mode STREQUAL "100755"
+       AND NOT _head_mode STREQUAL "120000")
+      message(FATAL_ERROR "source HEAD contains unsupported tracked mode: ${_head_mode}${_error}")
+    endif()
+  endforeach()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            rev-parse --path-format=absolute --git-path objects
+    RESULT_VARIABLE _objects_result OUTPUT_VARIABLE _source_objects ERROR_VARIABLE _objects_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _objects_result EQUAL 0 OR NOT IS_ABSOLUTE "${_source_objects}" OR _source_objects MATCHES "[:;\n]")
+    message(FATAL_ERROR "source object path is not a safe absolute alternate: ${_source_objects}${_objects_error}")
+  endif()
+  set(_snapshot_root "${IRFQ_PACKAGE_BINARY_DIR}/.irfq-provenance-emitter")
+  if(EXISTS "${_snapshot_root}" OR IS_SYMLINK "${_snapshot_root}")
+    message(FATAL_ERROR "source snapshot scratch path must not pre-exist: ${_snapshot_root}")
+  endif()
+  file(MAKE_DIRECTORY "${_snapshot_root}/objects")
+  file(WRITE "${_snapshot_root}/empty" "")
+  set(_snapshot_env
+      GIT_INDEX_FILE=${_snapshot_root}/index
+      GIT_OBJECT_DIRECTORY=${_snapshot_root}/objects
+      GIT_ALTERNATE_OBJECT_DIRECTORIES=${_source_objects})
+  set(_snapshot_config ${_git_config}
+      -c core.autocrlf=false -c core.symlinks=true -c core.splitIndex=false
+      -c core.sparseCheckout=false -c index.sparse=false)
+  execute_process(
+    COMMAND ${_git_env} ${_snapshot_env} "${IRFQ_PACKAGE_GIT}" ${_snapshot_config} -C "${_checkout}"
+            hash-object -t tree -w --stdin
+    INPUT_FILE "${_snapshot_root}/empty"
+    RESULT_VARIABLE _empty_result OUTPUT_VARIABLE _empty_tree ERROR_VARIABLE _empty_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  execute_process(
+    COMMAND ${_git_env} ${_snapshot_env} "${IRFQ_PACKAGE_GIT}" ${_snapshot_config} -C "${_checkout}"
+            read-tree --reset "${_commit}"
+    RESULT_VARIABLE _read_result ERROR_VARIABLE _read_error)
+  execute_process(
+    COMMAND ${_git_env} ${_snapshot_env} GIT_ATTR_SOURCE=${_empty_tree}
+            "${IRFQ_PACKAGE_GIT}" ${_snapshot_config} -C "${_checkout}" add --renormalize -u -- .
+    RESULT_VARIABLE _add_result ERROR_VARIABLE _add_error)
+  execute_process(
+    COMMAND ${_git_env} ${_snapshot_env} "${IRFQ_PACKAGE_GIT}" ${_snapshot_config} -C "${_checkout}"
+            diff-index --cached --quiet "${_commit}" --
+    RESULT_VARIABLE _snapshot_result ERROR_VARIABLE _snapshot_error)
+  file(REMOVE_RECURSE "${_snapshot_root}")
+  if(NOT _empty_result EQUAL 0 OR NOT _read_result EQUAL 0
+     OR NOT _add_result EQUAL 0 OR NOT _snapshot_result EQUAL 0)
+    message(FATAL_ERROR
+            "raw source bytes, symlink targets, or modes differ from HEAD: ${_error}${_objects_error}${_empty_error}${_read_error}${_add_error}${_snapshot_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            diff-index --quiet --cached "${_commit}" --
+    RESULT_VARIABLE _result ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "source checkout index must equal HEAD: ${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            ls-files --others --exclude-standard
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _untracked ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0 OR NOT _untracked STREQUAL "")
+    message(FATAL_ERROR "source checkout contains untracked files: ${_untracked}${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
+            ls-files --others --ignored --exclude-standard
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _ignored ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0 OR NOT _ignored STREQUAL "")
+    message(FATAL_ERROR "source checkout contains ignored files: ${_ignored}${_error}")
+  endif()
+  execute_process(
+    COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}" rev-parse --verify "HEAD^{commit}"
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _final_head ERROR_VARIABLE _error OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _result EQUAL 0 OR NOT _final_head STREQUAL _commit)
+    message(FATAL_ERROR "source HEAD changed during provenance derivation: ${_final_head}${_error}")
   endif()
   execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}" cat-file -e "${_base}^{commit}"
@@ -549,6 +618,7 @@ _irfq_manifest_line(licenses_sha256 "${_irfq_licenses_hash}")
 execute_process(
   COMMAND "${CMAKE_COMMAND}"
           "-DIRFQ_PACKAGE_DIR=${_irfq_stage_dir}"
+          "-DIRFQ_EXPECTED_BINARY_DIR=${IRFQ_PACKAGE_BINARY_DIR}"
           "-DIRFQ_EXPECTED_ARCHIVE=${IRFQ_PACKAGE_ARCHIVE}"
           "-DIRFQ_EXPECTED_HEADER=${IRFQ_PACKAGE_HEADER}"
           "-DIRFQ_EXPECTED_ABI_FIXTURE=${IRFQ_PACKAGE_ABI_FIXTURE}"
