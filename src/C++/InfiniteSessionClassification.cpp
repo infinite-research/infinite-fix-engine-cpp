@@ -821,7 +821,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       || lastProcessedSequence >= FIX_SEQUENCE_BOUND || nowUtcNanoseconds <= 0 || lastSentUtcNanoseconds <= 0
       || lastReceivedUtcNanoseconds <= 0 || (sessionFlags & ~FLAGS_MASK) != 0 || wire.empty()
       || (heartbeatSeconds == 0 && (!detached || profile.heartbeatMode != 2)) || profile.timestampPrecision > 9
-      || profile.maximumLatency > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+      || profile.maximumLatency > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+      || testRequestCount > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("Inbound planner input");
   }
   const auto now = utcTime(nowUtcNanoseconds);
@@ -991,7 +992,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
           || (resendBeginStatus == WireSequenceStatus::Valid && resendEndStatus == WireSequenceStatus::Valid
               && (resendEndInclusive == 0 || resendEndInclusive >= resendBegin));
     const bool timeMatches = session.isGoodTime(sendingTime);
-    const bool headerSafe = completeIdentity && timeMatches && session.checkSessionTime(now);
+    const bool sessionTimeMatches = session.checkSessionTime(now);
+    const bool logonTimeMatches = session.isLogonTime(now);
+    const bool headerSafe = completeIdentity && timeMatches && sessionTimeMatches;
     const bool safeToIntercept = dictionaryValid && headerSafe;
     bool intercepted = false;
     if (!identified) {
@@ -1014,6 +1017,10 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       session.generateReject(incoming, invalidLogonProfileTag == 0 ? heartbeatRejectReason : 18, invalidTag);
       session.generateLogout("Invalid Logon profile");
       session.disconnect();
+      intercepted = true;
+    } else if (
+        msgType == MsgType_Logon && !static_cast<bool>(reset) && dictionaryValid && completeIdentity && timeMatches
+        && (!sessionTimeMatches || !logonTimeMatches)) {
       intercepted = true;
     } else if (
         safeToIntercept && msgType == MsgType_Logon && !static_cast<bool>(reset)
@@ -1135,6 +1142,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         sequenceFieldsValid,
         completeIdentity,
         timeMatches,
+        sessionTimeMatches,
+        logonTimeMatches,
         dictionaryValid,
         responder.disconnected,
         resendBegin,
@@ -1223,7 +1232,8 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
       || lastReceivedTaiNanoseconds <= 0 || lastSentTaiNanoseconds > nowTaiNanoseconds
       || lastReceivedTaiNanoseconds > nowTaiNanoseconds || (sessionFlags & ~FLAGS_MASK) != 0 || logonTimeoutSeconds == 0
       || logoutTimeoutSeconds == 0 || logonTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
-      || logoutTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+      || logoutTimeoutSeconds > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
+      || testRequestCount > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("Timer planner input");
   }
   auto scratchUtc = utcTime(creationUtcNanoseconds);

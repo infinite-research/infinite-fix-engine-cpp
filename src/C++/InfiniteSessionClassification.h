@@ -91,6 +91,8 @@ struct InfiniteInboundPlan {
   bool sequenceFieldsValid{false};
   bool identityMatches{false};
   bool timeMatches{false};
+  bool sessionTimeMatches{false};
+  bool logonTimeMatches{false};
   bool dictionaryValid{false};
   bool disconnected{false};
   std::uint64_t resendBegin{0};

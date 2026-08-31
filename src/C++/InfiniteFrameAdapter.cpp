@@ -828,11 +828,36 @@ bool validNativeState(
   const auto blockMode = read32(state.data + 296);
   const auto continuationCursor = read64(state.data + 300);
   const auto reason = read32(state.data + 308);
+  constexpr std::uint64_t receivedLogon = UINT64_C(1) << 1;
+  constexpr std::uint64_t sentLogon = UINT64_C(1) << 2;
+  constexpr std::uint64_t receivedLogout = UINT64_C(1) << 3;
+  constexpr std::uint64_t sentLogout = UINT64_C(1) << 4;
+  constexpr std::uint64_t receivedReset = UINT64_C(1) << 5;
+  constexpr std::uint64_t sentReset = UINT64_C(1) << 6;
+  constexpr std::uint64_t profileNegotiated = UINT64_C(1) << 7;
+  constexpr std::uint64_t pendingDisconnect = UINT64_C(1) << 8;
+  constexpr std::uint64_t attached = SESSION_FLAG_ENABLED | receivedLogon | sentLogon | profileNegotiated;
+  constexpr std::uint64_t attachedReset = attached | receivedReset | sentReset;
   const bool recoveryActive = recoveryKind != RECOVERY_NONE;
+  const bool sentPresent = sentTai != 0;
+  const bool receivedPresent = receivedTai != 0;
+  const bool hasReceivedLogon = (flags & receivedLogon) != 0;
+  const bool hasSentLogon = (flags & sentLogon) != 0;
+  const bool hasReceivedLogout = (flags & receivedLogout) != 0;
+  const bool hasSentLogout = (flags & sentLogout) != 0;
+  const bool hasReceivedReset = (flags & receivedReset) != 0;
+  const bool hasSentReset = (flags & sentReset) != 0;
+  const bool negotiated = (flags & profileNegotiated) != 0;
+  const bool pending = (flags & pendingDisconnect) != 0;
   std::int64_t boundary = 0;
   if (creationTai <= 0 || creationUtc <= 0 || evaluatedTai <= 0 || evaluatedUtc <= 0 || evaluatedTai < creationTai
       || evaluatedUtc < creationUtc || !pairEitherZeroOrPositive(sentTai, sentUtc)
       || !pairEitherZeroOrPositive(receivedTai, receivedUtc) || !validSequence(senderState, senderValue)
+      || (sentPresent
+          && (sentTai < creationTai || sentTai > evaluatedTai || sentUtc < creationUtc || sentUtc > evaluatedUtc))
+      || (receivedPresent
+          && (receivedTai < creationTai || receivedTai > evaluatedTai || receivedUtc < creationUtc
+              || receivedUtc > evaluatedUtc))
       || !validSequence(targetState, targetValue)
       || (senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && peerFrontier >= senderValue)
       || (targetState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && venueFrontier >= targetValue)
@@ -843,101 +868,95 @@ bool validNativeState(
       || !validRangeTriple(recoveryBegin, recoveryEnd, recoveryCursor, recoveryActive) || senderApplicationVersion != 10
       || (targetApplicationVersion != 0 && targetApplicationVersion != 10) || continuation > CONTINUATION_READ_RESULT
       || blockMode > IRFQ_INFINITE_APPLICATION_BLOCK_SEMANTIC_REPLAY_V2 || reason > IRFQ_INFINITE_REASON_INTEGRITY_V2
+      || recoveryKind > RECOVERY_LOGON_789
+      || testRequestCount > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
       || (profile.scheduleMode == 2 && !scheduledBoundary(profile, creationUtc, boundary))) {
     return false;
   }
-  constexpr std::uint64_t pendingDisconnect = UINT64_C(256);
-  const auto lifecycleFlags = flags & ~pendingDisconnect;
-  const bool detachedConnection
-      = lifecycleFlags == SESSION_FLAG_ENABLED && (!recoveryActive || continuation == CONTINUATION_NONE);
+  if (hasReceivedLogon != hasSentLogon || negotiated != (hasReceivedLogon && hasSentLogon)
+      || (hasReceivedReset && !hasReceivedLogon) || (hasSentReset && !hasSentLogon)
+      || (negotiated && (hasReceivedReset != hasSentReset)) || (hasReceivedLogout && !hasSentLogout)
+      || ((hasReceivedLogout || hasSentLogout) && !negotiated) || (hasReceivedLogout && !pending)
+      || targetApplicationVersion != (negotiated ? 10U : 0U)
+      || (testRequestCount != 0
+          && (!negotiated || hasReceivedLogout || hasSentLogout || pending || !sentPresent || !receivedPresent))
+      || ((hasSentLogon || hasSentLogout || hasSentReset) && !sentPresent)
+      || ((hasReceivedLogon || hasReceivedLogout || hasReceivedReset) && !receivedPresent)
+      || (reason != IRFQ_INFINITE_REASON_NONE_V2) != pending) {
+    return false;
+  }
+  const bool attachedPeerPrefix = recoveryKind == RECOVERY_LOGON_789 && recoveryPhase == RECOVERY_PHASE_PEER_PREFIX
+                                  && flags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_RESEND
+                                  && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+                                  && continuationCursor == recoveryCursor && targetApplicationVersion == 0;
+  const bool heartbeatAttached = negotiated || attachedPeerPrefix;
   if ((profile.heartbeatMode == 1 && heartbeat != profile.configuredHeartbeat)
       || (profile.heartbeatMode == 2
-          && ((detachedConnection && heartbeat != 0)
-              || (!detachedConnection
-                  && (heartbeat < profile.minimumHeartbeat || heartbeat > profile.maximumHeartbeat))))) {
+          && (heartbeatAttached ? heartbeat < profile.minimumHeartbeat || heartbeat > profile.maximumHeartbeat
+                                : heartbeat != 0))) {
     return false;
   }
-  if (recoveryKind == RECOVERY_NONE) {
-    if (recoveryPhase != RECOVERY_PHASE_NONE || nonzero(state.data + 252, 32)) {
-      return false;
-    }
-  } else if (
-      !nonzero(state.data + 252, 32)
-      || (recoveryKind == RECOVERY_RESEND_REQUEST && recoveryPhase != RECOVERY_PHASE_STORED_RANGE)
-      || (recoveryKind == RECOVERY_LOGON_789
-          && (recoveryPhase < RECOVERY_PHASE_PEER_PREFIX || recoveryPhase > RECOVERY_PHASE_FINAL_GAP_FILL))) {
+  if (!recoveryActive) {
+    const bool validContinuation
+        = (continuation == CONTINUATION_NONE && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+           && continuationCursor == 0)
+          || (continuation == CONTINUATION_QUEUED_INBOUND && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+              && gapBegin != 0 && gapCursor < gapEnd && continuationCursor == gapCursor)
+          || (continuation == CONTINUATION_APPLICATION_BLOCK
+              && (blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_ORIGINAL_V2
+                  || blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_SEMANTIC_REPLAY_V2)
+              && continuationCursor > 0)
+          || (continuation == CONTINUATION_READ_RESULT && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+              && continuationCursor > 0);
+    return recoveryPhase == RECOVERY_PHASE_NONE && !nonzero(state.data + 252, 32) && peerPresence == 0 && peerValue == 0
+           && validContinuation;
+  }
+  if (!nonzero(state.data + 252, 32) || testRequestCount != 0 || pending || hasReceivedLogout || hasSentLogout) {
     return false;
   }
-  if ((continuation == CONTINUATION_NONE && (blockMode != 0 || continuationCursor != 0))
-      || (continuation == CONTINUATION_RESEND
-          && (!recoveryActive || blockMode != 0 || continuationCursor != recoveryCursor))
-      || (continuation == CONTINUATION_QUEUED_INBOUND
-          && (blockMode != 0 || gapBegin == 0 || gapCursor >= gapEnd || continuationCursor != gapCursor))
-      || (continuation == CONTINUATION_READ_RESULT && (blockMode != 0 || continuationCursor == 0))
-      || (continuation == CONTINUATION_APPLICATION_BLOCK && (blockMode == 0 || continuationCursor == 0))) {
+  const bool detached = flags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_NONE
+                        && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2 && continuationCursor == 0
+                        && targetApplicationVersion == 0;
+  const bool attachedResend = (flags == attached || flags == attachedReset) && continuation == CONTINUATION_RESEND
+                              && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2
+                              && continuationCursor == recoveryCursor && targetApplicationVersion == 10;
+  const bool attachedNoContinuation = flags == attached && continuation == CONTINUATION_NONE
+                                      && blockMode == IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2 && continuationCursor == 0
+                                      && targetApplicationVersion == 10;
+  if (recoveryKind == RECOVERY_RESEND_REQUEST) {
+    return recoveryPhase == RECOVERY_PHASE_STORED_RANGE && peerPresence == 0 && peerValue == 0
+           && (detached || attachedResend
+               || (attachedNoContinuation
+                   && (senderState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2
+                       || (senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && senderValue > 1))));
+  }
+  if (peerPresence != 1 || peerValue == 0 || senderState != IRFQ_INFINITE_SEQUENCE_VALUE_V2
+      || targetState != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
     return false;
   }
-  constexpr std::uint64_t attached = UINT64_C(135);
-  constexpr std::uint64_t attachedReset = UINT64_C(231);
-  if ((reason != IRFQ_INFINITE_REASON_NONE_V2) != ((flags & pendingDisconnect) != 0)) {
-    return false;
+  if (recoveryPhase == RECOVERY_PHASE_PEER_PREFIX) {
+    return (detached || attachedPeerPrefix) && recoveryEnd == peerValue && peerValue <= senderValue
+           && (peerValue == senderValue
+               || senderValue <= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2);
   }
-  if (recoveryActive) {
-    const bool detached = lifecycleFlags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_NONE
-                          && continuationCursor == 0 && targetApplicationVersion == 0;
-    const bool directAttached = (lifecycleFlags == attached || lifecycleFlags == attachedReset)
-                                && continuation == CONTINUATION_RESEND && continuationCursor == recoveryCursor
-                                && targetApplicationVersion == 10;
-    const bool directResponseBarrier = lifecycleFlags == attached && continuation == CONTINUATION_NONE
-                                       && continuationCursor == 0 && targetApplicationVersion == 10
-                                       && (senderState == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2
-                                           || (senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && senderValue > 1));
-    const bool logonAttached = lifecycleFlags == attached && targetApplicationVersion == 10;
-    if (testRequestCount != 0 || (flags & pendingDisconnect) != 0) {
-      return false;
-    }
-    if (recoveryKind == RECOVERY_RESEND_REQUEST) {
-      if (peerPresence != 0 || peerValue != 0 || (!detached && !directAttached && !directResponseBarrier)) {
-        return false;
-      }
-    } else {
-      if (peerPresence != 1 || peerValue == 0 || senderState != IRFQ_INFINITE_SEQUENCE_VALUE_V2
-          || targetState != IRFQ_INFINITE_SEQUENCE_VALUE_V2) {
-        return false;
-      }
-      if (recoveryPhase == RECOVERY_PHASE_PEER_PREFIX) {
-        const bool attachedPeerPrefix = flags == SESSION_FLAG_ENABLED && continuation == CONTINUATION_RESEND
-                                        && continuationCursor == recoveryCursor && targetApplicationVersion == 0;
-        if ((!detached && !attachedPeerPrefix) || recoveryEnd != peerValue || peerValue > senderValue
-            || (peerValue < senderValue
-                && senderValue > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2)) {
-          return false;
-        }
-      } else if (recoveryPhase == RECOVERY_PHASE_LOGON_RESPONSE) {
-        if ((!detached && (!logonAttached || continuation != CONTINUATION_NONE || continuationCursor != 0))
-            || recoveryBegin + 1 != recoveryEnd || recoveryCursor != recoveryBegin || peerValue >= recoveryBegin
-            || recoveryBegin > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
-            || senderValue != recoveryEnd) {
-          return false;
-        }
-      } else if (recoveryPhase == RECOVERY_PHASE_STORED_RANGE) {
-        if ((!detached
-             && (!logonAttached || continuation != CONTINUATION_RESEND || continuationCursor != recoveryCursor))
-            || recoveryBegin != peerValue
-            || recoveryEnd > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
-            || recoveryEnd + 1 != senderValue) {
-          return false;
-        }
-      } else if (
-          (!detached && (!logonAttached || continuation != CONTINUATION_RESEND || continuationCursor != recoveryCursor))
-          || recoveryBegin + 1 != recoveryEnd || recoveryCursor != recoveryBegin || recoveryEnd != senderValue
-          || recoveryBegin > static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
-          || peerValue > recoveryBegin) {
-        return false;
-      }
-    }
+  if (recoveryPhase == RECOVERY_PHASE_LOGON_RESPONSE) {
+    return (detached || attachedNoContinuation) && recoveryBegin + 1 == recoveryEnd && recoveryCursor == recoveryBegin
+           && peerValue < recoveryBegin
+           && recoveryBegin <= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
+           && senderValue == recoveryEnd;
   }
-  return true;
+  if (recoveryPhase == RECOVERY_PHASE_STORED_RANGE) {
+    return (detached || (flags == attached && attachedResend)) && recoveryBegin == peerValue
+           && recoveryEnd <= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
+           && recoveryEnd + 1 == senderValue;
+  }
+  if (recoveryPhase == RECOVERY_PHASE_FINAL_GAP_FILL) {
+    return (detached || (flags == attached && attachedResend)) && recoveryBegin + 1 == recoveryEnd
+           && recoveryCursor == recoveryBegin
+           && recoveryBegin <= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
+           && recoveryEnd == senderValue && peerValue <= recoveryBegin;
+  }
+  return false;
 }
 
 bool validScanCursor(const irfq_infinite_slice_v2 &input, const irfq_infinite_scan_cursor_v2 &cursor) noexcept {
@@ -1330,6 +1349,9 @@ irfq_infinite_status_v2 describePlan(
       || !validNativeState(state, profile, plan.resultEpoch, plan.resultRevision)
       || std::any_of(plan.actions.begin(), plan.actions.end(), [](const auto &action) {
            return action.msg_type_length > IRFQ_INFINITE_MAX_MESSAGE_TYPE_BYTES_V2
+                  || (action.kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2
+                      && action.disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2
+                      && action.reason_code == IRFQ_INFINITE_REASON_NONE_V2)
                   || (action.msg_type_length != 0
                       && !std::all_of(action.msg_type, action.msg_type + action.msg_type_length, [](std::uint8_t byte) {
                            return byte >= 0x21 && byte <= 0x7e;
@@ -1830,6 +1852,8 @@ std::unique_ptr<PendingPlan> continueResendPlan(
       write32(plan->state.data() + 292, CONTINUATION_NONE);
       write64(plan->state.data() + 300, 0);
       if (end == senderSequence) {
+        write32(plan->state.data() + 168, 0);
+        write64(plan->state.data() + 172, 0);
         std::fill(plan->state.begin() + 220, plan->state.begin() + 284, std::uint8_t{0});
       } else {
         write32(plan->state.data() + 224, RECOVERY_PHASE_LOGON_RESPONSE);
@@ -2024,7 +2048,8 @@ std::unique_ptr<PendingPlan> adminTestRequestPlan(
     irfq_infinite_session_v2 &session,
     const irfq_infinite_prepare_request_v2 &request) {
   const auto testRequestCount = read32(session.state.data() + 192);
-  if (!attachedForAdmin(session) || request.payload.length != 32 || testRequestCount == UINT32_MAX) {
+  if (!attachedForAdmin(session) || request.payload.length != 32
+      || testRequestCount >= static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("TestRequest event");
   }
   const auto output = FIX::InfiniteSessionPlanner::testRequest(
@@ -2154,11 +2179,13 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
                                && inbound.logonProfileValid && !inbound.nextExpectedInvalid && inbound.outputs.empty()
                                && !inbound.disconnected && inbound.nextSenderSequence == senderSequence
                                && inbound.nextTargetSequence == targetSequence;
-  const bool authenticatedOrdinaryLogon = inbound.admin && !inbound.application && inbound.msgType == "A"
-                                          && !inbound.resetLogon && inbound.identified && inbound.sequenceValid
-                                          && inbound.sequenceFieldsValid && inbound.sequence == targetSequence
-                                          && inbound.identityMatches && inbound.timeMatches && inbound.dictionaryValid
-                                          && inbound.logonProfileValid && !inbound.nextExpectedInvalid;
+  const bool ordinaryLogonHeader = inbound.admin && !inbound.application && inbound.msgType == "A"
+                                   && !inbound.resetLogon && inbound.identified && inbound.sequenceValid
+                                   && inbound.sequenceFieldsValid && inbound.sequence == targetSequence
+                                   && inbound.identityMatches && inbound.timeMatches && inbound.dictionaryValid
+                                   && inbound.logonProfileValid && !inbound.nextExpectedInvalid;
+  const bool authenticatedOrdinaryLogon = ordinaryLogonHeader && inbound.sessionTimeMatches && inbound.logonTimeMatches;
+  const bool rejectedLogonWindow = ordinaryLogonHeader && (!inbound.sessionTimeMatches || !inbound.logonTimeMatches);
   const bool finalTarget = targetState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
                            && targetSequence == static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
   const bool exactNativeOriginal
@@ -2221,9 +2248,6 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
   write32(plan->state.data() + 192, inbound.testRequestCount);
-  if (detached && inbound.disconnected && session.profile.heartbeatMode == 2 && !finalTarget) {
-    write32(plan->state.data() + 188, inbound.heartbeatSeconds);
-  }
   const auto expectedTarget = targetSequence;
   const auto appendOutputs = [&] {
     std::uint64_t offset = 0;
@@ -2322,6 +2346,23 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     plan->reborrowDigest = reborrowSha.finish();
     return plan;
   }
+  if (rejectedLogonWindow) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    appendDisconnect(IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    if (!recoveryActive) {
+      write32(plan->state.data() + 168, 0);
+      write64(plan->state.data() + 172, 0);
+    }
+    write64(plan->state.data() + 180, recoveryActive ? SESSION_FLAG_ENABLED : SESSION_FLAG_ENABLED | UINT64_C(256));
+    write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
+    write32(plan->state.data() + 192, 0);
+    write32(plan->state.data() + 288, 0);
+    write32(
+        plan->state.data() + 308,
+        recoveryActive ? IRFQ_INFINITE_REASON_NONE_V2 : IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
+    return plan;
+  }
   if (finalTargetNone) {
     appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SEQUENCE_V2);
     const bool emitLogout = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
@@ -2336,12 +2377,8 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     appendDisconnect(IRFQ_INFINITE_REASON_SEQUENCE_V2);
     write32(plan->state.data() + 168, 0);
     write64(plan->state.data() + 172, 0);
-    write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256) | (emitLogout ? UINT64_C(16) : UINT64_C(0)));
-    write32(
-        plan->state.data() + 188,
-        session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat
-        : emitLogout                       ? inbound.heartbeatSeconds
-                                           : 0);
+    write64(plan->state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256));
+    write32(plan->state.data() + 188, session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : 0);
     write32(plan->state.data() + 192, 0);
     write32(plan->state.data() + 288, 0);
     write32(plan->state.data() + 292, CONTINUATION_NONE);
@@ -2576,7 +2613,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
                                                            : IRFQ_INFINITE_REASON_LATENCY_V2;
     write64(
         plan->state.data() + 180,
-        read64(plan->state.data() + 180) | UINT64_C(256) | (sentLogout ? UINT64_C(16) : UINT64_C(0)));
+        read64(plan->state.data() + 180) | UINT64_C(256) | (heldAttached && sentLogout ? UINT64_C(16) : UINT64_C(0)));
     write32(plan->state.data() + 308, terminalReason);
     irfq_infinite_declarative_action_v2 disconnect{};
     disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
@@ -2672,8 +2709,9 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     if (inbound.disconnected) {
       const auto sentLogout = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5")
                               != inbound.outputMsgTypes.end();
-      const auto logoutFlags
-          = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
+      const auto logoutFlags = heldAttached ? (sentLogout ? UINT64_C(16) : UINT64_C(0))
+                                                  | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0))
+                                            : UINT64_C(0);
       write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256) | logoutFlags);
       write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_PROTOCOL_V2);
       irfq_infinite_declarative_action_v2 disconnect{};
@@ -2801,8 +2839,9 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   if (inbound.disconnected || !inbound.identityMatches || !inbound.timeMatches) {
     const auto sentLogout
         = std::find(inbound.outputMsgTypes.begin(), inbound.outputMsgTypes.end(), "5") != inbound.outputMsgTypes.end();
-    const auto logoutFlags
-        = (sentLogout ? UINT64_C(16) : UINT64_C(0)) | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0));
+    const auto logoutFlags = heldAttached ? (sentLogout ? UINT64_C(16) : UINT64_C(0))
+                                                | (inbound.msgType == "5" ? UINT64_C(8) : UINT64_C(0))
+                                          : UINT64_C(0);
     write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256) | logoutFlags);
     write32(
         plan->state.data() + 308,
@@ -3481,6 +3520,8 @@ irfq_infinite_status_v2 resumeResendStore(
       write32(plan.state.data() + 292, CONTINUATION_RESEND);
       write64(plan.state.data() + 300, finalSequence);
     } else {
+      write32(plan.state.data() + 168, 0);
+      write64(plan.state.data() + 172, 0);
       std::fill(plan.state.begin() + 220, plan.state.begin() + 284, std::uint8_t{0});
       write32(plan.state.data() + 292, CONTINUATION_NONE);
       write32(plan.state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
@@ -4754,12 +4795,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             plan.actions.push_back(output);
           }
           if (!directRecovery) {
-            if (!senderExhausted) {
-              write32(plan.state.data() + 188, inbound.heartbeatSeconds);
-            }
-            write64(
-                plan.state.data() + 180,
-                SESSION_FLAG_ENABLED | UINT64_C(256) | (senderExhausted ? UINT64_C(0) : UINT64_C(16)));
+            write32(
+                plan.state.data() + 188,
+                session->profile.heartbeatMode == 1 ? session->profile.configuredHeartbeat : 0);
+            write64(plan.state.data() + 180, SESSION_FLAG_ENABLED | UINT64_C(256));
             write32(plan.state.data() + 308, IRFQ_INFINITE_REASON_RESET_REJECTED_V2);
           }
           irfq_infinite_declarative_action_v2 disconnect{};
