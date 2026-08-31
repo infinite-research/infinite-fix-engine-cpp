@@ -1,6 +1,6 @@
 noinst_PROGRAMS = ut
 
-EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake InfiniteFrameAdapterInstalledConsumer.c $(abs_top_srcdir)/test/fixtures/infinite-frame-adapter-abi.v2.tsv
+EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake InfiniteFrameAdapterInstalledConsumer.c
 
 ut_LDADD = ../libquickfix.la
 
