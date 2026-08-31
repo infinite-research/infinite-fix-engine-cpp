@@ -6370,43 +6370,53 @@ TEST_CASE(
 TEST_CASE(
     "InfiniteFrameAdapterV2 rejects ordinary Logon outside its contained weekly UTC window",
     "[infinite][adapter][v2][eligibility]") {
-  const auto config = otherwiseValidUnavailableProfile(2, {1, 72000, 2, 82800, 1, 72000, 2, 79200});
-  auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
-      config.data(),
-      config.size(),
-      nullptr,
-      0,
-      1,
-      0,
-      INT64_C(1700000000123456000),
-      INT64_C(1700000000123456000));
-  REQUIRE(session != nullptr);
+  struct Variant {
+    const char *name;
+    std::array<std::uint32_t, 8> schedule;
+  };
+  for (const auto &variant : std::array{
+           Variant{"cross-weekday", {1, 72000, 2, 82800, 1, 72000, 2, 79200}},
+           Variant{"same-weekday", {2, 72000, 2, 82800, 2, 72000, 2, 79200}}}) {
+    DYNAMIC_SECTION(variant.name) {
+      const auto config = otherwiseValidUnavailableProfile(2, variant.schedule);
+      auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+          config.data(),
+          config.size(),
+          nullptr,
+          0,
+          1,
+          0,
+          INT64_C(1700000000123456000),
+          INT64_C(1700000000123456000));
+      REQUIRE(session != nullptr);
 
-  InboundCall inbound(
-      session,
-      participantFrame('A', 1, "98=0\001108=30\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
-      0xee);
-  inbound.request.expected_revision = 0;
-  inbound.request.next_original_value = 1;
-  REQUIRE(
-      FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+      InboundCall inbound(
           session,
-          inbound.request,
-          inbound.request.event_identity_sha256));
+          participantFrame('A', 1, "98=0\001108=30\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
+          0xee);
+      inbound.request.expected_revision = 0;
+      inbound.request.next_original_value = 1;
+      REQUIRE(
+          FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+              session,
+              inbound.request,
+              inbound.request.event_identity_sha256));
 
-  PlanBuffers buffers;
-  auto result = buffers.response();
-  REQUIRE(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
-  CHECK(result.output.length == 0);
-  REQUIRE(result.action_count == 2);
-  CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
-  CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
-  CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
-  CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-  CHECK(result.actions[1].reason_code == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
-  CHECK(read64(result.native_state.data + 180) == (UINT64_C(1) | UINT64_C(256)));
-  CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
-  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+      PlanBuffers buffers;
+      auto result = buffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+      CHECK(result.output.length == 0);
+      REQUIRE(result.action_count == 2);
+      CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+      CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+      CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+      CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+      CHECK(result.actions[1].reason_code == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+      CHECK(read64(result.native_state.data + 180) == (UINT64_C(1) | UINT64_C(256)));
+      CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
 }
 
 TEST_CASE(
@@ -6449,6 +6459,7 @@ TEST_CASE(
 
   auto receivedLogonOnly = attached;
   write64(receivedLogonOnly.data() + 180, UINT64_C(1) | UINT64_C(2));
+  write32(receivedLogonOnly.data() + 288, 0);
   mutations.push_back({"acceptor received Logon without sent Logon", receivedLogonOnly});
 
   auto unnegotiatedTargetVersion = detached;
@@ -6548,6 +6559,8 @@ TEST_CASE(
   write64(logonStoredRange.data() + 300, 5);
   REQUIRE(restoreStatus(logonStoredRange) == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
   write64(logonStoredRange.data() + 228, 6);
+  write64(logonStoredRange.data() + 244, 6);
+  write64(logonStoredRange.data() + 300, 6);
   mutations.push_back({"Logon stored range not beginning at peer 789", logonStoredRange});
 
   auto finalGapFill = attached;
@@ -6562,6 +6575,9 @@ TEST_CASE(
   write32(finalGapFill.data() + 292, 1);
   write64(finalGapFill.data() + 300, 7);
   REQUIRE(restoreStatus(finalGapFill) == IRFQ_INFINITE_STATUS_PROFILE_UNAVAILABLE_V2);
+  auto finalGapFillAtPeer = finalGapFill;
+  write64(finalGapFillAtPeer.data() + 172, 7);
+  mutations.push_back({"final GapFill with peer 789 equal to frozen sender", finalGapFillAtPeer});
   write64(finalGapFill.data() + 172, 8);
   mutations.push_back({"final GapFill with peer 789 beyond frozen sender", finalGapFill});
 

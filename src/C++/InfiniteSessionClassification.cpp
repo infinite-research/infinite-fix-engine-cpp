@@ -265,6 +265,23 @@ TimeRange governedRange(const InfiniteSessionStaticProfile &profile, std::size_t
       static_cast<int>(profile.schedule[offset + 2] + 1));
 }
 
+bool governedRangeContains(
+    const InfiniteSessionStaticProfile &profile,
+    std::size_t offset,
+    const UtcTimeStamp &now) noexcept {
+  if (profile.scheduleMode == 1) {
+    return true;
+  }
+  constexpr std::uint64_t SECONDS_PER_DAY = UINT64_C(86400);
+  const auto position = [](std::uint64_t day, std::uint64_t second) { return day * SECONDS_PER_DAY + second; };
+  const auto current = position(
+      static_cast<std::uint64_t>(now.getWeekDay() - 1),
+      static_cast<std::uint64_t>(now.getHour() * 3600 + now.getMinute() * 60 + now.getSecond()));
+  const auto start = position(profile.schedule[offset], profile.schedule[offset + 1]);
+  const auto end = position(profile.schedule[offset + 2], profile.schedule[offset + 3]);
+  return start == end || (start < end ? current >= start && current <= end : current >= start || current <= end);
+}
+
 void configureStaticProfile(Session &session, const InfiniteSessionStaticProfile *profile) {
   session.setTimestampPrecision(profile == nullptr ? 6 : static_cast<int>(profile->timestampPrecision));
   session.setSenderDefaultApplVerID("10");
@@ -992,8 +1009,8 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
           || (resendBeginStatus == WireSequenceStatus::Valid && resendEndStatus == WireSequenceStatus::Valid
               && (resendEndInclusive == 0 || resendEndInclusive >= resendBegin));
     const bool timeMatches = session.isGoodTime(sendingTime);
-    const bool sessionTimeMatches = session.checkSessionTime(now);
-    const bool logonTimeMatches = session.isLogonTime(now);
+    const bool sessionTimeMatches = governedRangeContains(profile, 0, now);
+    const bool logonTimeMatches = governedRangeContains(profile, 4, now);
     const bool headerSafe = completeIdentity && timeMatches && sessionTimeMatches;
     const bool safeToIntercept = dictionaryValid && headerSafe;
     bool intercepted = false;

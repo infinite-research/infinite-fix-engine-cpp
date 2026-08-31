@@ -954,7 +954,7 @@ bool validNativeState(
     return (detached || (flags == attached && attachedResend)) && recoveryBegin + 1 == recoveryEnd
            && recoveryCursor == recoveryBegin
            && recoveryBegin <= static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 2
-           && recoveryEnd == senderValue && peerValue <= recoveryBegin;
+           && recoveryEnd == senderValue && peerValue < recoveryBegin;
   }
   return false;
 }
