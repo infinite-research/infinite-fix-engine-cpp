@@ -261,7 +261,7 @@ function(_irfq_verify_source_provenance checkout release_base self_test_base all
   if(NOT _empty_tree_result EQUAL 0 OR NOT _read_tree_result EQUAL 0
      OR NOT _stage_result EQUAL 0 OR NOT _raw_result EQUAL 0)
     message(FATAL_ERROR
-            "verified raw source bytes, symlink targets, or modes differ from HEAD: ${_mode_error}${_object_path_error}${_empty_tree_error}${_read_tree_error}${_stage_error}${_raw_error}")
+            "IRFQ_VERIFIER_RAW_SOURCE_MISMATCH: verified raw source bytes, symlink targets, or modes differ from HEAD: ${_mode_error}${_object_path_error}${_empty_tree_error}${_read_tree_error}${_stage_error}${_raw_error}")
   endif()
   execute_process(
     COMMAND ${_clean_env} "${IRFQ_EXPECTED_GIT}" ${_fixed_config} -C "${_checkout}"
@@ -672,9 +672,12 @@ if(SELF_TEST)
        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
-    RESULT_VARIABLE _irfq_raw_mode_result OUTPUT_QUIET ERROR_QUIET)
-  if(_irfq_raw_mode_result EQUAL 0)
-    message(FATAL_ERROR "packager accepted a raw executable-mode mismatch")
+    RESULT_VARIABLE _irfq_raw_mode_result
+    OUTPUT_VARIABLE _irfq_raw_mode_output ERROR_VARIABLE _irfq_raw_mode_error)
+  if(_irfq_raw_mode_result EQUAL 0
+     OR NOT "${_irfq_raw_mode_output}${_irfq_raw_mode_error}" MATCHES "IRFQ_EMITTER_RAW_SOURCE_MISMATCH")
+    message(FATAL_ERROR
+            "packager raw-mode rejection did not come from the emitter: ${_irfq_raw_mode_output}${_irfq_raw_mode_error}")
   endif()
   file(CHMOD "${_irfq_self_source_checkout}/executable.sh"
        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
@@ -688,9 +691,12 @@ if(SELF_TEST)
                   COMMAND_ERROR_IS_FATAL ANY)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
-    RESULT_VARIABLE _irfq_raw_crlf_result OUTPUT_QUIET ERROR_QUIET)
-  if(_irfq_raw_crlf_result EQUAL 0)
-    message(FATAL_ERROR "packager accepted CRLF worktree bytes normalized by the index")
+    RESULT_VARIABLE _irfq_raw_crlf_result
+    OUTPUT_VARIABLE _irfq_raw_crlf_output ERROR_VARIABLE _irfq_raw_crlf_error)
+  if(_irfq_raw_crlf_result EQUAL 0
+     OR NOT "${_irfq_raw_crlf_output}${_irfq_raw_crlf_error}" MATCHES "IRFQ_EMITTER_RAW_SOURCE_MISMATCH")
+    message(FATAL_ERROR
+            "packager CRLF rejection did not come from the emitter: ${_irfq_raw_crlf_output}${_irfq_raw_crlf_error}")
   endif()
   execute_process(COMMAND "${_irfq_self_git}" -C "${_irfq_self_source_checkout}" config --unset core.autocrlf
                   COMMAND_ERROR_IS_FATAL ANY)
@@ -703,9 +709,12 @@ if(SELF_TEST)
                           "${_irfq_self_source_checkout}/stable-link" COMMAND_ERROR_IS_FATAL ANY)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_self_common} -P "${_irfq_package_script}"
-    RESULT_VARIABLE _irfq_raw_symlink_result OUTPUT_QUIET ERROR_QUIET)
-  if(_irfq_raw_symlink_result EQUAL 0)
-    message(FATAL_ERROR "packager accepted mismatched raw symlink target bytes")
+    RESULT_VARIABLE _irfq_raw_symlink_result
+    OUTPUT_VARIABLE _irfq_raw_symlink_output ERROR_VARIABLE _irfq_raw_symlink_error)
+  if(_irfq_raw_symlink_result EQUAL 0
+     OR NOT "${_irfq_raw_symlink_output}${_irfq_raw_symlink_error}" MATCHES "IRFQ_EMITTER_RAW_SOURCE_MISMATCH")
+    message(FATAL_ERROR
+            "packager symlink rejection did not come from the emitter: ${_irfq_raw_symlink_output}${_irfq_raw_symlink_error}")
   endif()
   file(REMOVE "${_irfq_self_source_checkout}/stable-link")
   execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink stable.txt

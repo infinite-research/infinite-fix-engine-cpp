@@ -189,7 +189,7 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
   if(NOT _empty_result EQUAL 0 OR NOT _read_result EQUAL 0
      OR NOT _add_result EQUAL 0 OR NOT _snapshot_result EQUAL 0)
     message(FATAL_ERROR
-            "raw source bytes, symlink targets, or modes differ from HEAD: ${_error}${_objects_error}${_empty_error}${_read_error}${_add_error}${_snapshot_error}")
+            "IRFQ_EMITTER_RAW_SOURCE_MISMATCH: raw source bytes, symlink targets, or modes differ from HEAD: ${_error}${_objects_error}${_empty_error}${_read_error}${_add_error}${_snapshot_error}")
   endif()
   execute_process(
     COMMAND ${_git_env} "${IRFQ_PACKAGE_GIT}" ${_git_config} -C "${_checkout}"
