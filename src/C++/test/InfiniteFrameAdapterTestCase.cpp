@@ -6376,7 +6376,8 @@ TEST_CASE(
   };
   for (const auto &variant : std::array{
            Variant{"cross-weekday", {1, 72000, 2, 82800, 1, 72000, 2, 79200}},
-           Variant{"same-weekday", {2, 72000, 2, 82800, 2, 72000, 2, 79200}}}) {
+           Variant{"same-weekday", {2, 72000, 2, 82800, 2, 72000, 2, 79200}},
+           Variant{"fraction-after-end", {2, 72000, 2, 80000, 2, 72000, 2, 80000}}}) {
     DYNAMIC_SECTION(variant.name) {
       const auto config = otherwiseValidUnavailableProfile(2, variant.schedule);
       auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(

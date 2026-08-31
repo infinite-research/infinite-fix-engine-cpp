@@ -273,10 +273,14 @@ bool governedRangeContains(
     return true;
   }
   constexpr std::uint64_t SECONDS_PER_DAY = UINT64_C(86400);
-  const auto position = [](std::uint64_t day, std::uint64_t second) { return day * SECONDS_PER_DAY + second; };
+  constexpr std::uint64_t NANOSECONDS_PER_SECOND = UINT64_C(1000000000);
+  const auto position = [](std::uint64_t day, std::uint64_t second) {
+    return (day * SECONDS_PER_DAY + second) * NANOSECONDS_PER_SECOND;
+  };
   const auto current = position(
-      static_cast<std::uint64_t>(now.getWeekDay() - 1),
-      static_cast<std::uint64_t>(now.getHour() * 3600 + now.getMinute() * 60 + now.getSecond()));
+                           static_cast<std::uint64_t>(now.getWeekDay() - 1),
+                           static_cast<std::uint64_t>(now.getHour() * 3600 + now.getMinute() * 60 + now.getSecond()))
+                       + now.getNanosecond();
   const auto start = position(profile.schedule[offset], profile.schedule[offset + 1]);
   const auto end = position(profile.schedule[offset + 2], profile.schedule[offset + 3]);
   return start == end || (start < end ? current >= start && current <= end : current >= start || current <= end);
