@@ -121,10 +121,14 @@ done
 RUNNER_PIDS=
 
 if ! kill -0 "$ACCEPTOR_PID" 2>/dev/null; then
-  show_acceptor_failure
+  echo "Acceptance acceptor did not remain live" >&2
   if [ "$RESULT" -eq 0 ]; then
     RESULT=1
   fi
+fi
+
+if [ "$RESULT" -ne 0 ] && [ -f "$ACCEPTOR_LOG" ]; then
+  cat "$ACCEPTOR_LOG" >&2
 fi
 
 for OUT in "$QUICKFIX_RUN_DIR"/fix40.out "$QUICKFIX_RUN_DIR"/fix41.out "$QUICKFIX_RUN_DIR"/fix42.out \

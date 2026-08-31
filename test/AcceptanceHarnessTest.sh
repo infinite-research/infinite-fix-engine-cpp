@@ -124,7 +124,31 @@ SH
 cat > "$FAKE_SOURCE/Runner.rb" <<'RUBY'
 require "socket"
 
-exit 0 if ENV["FAKE_RUNNER_MODE"] == "success"
+case ENV["FAKE_RUNNER_MODE"]
+when "success"
+  exit 0
+when "barrier"
+  group = File.basename(File.dirname(ARGV.fetch(2)))
+  barrier_path = ENV.fetch("FAKE_RUNNER_BARRIER_FILE")
+  File.open(barrier_path, File::RDWR | File::CREAT, 0o600) do |barrier|
+    barrier.flock(File::LOCK_EX)
+    barrier.seek(0, IO::SEEK_END)
+    barrier.write("#{group}\n")
+    barrier.flush
+  end
+
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 4
+  loop do
+    break if File.readlines(barrier_path).length == 9
+    exit 70 if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    sleep 0.01
+  end
+
+  exit 31 if group == "fix50"
+  exit 32 if group == "fix50sp1"
+  exit 0
+end
+
 socket = TCPSocket.new(ARGV.fetch(0), Integer(ARGV.fetch(1)))
 socket.close
 RUBY
@@ -149,6 +173,7 @@ if ENV["FAKE_ACCEPTOR_MODE"] == "ready_then_die"
   warn "fake acceptor died after readiness"
   exit 24
 end
+warn "fake acceptor remained live during runner failure" if ENV["FAKE_ACCEPTOR_MODE"] == "live_with_sentinel"
 loop do
   socket = server.accept
   socket.close
@@ -158,31 +183,63 @@ chmod +x "$FAKE_SOURCE/setup.sh" "$FAKE_BUILD/at"
 
 start_listener "$CASE_ROOT/occupied.port" || exit 1
 OCCUPIED_PID=$LAST_PID
-if QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=live FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/occupied-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$LAST_PORT" >"$CASE_ROOT/occupied.out" 2>&1; then
+    run_bounded "$SOURCE_ROOT/test/runat.sh" "$LAST_PORT" >"$CASE_ROOT/occupied.out" 2>&1
+OCCUPIED_STATUS=$?
+if [ "$OCCUPIED_STATUS" -eq 0 ]; then
   fail "runat accepted an independently occupied port"
+elif [ "$OCCUPIED_STATUS" -eq 124 ]; then
+  fail "runat timed out against an independently occupied port"
 fi
 kill -0 "$OCCUPIED_PID" 2>/dev/null || fail "runat killed the unrelated port owner"
 
 FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
-if QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=die FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/dying-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/dying.out" 2>&1; then
+    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/dying.out" 2>&1
+DYING_STATUS=$?
+if [ "$DYING_STATUS" -eq 0 ]; then
   fail "runat accepted an acceptor that died before readiness"
+elif [ "$DYING_STATUS" -eq 124 ]; then
+  fail "runat timed out after an acceptor died before readiness"
 fi
 grep -q 'fake acceptor died before readiness' "$CASE_ROOT/dying.out" || \
   fail "runat hid the failed acceptor diagnostic"
 
 FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
-if QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=ready_then_die FAKE_RUNNER_MODE=success \
     FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/late-dying-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/late-dying.out" 2>&1; then
+    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/late-dying.out" 2>&1
+LATE_DYING_STATUS=$?
+if [ "$LATE_DYING_STATUS" -eq 0 ]; then
   fail "runat accepted an acceptor that died after readiness"
+elif [ "$LATE_DYING_STATUS" -eq 124 ]; then
+  fail "runat timed out after an acceptor died after readiness"
 fi
 grep -q 'fake acceptor died after readiness' "$CASE_ROOT/late-dying.out" || \
   fail "runat hid the post-readiness acceptor diagnostic"
+
+FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
+QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+    FAKE_ACCEPTOR_MODE=live_with_sentinel FAKE_RUNNER_MODE=barrier \
+    FAKE_RUNNER_BARRIER_FILE="$CASE_ROOT/runner-barrier" \
+    FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/runner-failure-at.pid" \
+    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/runner-failure.out" 2>&1
+RUNNER_FAILURE_STATUS=$?
+if [ "$RUNNER_FAILURE_STATUS" -ne 31 ]; then
+  fail "runat returned $RUNNER_FAILURE_STATUS instead of the first runner failure 31"
+fi
+if ! ruby -e '
+  expected = %w[fix40 fix41 fix42 fix43 fix44 fix50 fix50sp1 fix50sp2 validate].sort
+  actual = File.readlines(ARGV.fetch(0), chomp: true).sort
+  exit(actual == expected ? 0 : 1)
+' "$CASE_ROOT/runner-barrier"; then
+  fail "runat did not start all nine runner groups concurrently"
+fi
+grep -q 'fake acceptor remained live during runner failure' "$CASE_ROOT/runner-failure.out" || \
+  fail "runat hid the live acceptor diagnostic after runner failure"
 
 start_listener "$CASE_ROOT/sentinel.port" || exit 1
 SENTINEL_PID=$LAST_PID
