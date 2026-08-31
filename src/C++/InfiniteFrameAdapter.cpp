@@ -1015,6 +1015,45 @@ void scrubBytes(void *data, std::size_t size) noexcept {
     --size;
   }
 }
+
+bool allZeroBytes(const void *data, std::size_t size) noexcept {
+  const auto *bytes = static_cast<const std::uint8_t *>(data);
+  for (std::size_t index = 0; index < size; ++index) {
+    if (bytes[index] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct ScrubObservationState {
+  bool enabled{false};
+  std::array<std::uint32_t, 4> counts{};
+};
+
+thread_local ScrubObservationState scrubObservation;
+
+template <typename T>
+auto retainedBusinessRejectRefIdIsZero(const T &value, int) noexcept
+    -> decltype(value.businessRejectRefId.data(), bool{}) {
+  return allZeroBytes(value.businessRejectRefId.data(), value.businessRejectRefId.size());
+}
+
+template <typename T> bool retainedBusinessRejectRefIdIsZero(const T &, long) noexcept { return true; }
+
+template <typename T>
+auto scrubRetainedBusinessRejectRefId(T &value, int) noexcept -> decltype(value.businessRejectRefId.data(), void()) {
+  scrubBytes(value.businessRejectRefId.data(), value.businessRejectRefId.size());
+}
+
+template <typename T> void scrubRetainedBusinessRejectRefId(T &, long) noexcept {}
+
+template <typename T>
+constexpr auto retainsBusinessRejectRefId(int) noexcept -> decltype((void)&T::businessRejectRefId, bool{}) {
+  return true;
+}
+
+template <typename T> constexpr bool retainsBusinessRejectRefId(long) noexcept { return false; }
 } // namespace
 
 struct PendingPlan {
@@ -1037,7 +1076,6 @@ struct PendingPlan {
   std::uint64_t classifiedSequence{0};
   std::array<std::uint8_t, 32> subject{};
   std::string msgType;
-  std::string businessRejectRefId;
   irfq_infinite_input_source_v2 inputSource{IRFQ_INFINITE_INPUT_NONE_V2};
   std::uint32_t inputItemIndex{0};
   std::uint64_t inputOffset{0};
@@ -1073,7 +1111,6 @@ struct PendingPlan {
     scrubBytes(&classifiedSequence, sizeof(classifiedSequence));
     scrubBytes(subject.data(), subject.size());
     scrubBytes(msgType.data(), msgType.size());
-    scrubBytes(businessRejectRefId.data(), businessRejectRefId.size());
     scrubBytes(&inputSource, sizeof(inputSource));
     scrubBytes(&inputItemIndex, sizeof(inputItemIndex));
     scrubBytes(&inputOffset, sizeof(inputOffset));
@@ -1090,7 +1127,38 @@ struct PendingPlan {
     scrubBytes(&materialized, sizeof(materialized));
   }
 
-  ~PendingPlan() noexcept { scrub(); }
+  bool scrubbed() const noexcept {
+    return allZeroBytes(&id, sizeof(id)) && allZeroBytes(&step, sizeof(step)) && allZeroBytes(&kind, sizeof(kind))
+           && allZeroBytes(&stage, sizeof(stage)) && allZeroBytes(&event, sizeof(event))
+           && allZeroBytes(eventIdentity.data(), eventIdentity.size()) && allZeroBytes(&baseEpoch, sizeof(baseEpoch))
+           && allZeroBytes(&baseRevision, sizeof(baseRevision)) && allZeroBytes(&resultEpoch, sizeof(resultEpoch))
+           && allZeroBytes(&resultRevision, sizeof(resultRevision)) && allZeroBytes(state.data(), state.size())
+           && allZeroBytes(stateDigest.data(), stateDigest.size()) && allZeroBytes(output.data(), output.size())
+           && allZeroBytes(actions.data(), actions.size() * sizeof(actions.front()))
+           && allZeroBytes(&pendingStatus, sizeof(pendingStatus))
+           && allZeroBytes(&subjectSequence, sizeof(subjectSequence))
+           && allZeroBytes(&classifiedSequence, sizeof(classifiedSequence))
+           && allZeroBytes(subject.data(), subject.size()) && allZeroBytes(msgType.data(), msgType.size())
+           && retainedBusinessRejectRefIdIsZero(*this, 0) && allZeroBytes(&inputSource, sizeof(inputSource))
+           && allZeroBytes(&inputItemIndex, sizeof(inputItemIndex)) && allZeroBytes(&inputOffset, sizeof(inputOffset))
+           && allZeroBytes(&inputLength, sizeof(inputLength)) && allZeroBytes(&sourceLength, sizeof(sourceLength))
+           && allZeroBytes(reborrowDigest.data(), reborrowDigest.size())
+           && allZeroBytes(contentDigest.data(), contentDigest.size())
+           && allZeroBytes(eventSubject.data(), eventSubject.size())
+           && allZeroBytes(frameDigest.data(), frameDigest.size())
+           && allZeroBytes(queueRowSubject.data(), queueRowSubject.size())
+           && allZeroBytes(&storeBegin, sizeof(storeBegin)) && allZeroBytes(&storeEnd, sizeof(storeEnd))
+           && allZeroBytes(&applicationDispatch, sizeof(applicationDispatch))
+           && allZeroBytes(&materialized, sizeof(materialized));
+  }
+
+  ~PendingPlan() noexcept {
+    scrub();
+    if (scrubObservation.enabled) {
+      ++scrubObservation.counts[0];
+      scrubObservation.counts[1] += scrubbed() ? 1 : 0;
+    }
+  }
 };
 
 struct irfq_infinite_session_v2 {
@@ -1110,7 +1178,13 @@ struct irfq_infinite_session_v2 {
     scrubBytes(state.data(), state.size());
   }
 
-  ~irfq_infinite_session_v2() noexcept { scrub(); }
+  ~irfq_infinite_session_v2() noexcept {
+    scrub();
+    if (scrubObservation.enabled) {
+      ++scrubObservation.counts[2];
+      scrubObservation.counts[3] += !pending && allZeroBytes(state.data(), state.size()) ? 1 : 0;
+    }
+  }
 };
 
 namespace {
@@ -2822,7 +2896,6 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
         inbound.msgType,
         bodyDigest);
     plan->msgType = inbound.msgType;
-    plan->businessRejectRefId = inbound.businessRejectRefId;
     plan->inputSource = IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2;
     plan->inputOffset = 68 + inbound.bodyOffset;
     plan->inputLength = inbound.bodyLength;
@@ -3473,13 +3546,8 @@ irfq_infinite_status_v2 resumeResendStore(
     plan.actions.push_back(action);
   };
   std::size_t index = 0;
-  bool integrityDisconnect = false;
   while (index < count) {
     const auto &row = request.store_rows[index];
-    if (row.store_class == IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2) {
-      integrityDisconnect = true;
-      break;
-    }
     if (row.store_class == IRFQ_INFINITE_STORE_CLASS_MANDATORY_APPLICATION_V2
         || row.store_class == IRFQ_INFINITE_STORE_CLASS_AH0_RESULT_BLOCK_V2) {
       const auto &wire = retained[index].output;
@@ -3535,16 +3603,7 @@ irfq_infinite_status_v2 resumeResendStore(
     appendOutput(gap.output, IRFQ_INFINITE_OUTPUT_GAP_FILL_V2, "4", beginSequence, endSequence);
   }
   const auto nextCursor = plan.storeBegin + index;
-  if (integrityDisconnect) {
-    if (index != 0) {
-      write64(plan.state.data() + 244, nextCursor);
-      write64(plan.state.data() + 300, nextCursor);
-    }
-    irfq_infinite_declarative_action_v2 disconnect{};
-    disconnect.kind = IRFQ_INFINITE_ACTION_DISCONNECT_V2;
-    disconnect.reason_code = IRFQ_INFINITE_REASON_INTEGRITY_V2;
-    plan.actions.push_back(disconnect);
-  } else if (nextCursor == read64(plan.state.data() + 236)) {
+  if (nextCursor == read64(plan.state.data() + 236)) {
     if (read32(plan.state.data() + 220) == RECOVERY_LOGON_789
         && read32(plan.state.data() + 224) == RECOVERY_PHASE_STORED_RANGE) {
       const auto finalSequence = read64(session.state.data() + 132) - 1;
@@ -3745,57 +3804,22 @@ void forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow(irfq_infi
   }
 }
 
-bool verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract() noexcept {
-  try {
-    const auto allZero = [](const void *data, std::size_t size) noexcept {
-      const auto *bytes = static_cast<const std::uint8_t *>(data);
-      for (std::size_t index = 0; index < size; ++index) {
-        if (bytes[index] != 0) {
-          return false;
-        }
-      }
-      return true;
-    };
+void resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept { scrubObservation = {true, {}}; }
 
-    PendingPlan plan;
-    plan.eventIdentity.fill(0xa5);
-    plan.state.fill(0xa5);
-    plan.stateDigest.fill(0xa5);
-    plan.subject.fill(0xa5);
-    plan.reborrowDigest.fill(0xa5);
-    plan.contentDigest.fill(0xa5);
-    plan.eventSubject.fill(0xa5);
-    plan.frameDigest.fill(0xa5);
-    plan.queueRowSubject.fill(0xa5);
-    plan.output.assign(17, 0xa5);
-    plan.actions.resize(2);
-    std::memset(plan.actions.data(), 0xa5, plan.actions.size() * sizeof(plan.actions.front()));
-    plan.msgType = "SCRUB-MESSAGE";
-    plan.businessRejectRefId = "SCRUB-BUSINESS-REFERENCE";
-    plan.scrub();
-    if (!allZero(plan.eventIdentity.data(), plan.eventIdentity.size()) || !allZero(plan.state.data(), plan.state.size())
-        || !allZero(plan.stateDigest.data(), plan.stateDigest.size())
-        || !allZero(plan.subject.data(), plan.subject.size())
-        || !allZero(plan.reborrowDigest.data(), plan.reborrowDigest.size())
-        || !allZero(plan.contentDigest.data(), plan.contentDigest.size())
-        || !allZero(plan.eventSubject.data(), plan.eventSubject.size())
-        || !allZero(plan.frameDigest.data(), plan.frameDigest.size())
-        || !allZero(plan.queueRowSubject.data(), plan.queueRowSubject.size())
-        || !allZero(plan.output.data(), plan.output.size())
-        || !allZero(plan.actions.data(), plan.actions.size() * sizeof(plan.actions.front()))
-        || !allZero(plan.msgType.data(), plan.msgType.size())
-        || !allZero(plan.businessRejectRefId.data(), plan.businessRejectRefId.size())) {
-      return false;
-    }
+void stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept { scrubObservation.enabled = false; }
 
-    irfq_infinite_session_v2 session;
-    session.state.fill(0xa5);
-    session.pending = std::make_unique<PendingPlan>();
-    session.pending->output.assign(17, 0xa5);
-    session.scrub();
-    return !session.pending && allZero(session.state.data(), session.state.size());
-  } catch (...) {
-    return false;
+std::array<std::uint32_t, 4> infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept {
+  return scrubObservation.counts;
+}
+
+bool infiniteFrameAdapterStockNonconformanceSmokePendingPlanRetainsBusinessRejectRefId() noexcept {
+  return retainsBusinessRejectRefId<PendingPlan>(0);
+}
+
+void scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId(
+    irfq_infinite_session_v2 *session) noexcept {
+  if (session != nullptr && session->pending) {
+    scrubRetainedBusinessRejectRefId(*session->pending, 0);
   }
 }
 } // namespace FIX
@@ -4605,6 +4629,39 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           || complete != frameLength) {
         return failPending(IRFQ_INFINITE_STATUS_DIGEST_MISMATCH_V2);
       }
+      const std::string wire(reinterpret_cast<const char *>(payload + 68), frameLength);
+      const auto inbound = FIX::InfiniteSessionPlanner::inbound(
+          session->profile.beginString,
+          session->profile.venueCompId,
+          session->profile.participantCompId,
+          read32(session->state.data() + 188),
+          nonallocatingRecoveryClassificationScratch(
+              read32(session->state.data() + 128),
+              read64(session->state.data() + 132)),
+          nonallocatingRecoveryClassificationScratch(
+              read32(session->state.data() + 140),
+              read64(session->state.data() + 144)),
+          readI64(session->state.data() + 72),
+          readI64(plan.state.data() + 88),
+          readI64(session->state.data() + 104) == 0 ? readI64(session->state.data() + 72)
+                                                    : readI64(session->state.data() + 104),
+          readI64(session->state.data() + 120) == 0 ? readI64(session->state.data() + 72)
+                                                    : readI64(session->state.data() + 120),
+          read64(session->state.data() + 180),
+          read32(session->state.data() + 192),
+          read64(session->state.data() + 152),
+          wire,
+          session->dictionaries,
+          staticProfile(session->profile));
+      const bool gapFillDecision = !plan.applicationDispatch && plan.msgType == "4";
+      if (!inbound.identified || !inbound.sequenceValid || !inbound.sequenceFieldsValid || !inbound.identityMatches
+          || !inbound.timeMatches || !inbound.sessionTimeMatches || !inbound.dictionaryValid || inbound.resetLogon
+          || inbound.disconnected || !inbound.outputs.empty() || inbound.application != plan.applicationDispatch
+          || inbound.admin != gapFillDecision || inbound.msgType != plan.msgType
+          || inbound.sequence != plan.subjectSequence || inbound.bodyOffset + 68 != plan.inputOffset
+          || inbound.bodyLength != plan.inputLength || (!plan.applicationDispatch && !gapFillDecision)) {
+        return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      }
       if (plan.applicationDispatch) {
         irfq_infinite_declarative_action_v2 dispatch{};
         dispatch.kind = IRFQ_INFINITE_ACTION_APPLICATION_DISPATCH_V2;
@@ -4622,7 +4679,6 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
       }
       irfq_infinite_declarative_action_v2 disposition{};
       disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
-      const bool gapFillDecision = !plan.applicationDispatch && plan.msgType == "4";
       disposition.disposition = gapFillDecision ? request->decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2
                                                       ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
                                                       : IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2
@@ -4673,7 +4729,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
                                                   readI64(plan.state.data() + 88),
                                                   plan.subjectSequence,
                                                   plan.msgType,
-                                                  plan.businessRejectRefId,
+                                                  inbound.businessRejectRefId,
                                                   gatewayDispositionId,
                                                   read64(session->state.data() + 152),
                                                   &session->dictionaries,

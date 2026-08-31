@@ -91,7 +91,12 @@ std::array<std::uint8_t, 32> computeInfiniteFrameAdapterStockNonconformanceSmoke
     const std::uint8_t *bytes,
     std::size_t length) noexcept;
 void forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow(irfq_infinite_session_v2 *session) noexcept;
-bool verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract() noexcept;
+void resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept;
+void stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept;
+std::array<std::uint32_t, 4> infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() noexcept;
+bool infiniteFrameAdapterStockNonconformanceSmokePendingPlanRetainsBusinessRejectRefId() noexcept;
+void scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId(
+    irfq_infinite_session_v2 *session) noexcept;
 } // namespace FIX
 
 namespace {
@@ -1330,115 +1335,73 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "InfiniteFrameAdapterV2 disconnects when a resend GapFill run begins with PROVEN_GAP",
-    "[infinite][adapter][v2][task2d][resend][gap-fill][integrity]") {
+    "InfiniteFrameAdapterV2 treats leading and interior PROVEN_GAP rows as the same complete GapFill run",
+    "[infinite][adapter][v2][recovery][resend][gap-fill]") {
   const auto config = otherwiseValidUnavailableProfile();
-  auto *session = resendRecoverySession(config, 2, 4, 2);
-  REQUIRE(session != nullptr);
-  ContinueResendCall call(session, 2, 4, 2);
-  PlanBuffers pendingBuffers;
-  auto pending = pendingBuffers.response();
-  REQUIRE(irfq_infinite_prepare_v2(session, &call.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
-  const std::vector<std::string> frames{
-      "",
-      finishFix("35=0\00134=3\00149=VENUE\00152=20260828-12:00:00.000000\00156=PARTICIPANT\001369=1\001")};
-  std::vector<irfq_infinite_store_row_v2> rows{
-      retainedRow(2, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2, "", "", frames[0]),
-      retainedRow(3, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2, "0", "", frames[1])};
-  irfq_infinite_resume_request_v2 resume{};
-  init(resume);
-  resume.prepare_id = pending.prepare_id;
-  resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
-  resume.store_range_begin = 2;
-  resume.store_range_end_exclusive = 4;
-  resume.store_rows = rows.data();
-  resume.store_row_count = rows.size();
-  PlanBuffers buffers;
-  auto result = buffers.response();
-  REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
-  CHECK(result.output.length == 0);
-  CHECK(result.output_frame_count == 0);
-  REQUIRE(result.action_count == 1);
-  CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-  CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_INTEGRITY_V2);
-  CHECK((read64(result.native_state.data + 180) & UINT64_C(256)) == 0);
-  CHECK(read32(result.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
-  CHECK(read64(result.native_state.data + 244) == 2);
-  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
-}
-
-TEST_CASE(
-    "InfiniteFrameAdapterV2 advances a valid resend prefix before an integrity disconnect without repeating it",
-    "[infinite][adapter][v2][task2d][resend][gap-fill][integrity][prefix]") {
-  const auto config = otherwiseValidUnavailableProfile();
-  auto *session = resendRecoverySession(config, 2, 4, 2);
-  REQUIRE(session != nullptr);
-  ContinueResendCall firstCall(session, 2, 4, 2);
-  PlanBuffers firstPendingBuffers;
-  auto firstPending = firstPendingBuffers.response();
-  REQUIRE(
-      irfq_infinite_prepare_v2(session, &firstCall.request, &firstPending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
-  const auto body = quoteResponseBody("PREFIX");
-  const auto wire
-      = finishFix("35=AJ\00134=2\00149=VENUE\00152=20260828-12:00:00.000000\00156=PARTICIPANT\001369=1\001" + body);
   const std::string empty;
-  std::array rows{
-      retainedRow(2, IRFQ_INFINITE_STORE_CLASS_MANDATORY_APPLICATION_V2, "AJ", body, wire),
-      retainedRow(3, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2, "", "", empty)};
-  irfq_infinite_resume_request_v2 firstResume{};
-  init(firstResume);
-  firstResume.prepare_id = firstPending.prepare_id;
-  firstResume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
-  firstResume.store_range_begin = 2;
-  firstResume.store_range_end_exclusive = 4;
-  firstResume.store_rows = rows.data();
-  firstResume.store_row_count = rows.size();
-  PlanBuffers firstBuffers;
-  auto first = firstBuffers.response();
-  REQUIRE(irfq_infinite_resume_v2(session, &firstResume, &first) == IRFQ_INFINITE_STATUS_READY_V2);
-  REQUIRE(first.action_count == 2);
-  CHECK(first.actions[0].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
-  CHECK(first.actions[0].sequence_begin == 2);
-  CHECK(first.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-  CHECK(first.output_frame_count == 1);
-  CHECK(read64(first.native_state.data + 244) == 3);
-  CHECK(read64(first.native_state.data + 300) == 3);
-  CHECK((read64(first.native_state.data + 180) & UINT64_C(256)) == 0);
-  CHECK(read32(first.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
+  const auto run = [&](bool leading) {
+    auto *session = resendRecoverySession(config, 2, 4, 2);
+    REQUIRE(session != nullptr);
+    ContinueResendCall call(session, 2, 4, 2);
+    PlanBuffers pendingBuffers;
+    auto pending = pendingBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &call.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+    const auto admin = finishFix(
+        "35=0\00134=" + std::to_string(leading ? 3 : 2)
+        + "\00149=VENUE\00152=20260828-12:00:00.000000\00156=PARTICIPANT\001369=1\001");
+    std::array rows{
+        leading ? retainedRow(2, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2, "", "", empty)
+                : retainedRow(2, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2, "0", "", admin),
+        leading ? retainedRow(3, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2, "0", "", admin)
+                : retainedRow(3, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2, "", "", empty)};
+    irfq_infinite_resume_request_v2 resume{};
+    init(resume);
+    resume.prepare_id = pending.prepare_id;
+    resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+    resume.store_range_begin = 2;
+    resume.store_range_end_exclusive = 4;
+    resume.store_rows = rows.data();
+    resume.store_row_count = rows.size();
+    PlanBuffers buffers;
+    auto result = buffers.response();
+    REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(result.action_count == 1);
+    const auto &action = result.actions[0];
+    CHECK(result.output.length != 0);
+    CHECK(result.output_frame_count == 1);
+    CHECK(action.kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+    CHECK(action.output_class == IRFQ_INFINITE_OUTPUT_GAP_FILL_V2);
+    CHECK(action.msg_type_length == 1);
+    CHECK(action.msg_type[0] == '4');
+    CHECK(action.sequence_begin == 2);
+    CHECK(action.sequence_end_exclusive == 4);
+    const std::string output(reinterpret_cast<const char *>(result.output.data), result.output.length);
+    CHECK(output.find("\00135=4\001") != std::string::npos);
+    CHECK(output.find("\00134=2\001") != std::string::npos);
+    CHECK(output.find("\00136=4\001") != std::string::npos);
+    CHECK(output.find("\001123=Y\001") != std::string::npos);
+    CHECK(read32(result.native_state.data + 220) == 0);
+    CHECK(read64(result.native_state.data + 228) == 0);
+    CHECK(read64(result.native_state.data + 236) == 0);
+    CHECK(read64(result.native_state.data + 244) == 0);
+    CHECK(read32(result.native_state.data + 292) == 0);
+    CHECK(read64(result.native_state.data + 300) == 0);
+    CHECK(result.has_more == IRFQ_INFINITE_NO_V2);
+    const std::array<std::uint64_t, 9> outcome{
+        result.output_frame_count,
+        action.kind,
+        action.output_class,
+        action.sequence_begin,
+        action.sequence_end_exclusive,
+        read32(result.native_state.data + 220),
+        read64(result.native_state.data + 244),
+        read32(result.native_state.data + 292),
+        read64(result.native_state.data + 300)};
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    return outcome;
+  };
 
-  irfq_infinite_apply_committed_request_v2 apply{};
-  init(apply);
-  apply.prepare_id = first.prepare_id;
-  apply.result_revision = first.result_revision;
-  std::copy_n(first.native_state_sha256, 32, apply.native_state_sha256);
-  irfq_infinite_operation_response_v2 applied{};
-  init(applied);
-  REQUIRE(irfq_infinite_apply_committed_v2(session, &apply, &applied) == IRFQ_INFINITE_STATUS_OK_V2);
-
-  ContinueResendCall secondCall(session, 2, 4, 3, 2);
-  PlanBuffers secondPendingBuffers;
-  auto secondPending = secondPendingBuffers.response();
-  REQUIRE(
-      irfq_infinite_prepare_v2(session, &secondCall.request, &secondPending)
-      == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
-  auto gap = retainedRow(3, IRFQ_INFINITE_STORE_CLASS_PROVEN_GAP_V2, "", "", empty);
-  irfq_infinite_resume_request_v2 secondResume{};
-  init(secondResume);
-  secondResume.prepare_id = secondPending.prepare_id;
-  secondResume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
-  secondResume.store_range_begin = 3;
-  secondResume.store_range_end_exclusive = 4;
-  secondResume.store_rows = &gap;
-  secondResume.store_row_count = 1;
-  PlanBuffers secondBuffers;
-  auto second = secondBuffers.response();
-  REQUIRE(irfq_infinite_resume_v2(session, &secondResume, &second) == IRFQ_INFINITE_STATUS_READY_V2);
-  CHECK(second.output.length == 0);
-  CHECK(second.output_frame_count == 0);
-  REQUIRE(second.action_count == 1);
-  CHECK(second.actions[0].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
-  CHECK(read64(second.native_state.data + 244) == 3);
-  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  CHECK(run(true) == run(false));
 }
 
 TEST_CASE(
@@ -6249,6 +6212,53 @@ TEST_CASE(
 #endif
 }
 
+#ifdef IRFQ_INFINITE_EMBED_DICTIONARIES
+TEST_CASE(
+    "InfiniteFrameAdapterV2 reparses BusinessRejectRefID from the verified relocated source",
+    "[infinite][adapter][v2][borrow]") {
+  auto *session = governedProductionLoggedOnSession();
+  REQUIRE(session != nullptr);
+  const std::string participantReference = "PARTICIPANT-REJECT-REF";
+  InboundCall inbound(
+      session,
+      participantFrame("j", 2, "372=AJ\001379=" + participantReference + "\001380=3\001"),
+      0x57,
+      3);
+  PlanBuffers pendingBuffers;
+  auto pending = pendingBuffers.response();
+  REQUIRE(
+      irfq_infinite_prepare_v2(session, &inbound.request, &pending)
+      == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+  CHECK_FALSE(FIX::infiniteFrameAdapterStockNonconformanceSmokePendingPlanRetainsBusinessRejectRefId());
+
+  auto relocated = inbound.payload;
+  REQUIRE(relocated.data() != inbound.payload.data());
+  FIX::scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId(session);
+  std::fill(inbound.payload.begin(), inbound.payload.end(), std::uint8_t{0xa5});
+
+  irfq_infinite_resume_request_v2 resume{};
+  init(resume);
+  resume.prepare_id = pending.prepare_id;
+  resume.step = pending.step;
+  resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+  resume.subject_sequence = pending.subject_sequence;
+  std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+  resume.decision = IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2;
+  resume.input_source = pending.input_source;
+  resume.input_item_index = pending.input_item_index;
+  resume.input_source_bytes = {relocated.data(), relocated.size()};
+  const std::string dispositionId = "GID.REBORROW";
+  resume.gateway_inbound_disposition_id = slice(dispositionId);
+  PlanBuffers resultBuffers;
+  auto result = resultBuffers.response();
+  REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+  const std::string output(reinterpret_cast<const char *>(result.output.data), result.output.length);
+  CHECK(output.find("\00135=j\001") != std::string::npos);
+  CHECK(output.find("\001379=" + participantReference + "\001") != std::string::npos);
+  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+}
+#endif
+
 TEST_CASE(
     "InfiniteFrameAdapterV2 profile digest includes canonical CBOR bstr framing",
     "[infinite][adapter][v2][profile][digest]") {
@@ -7349,9 +7359,109 @@ TEST_CASE("InfiniteFrameAdapterV2 exports and executes exactly seven calls", "[i
 }
 
 TEST_CASE(
-    "InfiniteFrameAdapterV2 scrubs retained plan and native-state bytes before release",
+    "InfiniteFrameAdapterV2 scrubs real plan releases and native state before deallocation",
     "[infinite][adapter][v2][scrub]") {
-  CHECK(FIX::verifyInfiniteFrameAdapterStockNonconformanceSmokeScrubContract());
+  const auto config = otherwiseValidUnavailableProfile();
+  const auto create = [&] {
+    return FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+        config.data(),
+        config.size(),
+        nullptr,
+        0,
+        1,
+        0,
+        1,
+        1);
+  };
+  const auto prepare = [](irfq_infinite_session_v2 *session, PlanBuffers &buffers) {
+    std::array<std::uint8_t, 32> payload{};
+    payload.fill(0x5a);
+    irfq_infinite_prepare_request_v2 request{};
+    init(request);
+    request.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+    request.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+    request.event = IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2;
+    request.expected_epoch = 1;
+    request.now_tai_ns = 2;
+    request.now_utc_ns = 2;
+    request.payload = {payload.data(), payload.size()};
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            request,
+            request.event_identity_sha256));
+    auto result = buffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+    return result;
+  };
+  const std::array<std::uint32_t, 4> oneZeroPlan{1, 1, 0, 0};
+  const std::array<std::uint32_t, 4> oneZeroPlanAndSession{1, 1, 1, 1};
+
+  SECTION("apply") {
+    auto *session = create();
+    REQUIRE(session != nullptr);
+    PlanBuffers buffers;
+    const auto pending = prepare(session, buffers);
+    irfq_infinite_apply_committed_request_v2 apply{};
+    init(apply);
+    apply.prepare_id = pending.prepare_id;
+    apply.result_revision = pending.result_revision;
+    std::copy_n(pending.native_state_sha256, 32, apply.native_state_sha256);
+    irfq_infinite_operation_response_v2 response{};
+    init(response);
+    FIX::resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_apply_committed_v2(session, &apply, &response) == IRFQ_INFINITE_STATUS_OK_V2);
+    CHECK(FIX::infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() == oneZeroPlan);
+    FIX::stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  SECTION("abort") {
+    auto *session = create();
+    REQUIRE(session != nullptr);
+    PlanBuffers buffers;
+    const auto pending = prepare(session, buffers);
+    irfq_infinite_abort_request_v2 abort{};
+    init(abort);
+    abort.prepare_id = pending.prepare_id;
+    irfq_infinite_operation_response_v2 response{};
+    init(response);
+    FIX::resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_abort_v2(session, &abort, &response) == IRFQ_INFINITE_STATUS_OK_V2);
+    CHECK(FIX::infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() == oneZeroPlan);
+    FIX::stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  SECTION("terminal resume failure") {
+    auto *session = create();
+    REQUIRE(session != nullptr);
+    PlanBuffers pendingBuffers;
+    const auto pending = prepare(session, pendingBuffers);
+    irfq_infinite_resume_request_v2 resume{};
+    init(resume);
+    resume.prepare_id = pending.prepare_id;
+    resume.step = pending.step;
+    resume.kind = IRFQ_INFINITE_RESUME_OUTPUT_V2;
+    PlanBuffers resultBuffers;
+    auto result = resultBuffers.response();
+    FIX::resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    CHECK(FIX::infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() == oneZeroPlan);
+    FIX::stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  SECTION("destroy with pending plan") {
+    auto *session = create();
+    REQUIRE(session != nullptr);
+    PlanBuffers buffers;
+    prepare(session, buffers);
+    FIX::resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    CHECK(FIX::infiniteFrameAdapterStockNonconformanceSmokeScrubObservations() == oneZeroPlanAndSession);
+    FIX::stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations();
+  }
 }
 
 TEST_CASE(
