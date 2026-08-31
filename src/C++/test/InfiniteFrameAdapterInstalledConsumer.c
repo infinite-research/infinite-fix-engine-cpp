@@ -86,7 +86,7 @@ static void initialize_plan_output(
   response->action_capacity = (uint32_t)(sizeof(buffers->actions) / sizeof(buffers->actions[0]));
 }
 
-static int run_lifecycle(uint64_t expected_session_identity, int apply) {
+static int run_lifecycle(int apply, irfq_infinite_prepare_id_v2 *observed_prepare_id) {
   uint8_t payload[68 + sizeof(logon_frame) - 1];
   irfq_infinite_session_create_request_v2 create_request;
   irfq_infinite_session_create_response_v2 create_response;
@@ -136,9 +136,8 @@ static int run_lifecycle(uint64_t expected_session_identity, int apply) {
   initialize_plan_output(&pending, &buffers, 0);
   if (irfq_infinite_prepare_v2(create_response.session, &prepare_request, &pending)
           != IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2
-      || pending.prepare_id.high != expected_session_identity || pending.prepare_id.low != 1 || pending.step != 0
-      || pending.base_epoch != 1 || pending.base_revision != 0 || pending.result_epoch != 1
-      || pending.result_revision != 1
+      || (pending.prepare_id.high == 0 && pending.prepare_id.low == 0) || pending.step != 0 || pending.base_epoch != 1
+      || pending.base_revision != 0 || pending.result_epoch != 1 || pending.result_revision != 1
       || memcmp(pending.event_identity_sha256, event_identity_sha256, sizeof(event_identity_sha256)) != 0
       || pending.required_output_capacity == 0
       || pending.required_output_capacity > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2) {
@@ -153,15 +152,16 @@ static int run_lifecycle(uint64_t expected_session_identity, int apply) {
   resume_request.kind = IRFQ_INFINITE_RESUME_OUTPUT_V2;
   initialize_plan_output(&ready, &buffers, required_output_capacity);
   if (irfq_infinite_resume_v2(create_response.session, &resume_request, &ready) != IRFQ_INFINITE_STATUS_READY_V2
-      || ready.prepare_id.high != expected_session_identity || ready.prepare_id.low != 1 || ready.step != 1
-      || ready.base_epoch != 1 || ready.base_revision != 0 || ready.result_epoch != 1 || ready.result_revision != 1
-      || ready.native_state.length != IRFQ_INFINITE_NATIVE_STATE_BYTES_V2
+      || ready.prepare_id.high != pending.prepare_id.high || ready.prepare_id.low != pending.prepare_id.low
+      || ready.step != 1 || ready.base_epoch != 1 || ready.base_revision != 0 || ready.result_epoch != 1
+      || ready.result_revision != 1 || ready.native_state.length != IRFQ_INFINITE_NATIVE_STATE_BYTES_V2
       || ready.output.length != required_output_capacity || ready.action_count != 2
       || memcmp(ready.event_identity_sha256, event_identity_sha256, sizeof(event_identity_sha256)) != 0
       || memcmp(ready.native_state_sha256, zero_sha256, sizeof(zero_sha256)) == 0) {
     irfq_infinite_destroy_v2(create_response.session);
     return 12;
   }
+  *observed_prepare_id = ready.prepare_id;
 
   initialize_output(&operation_response.header, (uint32_t)sizeof(operation_response));
   if (apply) {
@@ -193,6 +193,8 @@ static int run_lifecycle(uint64_t expected_session_identity, int apply) {
 int main(void) {
   irfq_infinite_scan_request_v2 request;
   irfq_infinite_scan_response_v2 response;
+  irfq_infinite_prepare_id_v2 applied_prepare_id;
+  irfq_infinite_prepare_id_v2 aborted_prepare_id;
   int result;
 
   initialize_input(&request.header, (uint32_t)sizeof(request));
@@ -204,9 +206,14 @@ int main(void) {
     return 1;
   }
 
-  result = run_lifecycle(1, 1);
+  result = run_lifecycle(1, &applied_prepare_id);
   if (result != 0) {
     return result;
   }
-  return run_lifecycle(2, 0);
+  result = run_lifecycle(0, &aborted_prepare_id);
+  if (result != 0) {
+    return result;
+  }
+  return applied_prepare_id.high != aborted_prepare_id.high || applied_prepare_id.low != aborted_prepare_id.low ? 0
+                                                                                                                : 16;
 }

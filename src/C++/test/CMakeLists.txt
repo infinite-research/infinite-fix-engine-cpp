@@ -94,27 +94,46 @@ if (QUICKFIX_TESTS)
   if(IRFQ_INFINITE_EMBED_DICTIONARIES)
     function(_irfq_attach_installed_consumer)
       set(_irfq_consumer_root "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer")
+      set(_irfq_consumer_header "${_irfq_consumer_root}/include/quickfix/InfiniteFrameAdapter.h")
+      set(_irfq_consumer_object "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer.o")
+      set(_irfq_consumer_executable "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer")
       add_custom_command(
         TARGET infinite_adapter_package POST_BUILD
+        BYPRODUCTS
+                "${_irfq_consumer_header}"
+                "${_irfq_consumer_object}"
+                "${_irfq_consumer_executable}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${_irfq_consumer_root}/include/quickfix"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_BINARY_DIR}/infinite-adapter-package/InfiniteFrameAdapter.h"
-                "${_irfq_consumer_root}/include/quickfix/InfiniteFrameAdapter.h"
+                "${_irfq_consumer_header}"
         COMMAND "${CMAKE_C_COMPILER}" -std=c17 -Wall -Wextra -Werror -pedantic-errors
                 "-I${_irfq_consumer_root}/include"
                 -c "${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterInstalledConsumer.c"
-                -o "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer.o"
+                -o "${_irfq_consumer_object}"
         COMMAND "${CMAKE_CXX_COMPILER}"
-                "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer.o"
+                "${_irfq_consumer_object}"
                 "${CMAKE_BINARY_DIR}/infinite-adapter-package/libquickfix.a"
-                -pthread -o "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer"
+                -pthread -o "${_irfq_consumer_executable}"
         COMMENT "Building the installed C17 Infinite adapter consumer"
         VERBATIM)
     endfunction()
     cmake_language(DEFER DIRECTORY "${PROJECT_SOURCE_DIR}" CALL _irfq_attach_installed_consumer)
     add_test(
+      NAME infinite_frame_adapter_installed_consumer_build
+      COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --parallel 2
+              --target infinite_adapter_package)
+    set_tests_properties(
+      infinite_frame_adapter_installed_consumer_build
+      PROPERTIES FIXTURES_SETUP irfq_infinite_adapter_installed_consumer
+                 RUN_SERIAL TRUE
+                 TIMEOUT 600)
+    add_test(
       NAME infinite_frame_adapter_installed_consumer
       COMMAND "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer/InfiniteFrameAdapterInstalledConsumer")
+    set_tests_properties(
+      infinite_frame_adapter_installed_consumer
+      PROPERTIES FIXTURES_REQUIRED irfq_infinite_adapter_installed_consumer)
   endif()
   add_test(
     NAME quickfix_unit

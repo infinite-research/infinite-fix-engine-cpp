@@ -6074,7 +6074,8 @@ bool validAbiFixture(const std::string &bytes) {
          bytes.substr(secondTab + 1, end - secondTab - 1)});
     begin = end + 1;
   }
-  return rows == expectedAbiFixtureRows();
+  const auto expected = expectedAbiFixtureRows();
+  return expected.size() == 317 && rows == expected;
 }
 
 void replaceAbiFixtureText(std::string &bytes, const std::string &from, const std::string &to) {
