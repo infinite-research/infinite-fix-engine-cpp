@@ -246,6 +246,7 @@ public:
       std::uint32_t heartbeatSeconds,
       std::uint64_t senderSequence,
       std::uint64_t targetSequence,
+      std::int64_t creationUtcNanoseconds,
       std::int64_t nowUtcNanoseconds,
       std::int64_t lastSentUtcNanoseconds,
       std::int64_t lastReceivedUtcNanoseconds,

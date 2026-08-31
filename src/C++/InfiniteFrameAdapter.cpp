@@ -476,8 +476,16 @@ bool weeklyLogonContained(const std::array<CborValue, 50> &fields) noexcept {
   };
   const auto sessionStart = position(12);
   const auto sessionEnd = position(14);
-  const auto logonStart = distance(sessionStart, position(16));
-  const auto logonEnd = distance(sessionStart, position(18));
+  const auto logonAbsoluteStart = position(16);
+  const auto logonAbsoluteEnd = position(18);
+  if (sessionStart == sessionEnd) {
+    return true;
+  }
+  if (logonAbsoluteStart == logonAbsoluteEnd) {
+    return false;
+  }
+  const auto logonStart = distance(sessionStart, logonAbsoluteStart);
+  const auto logonEnd = distance(sessionStart, logonAbsoluteEnd);
   const auto sessionEndOffset = distance(sessionStart, sessionEnd);
   return logonStart <= logonEnd && logonEnd <= sessionEndOffset;
 }
@@ -1405,9 +1413,15 @@ std::unique_ptr<PendingPlan> adminOutputPlan(
   write64(plan->state.data() + 96, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 104, static_cast<std::uint64_t>(request.now_utc_ns));
   writeSenderSuccessor(plan->state, output.nextSenderSequence);
-  write32(plan->state.data() + 192, testRequestCount);
+  const bool sentLogout = msgType == '5';
+  write32(
+      plan->state.data() + 192,
+      sentLogout || disconnectReason != IRFQ_INFINITE_REASON_NONE_V2 ? 0 : testRequestCount);
+  if (sentLogout) {
+    write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(16));
+  }
   if (disconnectReason != IRFQ_INFINITE_REASON_NONE_V2) {
-    write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(0x110));
+    write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256));
     write32(plan->state.data() + 308, disconnectReason);
   }
   plan->output.assign(wire.begin(), wire.end());
@@ -2156,6 +2170,7 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       read32(session.state.data() + 188),
       senderSequence,
       targetSequence,
+      readI64(session.state.data() + 72),
       request.now_utc_ns,
       readI64(session.state.data() + 104) == 0 ? readI64(session.state.data() + 72)
                                                : readI64(session.state.data() + 104),
@@ -2167,8 +2182,12 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       wire,
       session.dictionaries,
       staticProfile(session.profile));
+  const bool rejectedAttachedSessionWindow = heldAttached && inbound.msgType != "A" && inbound.identified
+                                             && inbound.sequenceValid && inbound.sequenceFieldsValid
+                                             && inbound.identityMatches && inbound.timeMatches
+                                             && inbound.dictionaryValid && !inbound.sessionTimeMatches;
   if ((!inbound.admin && !inbound.application && inbound.identityMatches && inbound.timeMatches
-       && inbound.outputs.empty())
+       && inbound.outputs.empty() && !rejectedAttachedSessionWindow)
       || (inbound.admin && inbound.application) || inbound.outputs.size() != inbound.outputMsgTypes.size()
       || inbound.outputs.size() != inbound.outputSequences.size()) {
     throw std::invalid_argument("Inbound classification");
@@ -2245,8 +2264,10 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   write64(plan->state.data() + 56, plan->resultRevision);
   write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
-  write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
-  write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
+  if (!rejectedAttachedSessionWindow) {
+    write64(plan->state.data() + 112, static_cast<std::uint64_t>(request.now_tai_ns));
+    write64(plan->state.data() + 120, static_cast<std::uint64_t>(request.now_utc_ns));
+  }
   write32(plan->state.data() + 192, inbound.testRequestCount);
   const auto expectedTarget = targetSequence;
   const auto appendOutputs = [&] {
@@ -2344,6 +2365,15 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     reborrowSha.update(reborrowFields.data(), reborrowFields.size());
     reborrowSha.update(request.payload.data, static_cast<std::size_t>(request.payload.length));
     plan->reborrowDigest = reborrowSha.finish();
+    return plan;
+  }
+  if (rejectedAttachedSessionWindow) {
+    appendDisposition(IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2, IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    appendDisconnect(IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256));
+    write32(plan->state.data() + 192, 0);
+    write32(plan->state.data() + 308, IRFQ_INFINITE_REASON_SESSION_TIME_V2);
+    plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
     return plan;
   }
   if (rejectedLogonWindow) {
@@ -3034,7 +3064,7 @@ std::unique_ptr<PendingPlan> timerPlan(
   write64(plan->state.data() + 56, plan->resultRevision);
   write64(plan->state.data() + 80, static_cast<std::uint64_t>(request.now_tai_ns));
   write64(plan->state.data() + 88, static_cast<std::uint64_t>(request.now_utc_ns));
-  write32(plan->state.data() + 192, output.testRequestCount);
+  write32(plan->state.data() + 192, output.disconnected ? 0 : output.testRequestCount);
   if (output.disconnected) {
     write64(plan->state.data() + 180, read64(plan->state.data() + 180) | UINT64_C(256));
     write32(plan->state.data() + 308, disconnectReason);
@@ -3251,6 +3281,7 @@ std::unique_ptr<PendingPlan> resetFinalPlan(
         session.profile.heartbeatMode == 1 ? session.profile.configuredHeartbeat : session.profile.minimumHeartbeat,
         1,
         1,
+        creationUtcNs,
         request.now_utc_ns,
         creationUtcNs,
         creationUtcNs,
@@ -3264,7 +3295,8 @@ std::unique_ptr<PendingPlan> resetFinalPlan(
     if (!inbound.admin || inbound.application || !inbound.resetLogon || inbound.msgType != "A" || inbound.sequence != 1
         || inbound.outputs.size() != 1 || inbound.outputMsgTypes.size() != 1 || inbound.outputMsgTypes[0] != "A"
         || inbound.outputSequences.size() != 1 || inbound.outputSequences[0] != 1 || inbound.nextSenderSequence != 2
-        || inbound.nextTargetSequence != 2 || inbound.disconnected
+        || inbound.nextTargetSequence != 2 || !inbound.sessionTimeMatches || !inbound.logonTimeMatches
+        || inbound.disconnected
         || (session.profile.heartbeatMode == 1 && inbound.heartbeatSeconds != session.profile.configuredHeartbeat)
         || (session.profile.heartbeatMode == 2
             && (inbound.heartbeatSeconds < session.profile.minimumHeartbeat
@@ -4224,6 +4256,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           read32(session->state.data() + 188),
           read64(session->state.data() + 132),
           read64(session->state.data() + 144),
+          readI64(session->state.data() + 72),
           readI64(plan.state.data() + 88),
           readI64(session->state.data() + 104),
           readI64(session->state.data() + 120),
@@ -4366,6 +4399,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             read32(session->state.data() + 188),
             read64(session->state.data() + 132),
             read64(session->state.data() + 144),
+            readI64(session->state.data() + 72),
             readI64(plan.state.data() + 88),
             readI64(session->state.data() + 104),
             readI64(session->state.data() + 120),
@@ -4728,6 +4762,7 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
             nonallocatingRecoveryClassificationScratch(
                 read32(session->state.data() + 140),
                 read64(session->state.data() + 144)),
+            readI64(session->state.data() + 72),
             readI64(plan.state.data() + 88),
             readI64(session->state.data() + 104),
             readI64(session->state.data() + 120),

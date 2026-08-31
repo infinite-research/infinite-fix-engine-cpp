@@ -286,6 +286,35 @@ bool governedRangeContains(
   return start == end || (start < end ? current >= start && current <= end : current >= start || current <= end);
 }
 
+bool governedSessionContains(
+    const InfiniteSessionStaticProfile &profile,
+    std::int64_t creationUtcNanoseconds,
+    std::int64_t nowUtcNanoseconds,
+    const UtcTimeStamp &now) noexcept {
+  if (!governedRangeContains(profile, 0, now)) {
+    return false;
+  }
+  if (profile.scheduleMode == 1) {
+    return true;
+  }
+  constexpr std::int64_t NANOSECONDS_PER_SECOND = INT64_C(1000000000);
+  constexpr std::int64_t SECONDS_PER_DAY = INT64_C(86400);
+  constexpr std::int64_t SECONDS_PER_WEEK = INT64_C(604800);
+  const auto creationSecond = creationUtcNanoseconds / NANOSECONDS_PER_SECOND;
+  const auto daysSinceEpoch = creationSecond / SECONDS_PER_DAY;
+  const auto weekday = (daysSinceEpoch + 4) % 7;
+  const auto secondOfDay = creationSecond % SECONDS_PER_DAY;
+  const auto currentWeekSecond = weekday * SECONDS_PER_DAY + secondOfDay;
+  const auto targetWeekSecond = static_cast<std::int64_t>(profile.schedule[2]) * SECONDS_PER_DAY + profile.schedule[3];
+  auto delta = (targetWeekSecond - currentWeekSecond + SECONDS_PER_WEEK) % SECONDS_PER_WEEK;
+  if (delta == 0) {
+    delta = SECONDS_PER_WEEK;
+  }
+  constexpr auto LAST_WHOLE_SECOND = INT64_MAX / NANOSECONDS_PER_SECOND;
+  return creationSecond <= LAST_WHOLE_SECOND - delta
+         && nowUtcNanoseconds <= (creationSecond + delta) * NANOSECONDS_PER_SECOND;
+}
+
 void configureStaticProfile(Session &session, const InfiniteSessionStaticProfile *profile) {
   session.setTimestampPrecision(profile == nullptr ? 6 : static_cast<int>(profile->timestampPrecision));
   session.setSenderDefaultApplVerID("10");
@@ -822,6 +851,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     std::uint32_t heartbeatSeconds,
     std::uint64_t senderSequence,
     std::uint64_t targetSequence,
+    std::int64_t creationUtcNanoseconds,
     std::int64_t nowUtcNanoseconds,
     std::int64_t lastSentUtcNanoseconds,
     std::int64_t lastReceivedUtcNanoseconds,
@@ -839,8 +869,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
   if (beginString.empty() || senderCompId.empty() || targetCompId.empty() || activeHeartbeat == 0
       || activeHeartbeat > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || senderSequence == 0
       || senderSequence >= FIX_SEQUENCE_BOUND || targetSequence == 0 || targetSequence >= FIX_SEQUENCE_BOUND
-      || lastProcessedSequence >= FIX_SEQUENCE_BOUND || nowUtcNanoseconds <= 0 || lastSentUtcNanoseconds <= 0
-      || lastReceivedUtcNanoseconds <= 0 || (sessionFlags & ~FLAGS_MASK) != 0 || wire.empty()
+      || lastProcessedSequence >= FIX_SEQUENCE_BOUND || creationUtcNanoseconds <= 0 || nowUtcNanoseconds <= 0
+      || creationUtcNanoseconds > nowUtcNanoseconds || lastSentUtcNanoseconds <= 0 || lastReceivedUtcNanoseconds <= 0
+      || (sessionFlags & ~FLAGS_MASK) != 0 || wire.empty()
       || (heartbeatSeconds == 0 && (!detached || profile.heartbeatMode != 2)) || profile.timestampPrecision > 9
       || profile.maximumLatency > static_cast<std::uint32_t>(std::numeric_limits<int>::max())
       || testRequestCount > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
@@ -1013,8 +1044,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
           || (resendBeginStatus == WireSequenceStatus::Valid && resendEndStatus == WireSequenceStatus::Valid
               && (resendEndInclusive == 0 || resendEndInclusive >= resendBegin));
     const bool timeMatches = session.isGoodTime(sendingTime);
-    const bool sessionTimeMatches = governedRangeContains(profile, 0, now);
-    const bool logonTimeMatches = governedRangeContains(profile, 4, now);
+    const bool sessionTimeMatches
+        = queuedReplay || governedSessionContains(profile, creationUtcNanoseconds, nowUtcNanoseconds, now);
+    const bool logonTimeMatches = queuedReplay || governedRangeContains(profile, 4, now);
     const bool headerSafe = completeIdentity && timeMatches && sessionTimeMatches;
     const bool safeToIntercept = dictionaryValid && headerSafe;
     bool intercepted = false;
@@ -1260,32 +1292,38 @@ InfiniteHeartbeatPlan InfiniteSessionPlanner::timer(
   auto scratchUtc = utcTime(creationUtcNanoseconds);
   const auto nowTai = utcTime(nowTaiNanoseconds);
   const auto nowUtc = utcTime(nowUtcNanoseconds);
+  const bool weekly = profile != nullptr && profile->scheduleMode == 2;
+  if (weekly && !governedSessionContains(*profile, creationUtcNanoseconds, nowUtcNanoseconds, nowUtc)) {
+    return {{}, senderSequence, targetSequence, testRequestCount, false};
+  }
+  const bool logonTimeMatches = !weekly || governedRangeContains(*profile, 4, nowUtc);
   PlanningApplication application("", profile, lastProcessedSequence);
   PlanningStoreFactory stores;
   DataDictionaryProvider emptyDictionaries;
   const auto &selectedDictionaries = dictionaries == nullptr ? emptyDictionaries : *dictionaries;
   const SessionID sessionId(beginString, senderCompId, targetCompId, profile == nullptr ? "" : profile->qualifier);
+  const TimeRange governedNonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
   Session session(
       [&scratchUtc] { return scratchUtc; },
       application,
       stores,
       sessionId,
       selectedDictionaries,
-      sessionTime,
+      weekly ? governedNonstop : sessionTime,
       0,
       nullptr,
       true);
   scratchUtc = nowUtc;
   RecordingResponder responder;
-  session.setLogonTime(logonTime);
-  session.setIsNonStopSession(nonStop);
+  session.setLogonTime(weekly ? governedNonstop : logonTime);
+  session.setIsNonStopSession(weekly || nonStop);
   configureStaticProfile(session, profile);
   session.setNextSenderMsgSeqNum(senderSequence);
   session.setNextTargetMsgSeqNum(targetSequence);
   session.setLogonTimeout(static_cast<int>(logonTimeoutSeconds));
   session.setLogoutTimeout(static_cast<int>(logoutTimeoutSeconds));
   session.m_state.heartBtInt(static_cast<int>(heartbeatSeconds));
-  session.m_state.enabled((sessionFlags & UINT64_C(1)) != 0);
+  session.m_state.enabled((sessionFlags & UINT64_C(1)) != 0 && logonTimeMatches);
   session.m_state.receivedLogon((sessionFlags & UINT64_C(2)) != 0);
   session.m_state.sentLogon((sessionFlags & UINT64_C(4)) != 0);
   session.m_state.sentLogout((sessionFlags & UINT64_C(16)) != 0);
