@@ -65,6 +65,7 @@ function(_irfq_derive_source_provenance checkout release_base self_test_base all
       GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0
       LC_ALL=C LANG=C)
   set(_git_config
+      -c safe.directory=${_checkout}
       -c core.attributesFile=/dev/null -c core.quotePath=true -c core.bigFileThreshold=512m
       -c diff.external= -c diff.noprefix=false -c diff.mnemonicPrefix=false
       -c diff.srcPrefix=a/ -c diff.dstPrefix=b/ -c diff.algorithm=myers
