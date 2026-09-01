@@ -1047,6 +1047,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const bool sessionTimeMatches
         = queuedReplay || governedSessionContains(profile, creationUtcNanoseconds, nowUtcNanoseconds, now);
     const bool logonTimeMatches = queuedReplay || governedRangeContains(profile, 4, now);
+    const bool resetSafeToIntercept = dictionaryValid && completeIdentity && timeMatches;
     const bool headerSafe = completeIdentity && timeMatches && sessionTimeMatches;
     const bool safeToIntercept = dictionaryValid && headerSafe;
     bool intercepted = false;
@@ -1081,7 +1082,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
       session.generateLogout("NextExpectedMsgSeqNum exhausted");
       session.disconnect();
       intercepted = true;
-    } else if (!finalizeResetLogon && safeToIntercept && msgType == MsgType_Logon && static_cast<bool>(reset)) {
+    } else if (!finalizeResetLogon && resetSafeToIntercept && msgType == MsgType_Logon && static_cast<bool>(reset)) {
       application.admin = true;
       intercepted = true;
     } else if (safeToIntercept && msgType == MsgType_Logon && !static_cast<bool>(reset)) {

@@ -13136,6 +13136,51 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "InfiniteFrameAdapterV2 fresh reset Logon precedes weekly eligibility",
+    "[infinite][adapter][v2][stock-smoke][inbound-reset-decision][fresh][eligibility]") {
+  const auto config = otherwiseValidUnavailableProfile(2, {3, 72000, 4, 75600, 3, 72000, 4, 75600});
+  auto *session = FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+      config.data(),
+      config.size(),
+      nullptr,
+      0,
+      1,
+      0,
+      INT64_C(1700000000123456000),
+      INT64_C(1700000000123456000));
+  REQUIRE(session != nullptr);
+  InboundCall inbound(
+      session,
+      participantFrame(
+          'A',
+          1,
+          "369=0\00198=0\001108=30\001141=Y\0011137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001"),
+      0xbd);
+  inbound.request.expected_revision = 0;
+  inbound.request.next_original_value = 1;
+  REQUIRE(
+      FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+          session,
+          inbound.request,
+          inbound.request.event_identity_sha256));
+  PlanBuffers buffers;
+  auto result = buffers.response();
+  REQUIRE(
+      irfq_infinite_prepare_v2(session, &inbound.request, &result)
+      == IRFQ_INFINITE_STATUS_NEED_EPOCH_RESET_DECISION_V2);
+  CHECK(result.native_state.length == 0);
+  CHECK(result.output.length == 0);
+  CHECK(result.action_count == 0);
+  irfq_infinite_abort_request_v2 abort{};
+  init(abort);
+  abort.prepare_id = result.prepare_id;
+  irfq_infinite_operation_response_v2 operation{};
+  init(operation);
+  REQUIRE(irfq_infinite_abort_v2(session, &abort, &operation) == IRFQ_INFINITE_STATUS_OK_V2);
+  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+}
+
+TEST_CASE(
     "InfiniteFrameAdapterV2 terminalizes invalid reset Logon before the reset decision",
     "[infinite][adapter][v2][stock-smoke][inbound-reset-decision][validation]") {
   const auto config = otherwiseValidUnavailableProfile();
