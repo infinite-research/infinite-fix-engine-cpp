@@ -5,6 +5,8 @@ EXTRA_DIST = VerifyInfiniteCompleteFrameFixture.cmake InfiniteFrameAdapterInstal
 ut_LDADD = ../libquickfix.la
 
 ut_SOURCES = \
+	../InfiniteCompleteFrame.cpp \
+	../InfiniteFrameAdapter.cpp \
 	ut.cpp \
 	catch_amalgamated.cpp \
 	catch_amalgamated.hpp \
@@ -59,6 +61,8 @@ AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	'-DINFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/infinite-frame-adapter-abi.v2.tsv"' \
 	-I$(top_srcdir)/src/C++ \
 	-I..
+
+ut_CPPFLAGS = $(AM_CPPFLAGS) -DIRFQ_INFINITE_TEST_SUPPORT=1
 
 check-local:
 	@fixture="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"; \

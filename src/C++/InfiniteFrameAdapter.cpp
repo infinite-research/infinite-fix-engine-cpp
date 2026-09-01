@@ -1016,6 +1016,7 @@ void scrubBytes(void *data, std::size_t size) noexcept {
   }
 }
 
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
 bool allZeroBytes(const void *data, std::size_t size) noexcept {
   const auto *bytes = static_cast<const std::uint8_t *>(data);
   for (std::size_t index = 0; index < size; ++index) {
@@ -1054,6 +1055,7 @@ constexpr auto retainsBusinessRejectRefId(int) noexcept -> decltype((void)&T::bu
 }
 
 template <typename T> constexpr bool retainsBusinessRejectRefId(long) noexcept { return false; }
+#endif
 } // namespace
 
 struct PendingPlan {
@@ -1127,6 +1129,7 @@ struct PendingPlan {
     scrubBytes(&materialized, sizeof(materialized));
   }
 
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
   bool scrubbed() const noexcept {
     return allZeroBytes(&id, sizeof(id)) && allZeroBytes(&step, sizeof(step)) && allZeroBytes(&kind, sizeof(kind))
            && allZeroBytes(&stage, sizeof(stage)) && allZeroBytes(&event, sizeof(event))
@@ -1151,13 +1154,16 @@ struct PendingPlan {
            && allZeroBytes(&applicationDispatch, sizeof(applicationDispatch))
            && allZeroBytes(&materialized, sizeof(materialized));
   }
+#endif
 
   ~PendingPlan() noexcept {
     scrub();
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
     if (scrubObservation.enabled) {
       ++scrubObservation.counts[0];
       scrubObservation.counts[1] += scrubbed() ? 1 : 0;
     }
+#endif
   }
 };
 
@@ -1180,10 +1186,12 @@ struct irfq_infinite_session_v2 {
 
   ~irfq_infinite_session_v2() noexcept {
     scrub();
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
     if (scrubObservation.enabled) {
       ++scrubObservation.counts[2];
       scrubObservation.counts[3] += !pending && allZeroBytes(state.data(), state.size()) ? 1 : 0;
     }
+#endif
   }
 };
 
@@ -3740,6 +3748,7 @@ irfq_infinite_status_v2 resumeDirectLogonResponse(
 }
 } // namespace
 
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
 namespace FIX {
 irfq_infinite_session_v2 *createInfiniteFrameAdapterStockNonconformanceSmokeSessionWithDataDictionaries(
     const std::uint8_t *config,
@@ -3830,6 +3839,7 @@ void scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId
   }
 }
 } // namespace FIX
+#endif
 
 extern "C" irfq_infinite_status_v2 irfq_infinite_scan_v2(
     const irfq_infinite_scan_request_v2 *request,

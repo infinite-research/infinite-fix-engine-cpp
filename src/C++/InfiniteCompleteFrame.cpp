@@ -45,6 +45,7 @@ constexpr std::size_t MAX_FRAME_BYTES = 65'536;
 constexpr std::size_t MAX_BEGIN_STRING_BYTES = 16;
 constexpr std::size_t CHECKSUM_FIELD_BYTES = 7;
 
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
 struct BeginStringVisitState {
   bool enabled{false};
   std::size_t count{0};
@@ -57,6 +58,7 @@ void countBeginStringVisit() noexcept {
     ++beginStringVisits.count;
   }
 }
+#endif
 
 void cleanse(char *bytes, std::size_t length) noexcept {
 #ifdef HAVE_SSL
@@ -113,7 +115,9 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
       return InfiniteDeclaredFrameScanResult::Malformed;
     }
     while (cursor.scanOffset < length) {
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
       countBeginStringVisit();
+#endif
       if (bytes[cursor.scanOffset] == '\001') {
         break;
       }
@@ -203,12 +207,14 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
   return InfiniteDeclaredFrameScanResult::NeedMore;
 }
 
+#ifdef IRFQ_INFINITE_TEST_SUPPORT
 void resetInfiniteCompleteFrameBeginStringVisits() noexcept { beginStringVisits = {true, 0}; }
 
 std::size_t stopInfiniteCompleteFrameBeginStringVisits() noexcept {
   beginStringVisits.enabled = false;
   return beginStringVisits.count;
 }
+#endif
 
 InfiniteCompleteFrame::InfiniteCompleteFrame(InfiniteSensitiveString value, std::int64_t observedTaiNs)
     : bytes(std::move(value)),

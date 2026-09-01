@@ -25,6 +25,8 @@ if (QUICKFIX_TESTS)
             -P ${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
 
   set (ut_SOURCES 
+  ${PROJECT_SOURCE_DIR}/src/C++/InfiniteCompleteFrame.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/catch_amalgamated.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryProviderTestCase.cpp
@@ -74,7 +76,8 @@ if (QUICKFIX_TESTS)
   add_executable(ut ut.cpp ${ut_SOURCES})
   target_compile_definitions(ut PRIVATE
     INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
-    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}")
+    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}"
+    IRFQ_INFINITE_TEST_SUPPORT=1)
   if(IRFQ_INFINITE_EMBED_DICTIONARIES)
     target_compile_definitions(ut PRIVATE IRFQ_INFINITE_EMBED_DICTIONARIES=1)
   endif()

@@ -101,6 +101,33 @@ function(_irfq_require_artifact package_path source_path size_value hash_value l
   _irfq_require_equal("${_package_hash}" "${_source_hash}" "${label} source SHA-256")
 endfunction()
 
+function(_irfq_require_no_test_support_symbols archive)
+  execute_process(
+    COMMAND /usr/bin/readelf --wide --syms "${archive}"
+    RESULT_VARIABLE _result
+    OUTPUT_VARIABLE _symbols
+    ERROR_VARIABLE _error)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "readelf could not inspect the package archive for test support: ${_error}")
+  endif()
+  foreach(_symbol IN ITEMS
+      createInfiniteFrameAdapterStockNonconformanceSmokeSessionWithDataDictionaries
+      computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity
+      computeInfiniteFrameAdapterStockNonconformanceSmokeSha256
+      forceInfiniteFrameAdapterStockNonconformanceSmokeNextPlanOverflow
+      resetInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations
+      stopInfiniteFrameAdapterStockNonconformanceSmokeScrubObservations
+      infiniteFrameAdapterStockNonconformanceSmokeScrubObservations
+      infiniteFrameAdapterStockNonconformanceSmokePendingPlanRetainsBusinessRejectRefId
+      scrubInfiniteFrameAdapterStockNonconformanceSmokePendingBusinessRejectRefId
+      resetInfiniteCompleteFrameBeginStringVisits
+      stopInfiniteCompleteFrameBeginStringVisits)
+    if(_symbols MATCHES "${_symbol}")
+      message(FATAL_ERROR "package archive contains test-support symbol: ${_symbol}")
+    endif()
+  endforeach()
+endfunction()
+
 function(_irfq_verify_source_provenance checkout release_base self_test_base allow_self_test_base binary_root)
   if(NOT release_base STREQUAL "386ce46e917ae494ab6e90b1be90fd421cdbe3f9")
     message(FATAL_ERROR "source release base must equal the pinned production release base")
@@ -493,9 +520,9 @@ if(SELF_TEST)
   set(_irfq_self_fake_source_tree 2222222222222222222222222222222222222222)
   set(_irfq_self_fake_source_merge_base 3333333333333333333333333333333333333333)
   set(_irfq_self_fake_source_diff 4444444444444444444444444444444444444444444444444444444444444444)
-  set(_irfq_self_spec_commit cb12d80aecd90f52b7fbcc009246dab640ba7a7b)
-  set(_irfq_self_spec_tree bae719cd3d4001329f6efbe5e32d92be3549b5f9)
-  set(_irfq_self_spec_bundle 4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9)
+  set(_irfq_self_spec_commit 4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b)
+  set(_irfq_self_spec_tree 69de448251d9d7030c2d0716d9216415964ce2cc)
+  set(_irfq_self_spec_bundle e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99)
   set(_irfq_self_image irfq-task2e-cpp:2026-08-30)
   set(_irfq_self_image_hash c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c)
   set(_irfq_self_build_command
@@ -574,6 +601,25 @@ if(SELF_TEST)
     ERROR_VARIABLE _irfq_error)
   if(NOT _irfq_result EQUAL 0)
     message(FATAL_ERROR "positive package case failed:\n${_irfq_output}${_irfq_error}")
+  endif()
+
+  set(_irfq_obsolete_spec ${_irfq_self_common})
+  list(TRANSFORM _irfq_obsolete_spec REPLACE
+       "^-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=.*"
+       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=cb12d80aecd90f52b7fbcc009246dab640ba7a7b")
+  list(TRANSFORM _irfq_obsolete_spec REPLACE
+       "^-DIRFQ_PACKAGE_SPECIFICATION_TREE=.*"
+       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=bae719cd3d4001329f6efbe5e32d92be3549b5f9")
+  list(TRANSFORM _irfq_obsolete_spec REPLACE
+       "^-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=.*"
+       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" ${_irfq_obsolete_spec} -P "${_irfq_package_script}"
+    RESULT_VARIABLE _irfq_obsolete_spec_result
+    OUTPUT_QUIET
+    ERROR_QUIET)
+  if(_irfq_obsolete_spec_result EQUAL 0)
+    message(FATAL_ERROR "packager accepted the obsolete specification authority")
   endif()
 
   file(READ "${_irfq_output_dir}/manifest.sha256" _irfq_first_manifest)
@@ -1475,9 +1521,9 @@ _irfq_require_equal("${_irfq_value_source_commit}" "${IRFQ_VERIFIED_SOURCE_COMMI
 _irfq_require_equal("${_irfq_value_source_tree}" "${IRFQ_VERIFIED_SOURCE_TREE}" source_tree)
 _irfq_require_equal("${_irfq_value_source_merge_base}" "${IRFQ_VERIFIED_SOURCE_MERGE_BASE}" source_merge_base)
 _irfq_require_equal("${_irfq_value_source_diff_sha256}" "${IRFQ_VERIFIED_SOURCE_DIFF_SHA256}" source_diff_sha256)
-_irfq_require_equal("${_irfq_value_specification_commit}" "cb12d80aecd90f52b7fbcc009246dab640ba7a7b" specification_commit)
-_irfq_require_equal("${_irfq_value_specification_tree}" "bae719cd3d4001329f6efbe5e32d92be3549b5f9" specification_tree)
-_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9" specification_bundle_sha256)
+_irfq_require_equal("${_irfq_value_specification_commit}" "4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b" specification_commit)
+_irfq_require_equal("${_irfq_value_specification_tree}" "69de448251d9d7030c2d0716d9216415964ce2cc" specification_tree)
+_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99" specification_bundle_sha256)
 _irfq_require_equal("${_irfq_value_target}" "x86_64-unknown-linux-gnu" target)
 _irfq_require_equal("${_irfq_value_build_image}" "irfq-task2e-cpp:2026-08-30" build_image)
 _irfq_require_equal("${_irfq_value_build_image_sha256}" "c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c" build_image_sha256)
@@ -1522,6 +1568,7 @@ _irfq_require_equal("${_irfq_value_licenses_path}" "LICENSES.txt" licenses_path)
 _irfq_require_artifact(
   "${IRFQ_PACKAGE_DIR}/libquickfix.a" "${IRFQ_EXPECTED_ARCHIVE}"
   "${_irfq_value_archive_size}" "${_irfq_value_archive_sha256}" archive)
+_irfq_require_no_test_support_symbols("${IRFQ_PACKAGE_DIR}/libquickfix.a")
 _irfq_require_artifact(
   "${IRFQ_PACKAGE_DIR}/InfiniteFrameAdapter.h" "${IRFQ_EXPECTED_HEADER}"
   "${_irfq_value_header_size}" "${_irfq_value_header_sha256}" header)

@@ -81,6 +81,15 @@ public:
         nullptr,
         true));
   }
+
+  static void awaitLogon(Session &session, const UtcTimeStamp &lastReceivedTime, const UtcTimeStamp &lastSentTime) {
+    session.m_state.initiate(true);
+    session.m_state.receivedLogon(false);
+    session.m_state.sentLogon(true);
+    session.m_state.logonTimeout(10);
+    session.m_state.lastReceivedTime(lastReceivedTime);
+    session.m_state.lastSentTime(lastSentTime);
+  }
 };
 } // namespace FIX
 
@@ -689,9 +698,7 @@ struct acceptorT11Fixture : public sessionT11Fixture {
 };
 } // namespace
 
-TEST_CASE(
-    "detached sessions share immutable dictionaries while ordinary sessions own copies",
-    "[session][dictionary]") {
+TEST_CASE("ordinary and detached sessions preserve dictionary pointer identity", "[session][dictionary]") {
   TestCallback callback;
   DataDictionaryProvider dictionaries;
   auto transport = std::make_shared<DataDictionary>();
@@ -714,12 +721,12 @@ TEST_CASE(
       nullptr);
   CHECK(
       &ordinary.getDataDictionaryProvider().getSessionDataDictionary(BeginString("FIXT.1.1"))
-      != &dictionaries.getSessionDataDictionary(BeginString("FIXT.1.1")));
+      == &dictionaries.getSessionDataDictionary(BeginString("FIXT.1.1")));
   CHECK(
       &ordinary.getDataDictionaryProvider().getApplicationDataDictionary(ApplVerID("10"))
-      != &dictionaries.getApplicationDataDictionary(ApplVerID("10")));
-  CHECK(transport.use_count() == transportOwners);
-  CHECK(application.use_count() == applicationOwners);
+      == &dictionaries.getApplicationDataDictionary(ApplVerID("10")));
+  CHECK(transport.use_count() == transportOwners + 1);
+  CHECK(application.use_count() == applicationOwners + 1);
 
   auto detached = SessionTestAccess::detached(
       [now] { return now; },
@@ -734,11 +741,94 @@ TEST_CASE(
   CHECK(
       &detached->getDataDictionaryProvider().getApplicationDataDictionary(ApplVerID("10"))
       == &dictionaries.getApplicationDataDictionary(ApplVerID("10")));
+  CHECK(transport.use_count() == transportOwners + 2);
+  CHECK(application.use_count() == applicationOwners + 2);
+  detached.reset();
   CHECK(transport.use_count() == transportOwners + 1);
   CHECK(application.use_count() == applicationOwners + 1);
-  detached.reset();
+
+  DataDictionaryProvider replacement;
+  auto replacementTransport = std::make_shared<DataDictionary>();
+  auto replacementApplication = std::make_shared<DataDictionary>();
+  replacement.addTransportDataDictionary(BeginString("FIXT.1.1"), replacementTransport);
+  replacement.addApplicationDataDictionary(ApplVerID("10"), replacementApplication);
+  const auto replacementTransportOwners = replacementTransport.use_count();
+  const auto replacementApplicationOwners = replacementApplication.use_count();
+  ordinary.setDataDictionaryProvider(replacement);
+  CHECK(
+      &ordinary.getDataDictionaryProvider().getSessionDataDictionary(BeginString("FIXT.1.1"))
+      == &replacement.getSessionDataDictionary(BeginString("FIXT.1.1")));
+  CHECK(
+      &ordinary.getDataDictionaryProvider().getApplicationDataDictionary(ApplVerID("10"))
+      == &replacement.getApplicationDataDictionary(ApplVerID("10")));
   CHECK(transport.use_count() == transportOwners);
   CHECK(application.use_count() == applicationOwners);
+  CHECK(replacementTransport.use_count() == replacementTransportOwners + 1);
+  CHECK(replacementApplication.use_count() == replacementApplicationOwners + 1);
+}
+
+TEST_CASE("ordinary logon timeout remains based on last received time", "[session][timing]") {
+  const UtcTimeStamp lastReceivedTime(0, 0, 0, 1, 1, 2024);
+  auto candidateTime = lastReceivedTime;
+  candidateTime += 10;
+  auto futureLastSentTime = candidateTime;
+  futureLastSentTime += 10;
+  SessionState state(lastReceivedTime);
+  state.logonTimeout(10);
+  state.lastReceivedTime(lastReceivedTime);
+  state.lastSentTime(futureLastSentTime);
+
+  CHECK(state.logonTimedOut(candidateTime));
+}
+
+TEST_CASE("ordinary next samples its clock while detached next uses the exact candidate", "[session][timing]") {
+  const UtcTimeStamp lastTime(0, 0, 0, 1, 1, 2024);
+  auto clockTime = lastTime;
+  clockTime += 5;
+  auto candidateTime = lastTime;
+  candidateTime += 10;
+  const TimeRange nonstop(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0));
+  DataDictionaryProvider dictionaries;
+
+  TestCallback ordinaryCallback;
+  std::size_t ordinaryClockCalls = 0;
+  Session ordinary(
+      [&] {
+        ++ordinaryClockCalls;
+        return clockTime;
+      },
+      ordinaryCallback,
+      ordinaryCallback.factory,
+      SessionID(BeginString("FIX.4.2"), SenderCompID("CLOCKED"), TargetCompID("VENUE")),
+      dictionaries,
+      nonstop,
+      1,
+      nullptr);
+  ordinary.setResponder(&ordinaryCallback);
+  SessionTestAccess::awaitLogon(ordinary, lastTime, lastTime);
+  const auto ordinaryCallsBeforeNext = ordinaryClockCalls;
+  ordinary.next(candidateTime);
+  CHECK(ordinaryClockCalls > ordinaryCallsBeforeNext);
+  CHECK(ordinaryCallback.disconnected == 0);
+
+  TestCallback detachedCallback;
+  std::size_t detachedClockCalls = 0;
+  auto detached = SessionTestAccess::detached(
+      [&] {
+        ++detachedClockCalls;
+        return clockTime;
+      },
+      detachedCallback,
+      detachedCallback.factory,
+      SessionID(BeginString("FIX.4.2"), SenderCompID("EXACT"), TargetCompID("VENUE")),
+      dictionaries,
+      nonstop);
+  detached->setResponder(&detachedCallback);
+  SessionTestAccess::awaitLogon(*detached, lastTime, lastTime);
+  const auto detachedCallsBeforeNext = detachedClockCalls;
+  detached->next(candidateTime);
+  CHECK(detachedClockCalls == detachedCallsBeforeNext);
+  CHECK(detachedCallback.disconnected == 1);
 }
 
 TEST_CASE_METHOD(sessionFixture, "SessionTestCase") {

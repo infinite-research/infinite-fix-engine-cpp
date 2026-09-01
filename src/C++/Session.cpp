@@ -26,9 +26,93 @@
 #include "Session.h"
 #include "Values.h"
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <type_traits>
 
 namespace FIX {
+namespace {
+bool exactDeadlineReached(const UtcTimeStamp &now, const UtcTimeStamp &since, std::uint64_t seconds) {
+  const auto nowSeconds = now.getTimeT();
+  const auto sinceSeconds = since.getTimeT();
+  if (nowSeconds < sinceSeconds) {
+    return false;
+  }
+  using UnsignedTime = std::make_unsigned_t<time_t>;
+  UnsignedTime elapsed;
+  if constexpr (std::numeric_limits<time_t>::is_signed) {
+    if (sinceSeconds < 0 && nowSeconds >= 0) {
+      elapsed = static_cast<UnsignedTime>(nowSeconds) + static_cast<UnsignedTime>(-(sinceSeconds + 1)) + 1;
+    } else {
+      elapsed = static_cast<UnsignedTime>(nowSeconds - sinceSeconds);
+    }
+  } else {
+    elapsed = nowSeconds - sinceSeconds;
+  }
+  return elapsed >= seconds;
+}
+
+bool exactScaledDeadlineReached(
+    const UtcTimeStamp &now,
+    const UtcTimeStamp &since,
+    std::uint64_t value,
+    std::uint64_t numerator,
+    std::uint64_t denominator) {
+  if (value > (std::numeric_limits<std::uint64_t>::max() - (denominator - 1)) / numerator) {
+    return false;
+  }
+  return exactDeadlineReached(now, since, (value * numerator + denominator - 1) / denominator);
+}
+
+bool exactLogonTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto timeout = state.logonTimeout();
+  return timeout < 0 || exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(timeout));
+}
+
+bool exactLogoutTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto timeout = state.logoutTimeout();
+  return state.sentLogout()
+         && (timeout < 0 || exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(timeout)));
+}
+
+bool exactWithinHeartBeat(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0 && !exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+         && !exactDeadlineReached(now, state.lastReceivedTime(), static_cast<std::uint64_t>(heartbeat));
+}
+
+bool exactTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0
+         && exactScaledDeadlineReached(now, state.lastReceivedTime(), static_cast<std::uint64_t>(heartbeat), 12, 5);
+}
+
+bool exactNeedHeartbeat(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0 && exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+         && !state.testRequest();
+}
+
+bool exactNeedTestRequest(const SessionState &state, const UtcTimeStamp &now) {
+  const auto count = state.testRequest();
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  if (count < 0 || heartbeat <= 0) {
+    return false;
+  }
+  const auto requests = static_cast<std::uint64_t>(count) + 1;
+  if (requests > std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(heartbeat)) {
+    return false;
+  }
+  return exactScaledDeadlineReached(
+      now,
+      state.lastReceivedTime(),
+      requests * static_cast<std::uint64_t>(heartbeat),
+      6,
+      5);
+}
+} // namespace
+
 Session::Sessions Session::s_sessions;
 Session::SessionIDs Session::s_sessionIDs;
 Session::Sessions Session::s_registered;
@@ -92,7 +176,7 @@ Session::Session(
       m_sendNextExpectedMsgSeqNum(false),
       m_isNonStopSession(false),
       m_state(m_timestamper()),
-      m_dataDictionaryProvider(detached ? dataDictionaryProvider : dataDictionaryProvider.deepCopy()),
+      m_dataDictionaryProvider(dataDictionaryProvider),
       m_messageStoreFactory(messageStoreFactory),
       m_pLogFactory(pLogFactory),
       m_pResponder(0),
@@ -168,7 +252,9 @@ void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
       if (m_state.shouldSendLogon() && isLogonTime(scheduleNow)) {
         generateLogon();
         m_state.onEvent("Initiated logon request");
-      } else if (m_state.alreadySentLogon() && m_state.logonTimedOut(now)) {
+      } else if (
+          m_state.alreadySentLogon()
+          && (m_detached ? exactLogonTimedOut(m_state, now) : m_state.logonTimedOut(m_timestamper()))) {
         m_state.onEvent("Timed out waiting for logon response");
         disconnect();
       }
@@ -179,24 +265,24 @@ void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
       return;
     }
 
-    if (m_state.logoutTimedOut(now)) {
+    if (m_detached ? exactLogoutTimedOut(m_state, now) : m_state.logoutTimedOut(m_timestamper())) {
       m_state.onEvent("Timed out waiting for logout response");
       disconnect();
     }
 
-    if (m_state.withinHeartBeat(now)) {
+    if (m_detached ? exactWithinHeartBeat(m_state, now) : m_state.withinHeartBeat(m_timestamper())) {
       return;
     }
 
-    if (m_state.timedOut(now)) {
+    if (m_detached ? exactTimedOut(m_state, now) : m_state.timedOut(m_timestamper())) {
       m_state.onEvent("Timed out waiting for heartbeat");
       disconnect();
     } else {
-      if (m_state.needTestRequest(now)) {
+      if (m_detached ? exactNeedTestRequest(m_state, now) : m_state.needTestRequest(m_timestamper())) {
         generateTestRequest("TEST");
         m_state.testRequest(m_state.testRequest() + 1);
         m_state.onEvent("Sent test request TEST");
-      } else if (m_state.needHeartbeat(now)) {
+      } else if (m_detached ? exactNeedHeartbeat(m_state, now) : m_state.needHeartbeat(m_timestamper())) {
         generateHeartbeat();
       }
     }

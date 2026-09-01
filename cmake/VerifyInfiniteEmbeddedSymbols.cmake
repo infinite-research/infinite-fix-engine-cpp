@@ -14,6 +14,10 @@ if(NOT result EQUAL 0)
 endif()
 
 set(embedded_object "${CMAKE_CURRENT_BINARY_DIR}/irfq-infinite-dictionaries.o")
+file(REMOVE "${embedded_object}")
+if(EXISTS "${embedded_object}")
+  message(FATAL_ERROR "Could not remove stale embedded dictionary scratch object")
+endif()
 execute_process(
   COMMAND "${IRFQ_INFINITE_AR}" p "${IRFQ_INFINITE_ARCHIVE}" dictionaries.o
   RESULT_VARIABLE extract_result
@@ -27,6 +31,10 @@ execute_process(
   RESULT_VARIABLE sections_result
   OUTPUT_VARIABLE sections
   ERROR_VARIABLE sections_stderr)
+file(REMOVE "${embedded_object}")
+if(EXISTS "${embedded_object}")
+  message(FATAL_ERROR "Embedded dictionary scratch object persists after inspection")
+endif()
 if(NOT sections_result EQUAL 0)
   message(FATAL_ERROR "readelf sections failed: ${sections_stderr}")
 endif()
@@ -77,4 +85,7 @@ if(symbols MATCHES "_binary_[^\n]*(FIX40|FIX41|FIX42|FIX43|FIX44|FIX50|FIX50SP1|
 endif()
 if(NOT symbols MATCHES "[^\n]*GLOBAL[ \t]+HIDDEN[^\n]*irfq_infinite_embedded_dictionaries_v1")
   message(FATAL_ERROR "Embedded dictionary table is not hidden")
+endif()
+if(EXISTS "${embedded_object}")
+  message(FATAL_ERROR "Embedded dictionary scratch object persists after successful verification")
 endif()

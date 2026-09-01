@@ -88,7 +88,7 @@ public:
 
   const SessionID &getSessionID() const { return m_sessionID; }
   void setDataDictionaryProvider(const DataDictionaryProvider &dataDictionaryProvider) {
-    m_dataDictionaryProvider = dataDictionaryProvider.deepCopy();
+    m_dataDictionaryProvider = dataDictionaryProvider;
   }
   const DataDictionaryProvider &getDataDictionaryProvider() const { return m_dataDictionaryProvider; }
 

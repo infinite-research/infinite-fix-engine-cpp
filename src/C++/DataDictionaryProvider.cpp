@@ -28,22 +28,7 @@
 #include "Fields.h"
 
 namespace FIX {
-DataDictionaryProvider::DataDictionaryProvider(const DataDictionaryProvider &copy) = default;
-
-DataDictionaryProvider DataDictionaryProvider::deepCopy() const {
-  DataDictionaryProvider copy;
-  for (const auto &entry : m_transportDictionaries) {
-    copy.m_transportDictionaries.emplace(
-        entry.first,
-        entry.second ? std::make_shared<DataDictionary>(*entry.second) : nullptr);
-  }
-  for (const auto &entry : m_applicationDictionaries) {
-    copy.m_applicationDictionaries.emplace(
-        entry.first,
-        entry.second ? std::make_shared<DataDictionary>(*entry.second) : nullptr);
-  }
-  return copy;
-}
+DataDictionaryProvider::DataDictionaryProvider(const DataDictionaryProvider &copy) { *this = copy; }
 
 const DataDictionary &DataDictionaryProvider::getSessionDataDictionary(const BeginString &beginString) const
     EXCEPT(DataDictionaryNotFound) {
