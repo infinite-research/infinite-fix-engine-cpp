@@ -137,7 +137,7 @@ static int run_lifecycle(int apply, irfq_infinite_prepare_id_v2 *observed_prepar
   if (irfq_infinite_prepare_v2(create_response.session, &prepare_request, &pending)
           != IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2
       || (pending.prepare_id.high == 0 && pending.prepare_id.low == 0) || pending.step != 0 || pending.base_epoch != 1
-      || pending.base_revision != 0 || pending.result_epoch != 1 || pending.result_revision != 1
+      || pending.base_revision != 0
       || memcmp(pending.event_identity_sha256, event_identity_sha256, sizeof(event_identity_sha256)) != 0
       || pending.required_output_capacity == 0
       || pending.required_output_capacity > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2) {

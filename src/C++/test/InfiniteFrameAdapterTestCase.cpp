@@ -401,6 +401,48 @@ struct PlanBuffers {
   }
 };
 
+irfq_infinite_prepare_response_v2 poisonedPlanResponse(PlanBuffers &buffers) {
+  irfq_infinite_prepare_response_v2 value;
+  std::memset(&value, 0xa5, sizeof(value));
+  value.header.structure_size = sizeof(value);
+  value.header.abi_version = IRFQ_INFINITE_FRAME_ADAPTER_ABI_VERSION_V2;
+  value.header.reserved = 0;
+  value.native_state = {buffers.state.data(), buffers.state.size(), 0};
+  value.output = {buffers.output.data(), buffers.output.size(), 0};
+  value.actions = buffers.actions.data();
+  value.action_capacity = buffers.actions.size();
+  return value;
+}
+
+void checkZeroPlanPayload(const irfq_infinite_prepare_response_v2 &response) {
+  const std::array<std::uint8_t, sizeof(response) - sizeof(response.header)> zero{};
+  CHECK(
+      std::memcmp(reinterpret_cast<const std::uint8_t *>(&response) + sizeof(response.header), zero.data(), zero.size())
+      == 0);
+}
+
+void checkNeedOutputPlanPayload(
+    const irfq_infinite_prepare_response_v2 &response,
+    const irfq_infinite_prepare_response_v2 &identity,
+    std::uint64_t requiredOutputCapacity) {
+  irfq_infinite_prepare_response_v2 expected{};
+  expected.prepare_id = identity.prepare_id;
+  expected.step = identity.step;
+  expected.kind = identity.kind;
+  expected.stage = identity.stage;
+  expected.event = identity.event;
+  std::copy_n(identity.event_identity_sha256, 32, expected.event_identity_sha256);
+  expected.base_epoch = identity.base_epoch;
+  expected.base_revision = identity.base_revision;
+  expected.required_output_capacity = requiredOutputCapacity;
+  CHECK(
+      std::memcmp(
+          reinterpret_cast<const std::uint8_t *>(&response) + sizeof(response.header),
+          reinterpret_cast<const std::uint8_t *>(&expected) + sizeof(expected.header),
+          sizeof(response) - sizeof(response.header))
+      == 0);
+}
+
 irfq_infinite_session_v2 *stockLoggedOnSession(
     const std::vector<std::uint8_t> &config,
     std::uint64_t senderSequence = 2,
@@ -1123,8 +1165,7 @@ int runGuardedHeaderCall(CallKind kind) {
     init(resume);
     const auto status = kind == CallKind::Prepare ? irfq_infinite_prepare_v2(nullptr, &prepare, response)
                                                   : irfq_infinite_resume_v2(nullptr, &resume, response);
-    const bool expected
-        = status == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2 && header->status == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2;
+    const bool expected = status == IRFQ_INFINITE_STATUS_ABI_MISMATCH_V2;
     munmap(pages, static_cast<std::size_t>(pageSize) * 2);
     _exit(expected ? static_cast<int>(status) : 254);
   }
@@ -5152,7 +5193,7 @@ TEST_CASE(
       result.output.capacity = requiredCapacity - 1;
       REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2);
       CHECK(result.step == pendingStep);
-      CHECK(result.required_output_capacity > result.output.capacity);
+      CHECK(result.required_output_capacity > requiredCapacity - 1);
       const auto exactCapacity = result.required_output_capacity;
       result = resultBuffers.response();
       result.output.capacity = exactCapacity;
@@ -9094,11 +9135,22 @@ TEST_CASE(
   resume.prepare_id = initial.prepare_id;
   resume.kind = IRFQ_INFINITE_RESUME_OUTPUT_V2;
   PlanBuffers shortBuffers;
-  auto shortResult = shortBuffers.response();
-  shortResult.output.capacity = initial.required_output_capacity - 1;
+  shortBuffers.state.fill(0x5a);
+  shortBuffers.output.fill(0x5a);
+  std::memset(shortBuffers.actions.data(), 0x5a, sizeof(shortBuffers.actions));
+  auto shortResult = poisonedPlanResponse(shortBuffers);
+  const auto shortCapacity = initial.required_output_capacity - 1;
+  shortResult.output.capacity = shortCapacity;
   REQUIRE(irfq_infinite_resume_v2(session, &resume, &shortResult) == IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2);
   CHECK(shortResult.step == 0);
   CHECK(shortResult.required_output_capacity == initial.required_output_capacity);
+  checkNeedOutputPlanPayload(shortResult, initial, initial.required_output_capacity);
+  CHECK(std::all_of(shortBuffers.state.begin(), shortBuffers.state.end(), [](auto byte) { return byte == 0x5a; }));
+  CHECK(std::all_of(shortBuffers.output.begin(), shortBuffers.output.end(), [](auto byte) { return byte == 0x5a; }));
+  const auto *shortActionBytes = reinterpret_cast<const std::uint8_t *>(shortBuffers.actions.data());
+  CHECK(std::all_of(shortActionBytes, shortActionBytes + sizeof(shortBuffers.actions), [](auto byte) {
+    return byte == 0x5a;
+  }));
 
   PlanBuffers exactBuffers;
   auto exact = exactBuffers.response();
@@ -9191,10 +9243,20 @@ TEST_CASE(
   request.now_utc_ns = 5;
   request.payload = {payload.data(), payload.size()};
   PlanBuffers insufficientBuffers;
-  auto insufficient = insufficientBuffers.response();
+  insufficientBuffers.state.fill(0x5a);
+  insufficientBuffers.output.fill(0x5a);
+  auto insufficient = poisonedPlanResponse(insufficientBuffers);
   insufficient.actions = nullptr;
   insufficient.action_capacity = 0;
   REQUIRE(irfq_infinite_prepare_v2(session, &request, &insufficient) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  CHECK(insufficient.header.status == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  checkZeroPlanPayload(insufficient);
+  CHECK(std::all_of(insufficientBuffers.state.begin(), insufficientBuffers.state.end(), [](auto byte) {
+    return byte == 0x5a;
+  }));
+  CHECK(std::all_of(insufficientBuffers.output.begin(), insufficientBuffers.output.end(), [](auto byte) {
+    return byte == 0x5a;
+  }));
 
   PlanBuffers buffers;
   auto result = buffers.response();
@@ -12046,7 +12108,13 @@ TEST_CASE(
       resume.input_source = pending.input_source;
       resume.input_source_bytes = {inbound.payload.data(), inbound.payload.size()};
       PlanBuffers invalidBuffers;
-      auto invalid = invalidBuffers.response();
+      const auto actionCapacityFailure = variant == "action-capacity";
+      if (actionCapacityFailure) {
+        invalidBuffers.state.fill(0x5a);
+        invalidBuffers.output.fill(0x5a);
+        std::memset(invalidBuffers.actions.data(), 0x5a, sizeof(invalidBuffers.actions));
+      }
+      auto invalid = actionCapacityFailure ? poisonedPlanResponse(invalidBuffers) : invalidBuffers.response();
       std::string dispositionId;
       std::uint8_t dispositionMarker{'G'};
       if (variant == "step") {
@@ -12087,6 +12155,20 @@ TEST_CASE(
       const auto expected
           = variant == "step" ? IRFQ_INFINITE_STATUS_STALE_PLAN_V2 : IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2;
       REQUIRE(irfq_infinite_resume_v2(session, &resume, &invalid) == expected);
+      if (actionCapacityFailure) {
+        CHECK(invalid.header.status == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+        checkZeroPlanPayload(invalid);
+        CHECK(std::all_of(invalidBuffers.state.begin(), invalidBuffers.state.end(), [](auto byte) {
+          return byte == 0x5a;
+        }));
+        CHECK(std::all_of(invalidBuffers.output.begin(), invalidBuffers.output.end(), [](auto byte) {
+          return byte == 0x5a;
+        }));
+        const auto *actionBytes = reinterpret_cast<const std::uint8_t *>(invalidBuffers.actions.data());
+        CHECK(std::all_of(actionBytes, actionBytes + sizeof(invalidBuffers.actions), [](auto byte) {
+          return byte == 0x5a;
+        }));
+      }
       resume.step = pending.step;
       PlanBuffers retryBuffers;
       auto retry = retryBuffers.response();

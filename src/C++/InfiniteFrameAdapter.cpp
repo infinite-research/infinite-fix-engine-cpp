@@ -1394,6 +1394,10 @@ irfq_infinite_status_v2 describePlan(
     const Profile &profile,
     const PrepareOutputView &view,
     irfq_infinite_prepare_response_v2 *response) noexcept {
+  const auto fail = [response](irfq_infinite_status_v2 status) noexcept {
+    clearResponse(response);
+    return publish(response, status);
+  };
   response->prepare_id = plan.id;
   response->step = plan.step;
   response->kind = plan.kind;
@@ -1413,7 +1417,7 @@ irfq_infinite_status_v2 describePlan(
     std::copy(plan.subject.begin(), plan.subject.end(), response->subject_sha256);
     if (plan.pendingStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2
         && !copyMessageType(plan.msgType, response->msg_type_length, response->msg_type)) {
-      return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      return fail(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
     }
     response->input_source = plan.inputSource;
     response->input_item_index = plan.inputItemIndex;
@@ -1421,18 +1425,12 @@ irfq_infinite_status_v2 describePlan(
     response->input_length = plan.inputLength;
     return publish(response, plan.pendingStatus);
   }
-  response->result_epoch = plan.resultEpoch;
-  response->result_revision = plan.resultRevision;
-  response->native_state = view.state;
-  response->output = view.output;
-  response->actions = view.actions;
-  response->action_capacity = view.actionCapacity;
   if (view.output.capacity < plan.output.size()) {
     response->required_output_capacity = plan.output.size();
     return publish(response, IRFQ_INFINITE_STATUS_NEED_OUTPUT_V2);
   }
   if (view.actionCapacity < plan.actions.size()) {
-    return publish(response, IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+    return fail(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
   }
   const irfq_infinite_slice_v2 state{plan.state.data(), plan.state.size()};
   if (plan.output.size() > IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2 || plan.actions.size() > IRFQ_INFINITE_MAX_ACTIONS_V2
@@ -1447,8 +1445,14 @@ irfq_infinite_status_v2 describePlan(
                            return byte >= 0x21 && byte <= 0x7e;
                          }));
          })) {
-    return publish(response, IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
+    return fail(IRFQ_INFINITE_STATUS_INTERNAL_ERROR_V2);
   }
+  response->result_epoch = plan.resultEpoch;
+  response->result_revision = plan.resultRevision;
+  response->native_state = view.state;
+  response->output = view.output;
+  response->actions = view.actions;
+  response->action_capacity = view.actionCapacity;
   std::copy(plan.state.begin(), plan.state.end(), response->native_state.data);
   response->native_state.length = plan.state.size();
   std::copy(plan.output.begin(), plan.output.end(), response->output.data);
