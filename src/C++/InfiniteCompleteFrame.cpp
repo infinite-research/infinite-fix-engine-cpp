@@ -106,8 +106,8 @@ InfiniteDeclaredFrameScanResult scanInfiniteDeclaredFrame(
               || cursor.checksumBegin - cursor.frameStart > MAX_FRAME_BYTES))) {
     return InfiniteDeclaredFrameScanResult::Malformed;
   }
-  if (cursor.stage == 0 && cursor.scanOffset == 0) {
-    cursor.scanOffset = cursor.frameStart + 2;
+  if (cursor.stage == 0 && cursor.scanOffset < cursor.frameStart + 2) {
+    cursor.scanOffset = std::min(length, cursor.frameStart + 2);
   }
   if (cursor.stage == 0) {
     const auto available = length - cursor.frameStart;

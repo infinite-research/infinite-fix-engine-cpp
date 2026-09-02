@@ -6200,7 +6200,7 @@ TEST_CASE(
   const auto combined = first + second;
   irfq_infinite_scan_cursor_v2 cursor{};
 
-  for (std::size_t length = 1; length < first.size(); ++length) {
+  for (std::size_t length = 0; length < first.size(); ++length) {
     INFO("fragment length=" << length << " scan offset=" << cursor.scan_offset << " stage=" << cursor.stage);
     std::string relocated(combined.data(), length);
     irfq_infinite_scan_request_v2 request{};
@@ -6210,6 +6210,15 @@ TEST_CASE(
     irfq_infinite_scan_response_v2 response{};
     init(response);
     REQUIRE(irfq_infinite_scan_v2(&request, &response) == IRFQ_INFINITE_STATUS_NEED_MORE_V2);
+    CHECK(response.cursor.scan_offset <= request.input.length);
+    CHECK(response.cursor.checksum_begin <= request.input.length);
+    if (length <= 2) {
+      CHECK(response.cursor.scan_offset == length);
+      CHECK(response.cursor.body_length == 0);
+      CHECK(response.cursor.checksum_begin == 0);
+      CHECK(response.cursor.stage == IRFQ_INFINITE_SCAN_BEGIN_STRING_V2);
+      CHECK(response.cursor.body_length_has_digit == IRFQ_INFINITE_NO_V2);
+    }
     cursor = response.cursor;
   }
 
@@ -6335,7 +6344,7 @@ TEST_CASE(
   init(response);
 
   const std::array<irfq_infinite_scan_cursor_v2, 5> forged{{
-      {1, 0, 0, IRFQ_INFINITE_SCAN_BEGIN_STRING_V2, IRFQ_INFINITE_NO_V2},
+      {1, 0, 0, IRFQ_INFINITE_SCAN_BODY_LENGTH_PREFIX_V2, IRFQ_INFINITE_NO_V2},
       {message.size(), 0, 0, IRFQ_INFINITE_SCAN_BEGIN_STRING_V2, IRFQ_INFINITE_NO_V2},
       {0, 1, 0, IRFQ_INFINITE_SCAN_BEGIN_STRING_V2, IRFQ_INFINITE_NO_V2},
       {0, 0, 0, IRFQ_INFINITE_SCAN_BODY_V2, IRFQ_INFINITE_NO_V2},
