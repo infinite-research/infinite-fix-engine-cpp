@@ -39,9 +39,13 @@
 #include <functional>
 #include <map>
 #include <queue>
+#include <stdexcept>
 #include <utility>
 
 namespace FIX {
+class InfiniteSessionPlanner;
+class SessionTestAccess;
+
 /// Maintains the state and implements the logic of a %FIX %session.
 class Session {
 public:
@@ -71,6 +75,9 @@ public:
   bool receivedLogon() { return m_state.receivedLogon(); }
   bool isLoggedOn() { return receivedLogon() && sentLogon(); }
   void reset() EXCEPT(IOException) {
+    if (m_detached) {
+      throw std::logic_error("Detached Session reset");
+    }
     generateLogout();
     disconnect();
     m_state.reset(m_timestamper());
@@ -205,7 +212,7 @@ public:
     if (m_refreshOnLogon) {
       refresh();
     }
-    if (!checkSessionTime(m_timestamper())) {
+    if (!m_detached && !checkSessionTime(m_timestamper())) {
       reset();
     }
     m_pResponder = pR;
@@ -224,11 +231,26 @@ public:
   const MessageStore *getStore() { return &m_state; }
 
 private:
+  friend class InfiniteSessionPlanner;
+  friend class SessionTestAccess;
+
+  Session(
+      std::function<UtcTimeStamp()> timestamper,
+      Application &,
+      MessageStoreFactory &,
+      const SessionID &,
+      const DataDictionaryProvider &,
+      const TimeRange &,
+      int heartBtInt,
+      LogFactory *pLogFactory,
+      bool detached);
+
   typedef std::map<SessionID, Session *> Sessions;
   typedef std::set<SessionID> SessionIDs;
 
   static bool addSession(Session &);
   static void removeSession(Session &);
+  void next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow);
 
   bool send(const std::string &);
   bool sendRaw(Message &, SEQNUM msgSeqNum = 0);
@@ -331,6 +353,7 @@ private:
   MessageStoreFactory &m_messageStoreFactory;
   LogFactory *m_pLogFactory;
   Responder *m_pResponder;
+  bool m_detached;
   Mutex m_mutex;
 
   static Sessions s_sessions;

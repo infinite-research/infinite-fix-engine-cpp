@@ -35,7 +35,11 @@
 #endif
 
 #ifndef _MSC_VER
+#ifdef QUICKFIX_CMAKE_BUILD
+#include <quickfix/Allocator.h>
+#else
 #include "Allocator.h"
+#endif
 #endif
 
 #include "Except.h"

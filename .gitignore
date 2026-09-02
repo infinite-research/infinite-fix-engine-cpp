@@ -68,6 +68,8 @@ build*
 CMakeFiles
 CMakeCache.txt
 *.cmake
+!cmake/PackageInfiniteAdapter.cmake
+!cmake/VerifyInfiniteAdapterPackage.cmake
 .vscode
 .cache
 compile_commands.json

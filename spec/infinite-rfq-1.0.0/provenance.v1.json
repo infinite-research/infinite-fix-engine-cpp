@@ -1,0 +1,77 @@
+{
+  "schema": "irfq.fix-dictionary-provenance.v1",
+  "profile": {
+    "id": "INFINITE-RFQ-1.0.0",
+    "begin_string": "FIXT.1.1",
+    "default_appl_ver_id": "10",
+    "default_appl_ext_id": 299,
+    "default_cstm_appl_ver_id": "INFINITE-RFQ-1.0.0"
+  },
+  "runtime": {
+    "kind": "reproduction-contract",
+    "required": {
+      "implementation": "CPython",
+      "version": "3.14.6",
+      "image": "docker.io/library/python@sha256:f70215e5dbe2a47dee6d23f9c6d358bf3c148f59cce2fd165b61118e9d80f2bb",
+      "platform": "linux/amd64"
+    }
+  },
+  "inputs": [
+    {
+      "id": "FIXTradingCommunity-FIXTSession-aeb6d6d7",
+      "path": "docs/fix-dictionaries/sources/FIX Standard/FIXTSession.xml",
+      "byte_length": 144300,
+      "sha256": "6c639185022fd6d88aa3959a59ad2ce11c77be791a6416d3b3f662ed3be170a3"
+    },
+    {
+      "id": "FIXTradingCommunity-OrchestraFIXLatest-EP299-aeb6d6d7",
+      "path": "docs/fix-dictionaries/sources/FIX Standard/OrchestraFIXLatest.xml",
+      "byte_length": 9785062,
+      "sha256": "077b954850a8c6b399a0377d36c0ec1bbc996fa9a78c255468affed9cff56110"
+    },
+    {
+      "id": "INFINITE-RFQ-1.0.0-profile",
+      "path": "docs/fix-dictionaries/profile-infinite-rfq-1.0.0.v1.json",
+      "byte_length": 46289,
+      "sha256": "a5f254814bd235394d7fc848486a16432afd8b0e924325cf21166273169d94dc"
+    },
+    {
+      "id": "INFINITE-PRIVATE-M1-overlay",
+      "path": "docs/fix-dictionaries/overlay-infinite-private-m1.v1.json",
+      "byte_length": 4227,
+      "sha256": "2013a3a810a436b55d446d284f21681e7476aea8f1af89c39d7f6ce57c223ab2"
+    },
+    {
+      "id": "stdlib-generator",
+      "path": "docs/fix-dictionaries/generate.py",
+      "byte_length": 72805,
+      "sha256": "14d7f5a07315456260e58d4b652c5f1d52fabb5b02ee6739f7a73e120a25efc2"
+    },
+    {
+      "id": "license-inventory",
+      "path": "docs/fix-dictionaries/licenses/license-inventory.v1.json",
+      "byte_length": 1076,
+      "sha256": "f76489fe025d794f38f394f34569d899235af925ad24444ebba555f09710de31"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "INFINITE-FIXT11",
+      "path": "docs/fix-dictionaries/generated/INFINITE-FIXT11.xml",
+      "byte_length": 9242,
+      "sha256": "75ecae3957f5f5b0cc8613ac8976bb33dfe3e2edf012cdf36087b349ad5f85e5"
+    },
+    {
+      "id": "INFINITE-RFQ-1.0.0-EP299",
+      "path": "docs/fix-dictionaries/generated/INFINITE-RFQ-1.0.0-EP299.xml",
+      "byte_length": 79971,
+      "sha256": "d9ce75d206573a391dbcb83a61665f3844916cfd63006d6ab99d645bac6d2551"
+    }
+  ],
+  "license_inventory": {
+    "schema": "irfq.fix-license-inventory.v1",
+    "path": "docs/fix-dictionaries/licenses/license-inventory.v1.json",
+    "byte_length": 1076,
+    "sha256": "f76489fe025d794f38f394f34569d899235af925ad24444ebba555f09710de31"
+  }
+}

@@ -26,9 +26,93 @@
 #include "Session.h"
 #include "Values.h"
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <type_traits>
 
 namespace FIX {
+namespace {
+bool exactDeadlineReached(const UtcTimeStamp &now, const UtcTimeStamp &since, std::uint64_t seconds) {
+  const auto nowSeconds = now.getTimeT();
+  const auto sinceSeconds = since.getTimeT();
+  if (nowSeconds < sinceSeconds) {
+    return false;
+  }
+  using UnsignedTime = std::make_unsigned_t<time_t>;
+  UnsignedTime elapsed;
+  if constexpr (std::numeric_limits<time_t>::is_signed) {
+    if (sinceSeconds < 0 && nowSeconds >= 0) {
+      elapsed = static_cast<UnsignedTime>(nowSeconds) + static_cast<UnsignedTime>(-(sinceSeconds + 1)) + 1;
+    } else {
+      elapsed = static_cast<UnsignedTime>(nowSeconds - sinceSeconds);
+    }
+  } else {
+    elapsed = nowSeconds - sinceSeconds;
+  }
+  return elapsed >= seconds;
+}
+
+bool exactScaledDeadlineReached(
+    const UtcTimeStamp &now,
+    const UtcTimeStamp &since,
+    std::uint64_t value,
+    std::uint64_t numerator,
+    std::uint64_t denominator) {
+  if (value > (std::numeric_limits<std::uint64_t>::max() - (denominator - 1)) / numerator) {
+    return false;
+  }
+  return exactDeadlineReached(now, since, (value * numerator + denominator - 1) / denominator);
+}
+
+bool exactLogonTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto timeout = state.logonTimeout();
+  return timeout < 0 || exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(timeout));
+}
+
+bool exactLogoutTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto timeout = state.logoutTimeout();
+  return state.sentLogout()
+         && (timeout < 0 || exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(timeout)));
+}
+
+bool exactWithinHeartBeat(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0 && !exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+         && !exactDeadlineReached(now, state.lastReceivedTime(), static_cast<std::uint64_t>(heartbeat));
+}
+
+bool exactTimedOut(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0
+         && exactScaledDeadlineReached(now, state.lastReceivedTime(), static_cast<std::uint64_t>(heartbeat), 12, 5);
+}
+
+bool exactNeedHeartbeat(const SessionState &state, const UtcTimeStamp &now) {
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  return heartbeat > 0 && exactDeadlineReached(now, state.lastSentTime(), static_cast<std::uint64_t>(heartbeat))
+         && !state.testRequest();
+}
+
+bool exactNeedTestRequest(const SessionState &state, const UtcTimeStamp &now) {
+  const auto count = state.testRequest();
+  const auto heartbeat = static_cast<int>(state.heartBtInt());
+  if (count < 0 || heartbeat <= 0) {
+    return false;
+  }
+  const auto requests = static_cast<std::uint64_t>(count) + 1;
+  if (requests > std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(heartbeat)) {
+    return false;
+  }
+  return exactScaledDeadlineReached(
+      now,
+      state.lastReceivedTime(),
+      requests * static_cast<std::uint64_t>(heartbeat),
+      6,
+      5);
+}
+} // namespace
+
 Session::Sessions Session::s_sessions;
 Session::SessionIDs Session::s_sessionIDs;
 Session::Sessions Session::s_registered;
@@ -50,6 +134,27 @@ Session::Session(
     const TimeRange &sessionTime,
     int heartBtInt,
     LogFactory *pLogFactory)
+    : Session(
+          std::move(timestamper),
+          application,
+          messageStoreFactory,
+          sessionID,
+          dataDictionaryProvider,
+          sessionTime,
+          heartBtInt,
+          pLogFactory,
+          false) {}
+
+Session::Session(
+    std::function<UtcTimeStamp()> timestamper,
+    Application &application,
+    MessageStoreFactory &messageStoreFactory,
+    const SessionID &sessionID,
+    const DataDictionaryProvider &dataDictionaryProvider,
+    const TimeRange &sessionTime,
+    int heartBtInt,
+    LogFactory *pLogFactory,
+    bool detached)
     : m_timestamper(std::move(timestamper)),
       m_application(application),
       m_sessionID(sessionID),
@@ -74,7 +179,8 @@ Session::Session(
       m_dataDictionaryProvider(dataDictionaryProvider),
       m_messageStoreFactory(messageStoreFactory),
       m_pLogFactory(pLogFactory),
-      m_pResponder(0) {
+      m_pResponder(0),
+      m_detached(detached) {
   m_state.heartBtInt(heartBtInt);
   m_state.initiate(heartBtInt != 0);
   m_state.store(m_messageStoreFactory.create(m_timestamper(), m_sessionID));
@@ -82,17 +188,21 @@ Session::Session(
     m_state.log(m_pLogFactory->create(m_sessionID));
   }
 
-  if (!checkSessionTime(m_timestamper())) {
+  if (!m_detached && !checkSessionTime(m_timestamper())) {
     m_state.reset(m_timestamper());
   }
 
-  addSession(*this);
-  m_application.onCreate(m_sessionID);
-  m_state.onEvent("Created session");
+  if (!m_detached) {
+    addSession(*this);
+    m_application.onCreate(m_sessionID);
+    m_state.onEvent("Created session");
+  }
 }
 
 Session::~Session() {
-  removeSession(*this);
+  if (!m_detached) {
+    removeSession(*this);
+  }
   m_messageStoreFactory.destroy(m_state.store());
   if (m_pLogFactory && m_state.log()) {
     m_pLogFactory->destroy(m_state.log());
@@ -116,14 +226,18 @@ void Session::fill(Header &header) {
   insertSendingTime(header);
 }
 
-void Session::next(const UtcTimeStamp &now) {
+void Session::next(const UtcTimeStamp &now) { next(now, now); }
+
+void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
   try {
-    if (!checkSessionTime(now)) {
-      reset();
+    if (!checkSessionTime(scheduleNow)) {
+      if (!m_detached) {
+        reset();
+      }
       return;
     }
 
-    if (!isEnabled() || !isLogonTime(now)) {
+    if (!isEnabled() || !isLogonTime(scheduleNow)) {
       if (isLoggedOn()) {
         if (!m_state.sentLogout()) {
           m_state.onEvent("Initiated logout request");
@@ -135,10 +249,12 @@ void Session::next(const UtcTimeStamp &now) {
     }
 
     if (!m_state.receivedLogon()) {
-      if (m_state.shouldSendLogon() && isLogonTime(now)) {
+      if (m_state.shouldSendLogon() && isLogonTime(scheduleNow)) {
         generateLogon();
         m_state.onEvent("Initiated logon request");
-      } else if (m_state.alreadySentLogon() && m_state.logonTimedOut(m_timestamper())) {
+      } else if (
+          m_state.alreadySentLogon()
+          && (m_detached ? exactLogonTimedOut(m_state, now) : m_state.logonTimedOut(m_timestamper()))) {
         m_state.onEvent("Timed out waiting for logon response");
         disconnect();
       }
@@ -149,24 +265,24 @@ void Session::next(const UtcTimeStamp &now) {
       return;
     }
 
-    if (m_state.logoutTimedOut(m_timestamper())) {
+    if (m_detached ? exactLogoutTimedOut(m_state, now) : m_state.logoutTimedOut(m_timestamper())) {
       m_state.onEvent("Timed out waiting for logout response");
       disconnect();
     }
 
-    if (m_state.withinHeartBeat(m_timestamper())) {
+    if (m_detached ? exactWithinHeartBeat(m_state, now) : m_state.withinHeartBeat(m_timestamper())) {
       return;
     }
 
-    if (m_state.timedOut(m_timestamper())) {
+    if (m_detached ? exactTimedOut(m_state, now) : m_state.timedOut(m_timestamper())) {
       m_state.onEvent("Timed out waiting for heartbeat");
       disconnect();
     } else {
-      if (m_state.needTestRequest(m_timestamper())) {
+      if (m_detached ? exactNeedTestRequest(m_state, now) : m_state.needTestRequest(m_timestamper())) {
         generateTestRequest("TEST");
         m_state.testRequest(m_state.testRequest() + 1);
         m_state.onEvent("Sent test request TEST");
-      } else if (m_state.needHeartbeat(m_timestamper())) {
+      } else if (m_detached ? exactNeedHeartbeat(m_state, now) : m_state.needHeartbeat(m_timestamper())) {
         generateHeartbeat();
       }
     }
@@ -177,8 +293,10 @@ void Session::next(const UtcTimeStamp &now) {
 }
 
 void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
-  logon.getHeader().getField<SenderCompID>();
-  logon.getHeader().getField<TargetCompID>();
+  SenderCompID senderCompId;
+  TargetCompID targetCompId;
+  logon.getHeader().getField(senderCompId);
+  logon.getHeader().getField(targetCompId);
 
   if (m_refreshOnLogon) {
     refresh();
@@ -202,7 +320,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
 
   if (m_state.receivedReset()) {
     m_state.onEvent("Logon contains ResetSeqNumFlag=Y, reseting sequence numbers to 1");
-    if (!m_state.sentReset()) {
+    if (!m_detached && !m_state.sentReset()) {
       m_state.reset(m_timestamper());
     }
   }
@@ -213,7 +331,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
     return;
   }
 
-  if (!m_state.initiate() && m_resetOnLogon) {
+  if (!m_detached && !m_state.initiate() && m_resetOnLogon) {
     m_state.reset(m_timestamper());
   }
 
@@ -250,7 +368,8 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
   m_state.sentReset(false);
   m_state.receivedReset(false);
 
-  auto const &msgSeqNum = logon.getHeader().getField<MsgSeqNum>();
+  MsgSeqNum msgSeqNum;
+  logon.getHeader().getField(msgSeqNum);
   if (isTargetTooHigh(msgSeqNum) && !resetSeqNumFlag) {
     if (m_sendNextExpectedMsgSeqNum) {
       m_state.onEvent(
@@ -322,7 +441,7 @@ void Session::nextLogout(const Message &logout, const UtcTimeStamp &now) {
   }
 
   m_state.incrNextTargetMsgSeqNum();
-  if (m_resetOnLogout) {
+  if (!m_detached && m_resetOnLogout) {
     m_state.reset(m_timestamper());
   }
   disconnect();
@@ -372,8 +491,10 @@ void Session::nextResendRequest(const Message &resendRequest, const UtcTimeStamp
 
   Locker l(m_mutex);
 
-  auto beginSeqNo = resendRequest.getField<BeginSeqNo>();
-  auto endSeqNo = resendRequest.getField<EndSeqNo>();
+  BeginSeqNo beginSeqNo;
+  EndSeqNo endSeqNo;
+  resendRequest.getField(beginSeqNo);
+  resendRequest.getField(endSeqNo);
 
   m_state.onEvent(
       "Received ResendRequest FROM: " + SEQNUM_CONVERTOR::convert(beginSeqNo)
@@ -564,7 +685,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
         ResetSeqNumFlag resetSeqNumFlag(false);
         message.getFieldIfSet(resetSeqNumFlag);
 
-        if (resetSeqNumFlag) {
+        if (!m_detached && resetSeqNumFlag) {
           m_state.reset(m_timestamper());
           message.getHeader().setField(MsgSeqNum(getExpectedSenderNum()));
         }
@@ -578,7 +699,7 @@ bool Session::sendRaw(Message &message, SEQNUM num) {
       }
 
       if (msgType == MsgType_Logon || msgType == MsgType_Logout || msgType == MsgType_ResendRequest
-          || msgType == MsgType_SequenceReset || isLoggedOn()) {
+          || msgType == MsgType_SequenceReset || (m_detached && msgType == MsgType_Reject) || isLoggedOn()) {
         send(messageString);
       }
     } else {
@@ -639,7 +760,7 @@ void Session::disconnect() {
   m_state.sentReset(false);
   m_state.clearQueue();
   m_state.logoutReason();
-  if (m_resetOnDisconnect) {
+  if (!m_detached && m_resetOnDisconnect) {
     m_state.reset(m_timestamper());
   }
 
@@ -648,8 +769,10 @@ void Session::disconnect() {
 
 bool Session::resend(Message &message) {
   Header &header = message.getHeader();
-  auto const &sendingTime = header.getField<SendingTime>();
-  header.getField<MsgSeqNum>();
+  SendingTime sendingTime;
+  MsgSeqNum msgSeqNum;
+  header.getField(sendingTime);
+  header.getField(msgSeqNum);
   insertOrigSendingTime(header, sendingTime);
   header.setField(PossDupFlag(true));
   insertSendingTime(header);
@@ -663,7 +786,8 @@ bool Session::resend(Message &message) {
 }
 
 void Session::persist(const Message &message, const std::string &messageString) EXCEPT(IOException) {
-  auto const &msgSeqNum = message.getHeader().getField<MsgSeqNum>();
+  MsgSeqNum msgSeqNum;
+  message.getHeader().getField(msgSeqNum);
   if (m_persistMessages) {
     m_state.set(msgSeqNum, messageString);
   }
@@ -681,7 +805,7 @@ void Session::generateLogon() {
   if (m_refreshOnLogon) {
     refresh();
   }
-  if (m_resetOnLogon) {
+  if (!m_detached && m_resetOnLogon) {
     m_state.reset(m_timestamper());
   }
   if (shouldSendReset()) {
@@ -708,7 +832,9 @@ void Session::generateLogon(const Message &aLogon) {
   if (m_state.receivedReset()) {
     logon.setField(ResetSeqNumFlag(true));
   }
-  logon.setField(aLogon.getField<HeartBtInt>());
+  HeartBtInt heartBtInt;
+  aLogon.getField(heartBtInt);
+  logon.setField(heartBtInt);
   if (m_sendNextExpectedMsgSeqNum) {
     logon.setField(NextExpectedMsgSeqNum(
         getExpectedTargetNum() + 1)); // +1 because incoming Logon did not increment the target SeqNum yet
@@ -721,7 +847,7 @@ void Session::generateLogon(const Message &aLogon) {
 void Session::generateResendRequest(const BeginString &beginString, const MsgSeqNum &msgSeqNum) {
   Message resendRequest = newMessage(MsgType(MsgType_ResendRequest));
 
-  BeginSeqNo beginSeqNo((int)getExpectedTargetNum());
+  BeginSeqNo beginSeqNo(getExpectedTargetNum());
   EndSeqNo endSeqNo(msgSeqNum - 1);
   if (beginString >= FIX::BeginString_FIX42) {
     endSeqNo = 0;
@@ -748,7 +874,9 @@ void Session::generateSequenceReset(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
   sequenceReset.setField(newSeqNo);
   fill(sequenceReset.getHeader());
 
-  insertOrigSendingTime(sequenceReset.getHeader(), sequenceReset.getHeader().getField<SendingTime>());
+  SendingTime sendingTime;
+  sequenceReset.getHeader().getField(sendingTime);
+  insertOrigSendingTime(sequenceReset.getHeader(), sendingTime);
   sequenceReset.getHeader().setField(MsgSeqNum(beginSeqNo));
   sequenceReset.setField(GapFillFlag(true));
   sendRaw(sequenceReset, beginSeqNo);
@@ -767,7 +895,9 @@ void Session::generateHeartbeat(const Message &testRequest) {
 
   fill(heartbeat.getHeader());
   try {
-    heartbeat.setField(testRequest.getField<TestReqID>());
+    TestReqID testRequestId;
+    testRequest.getField(testRequestId);
+    heartbeat.setField(testRequestId);
   } catch (FieldNotFound &) {}
 
   sendRaw(heartbeat);
@@ -793,7 +923,8 @@ void Session::generateReject(const Message &message, int err, int field) {
 
   MsgSeqNum msgSeqNum;
 
-  auto const &msgType = message.getHeader().getField<MsgType>();
+  MsgType msgType;
+  message.getHeader().getField(msgType);
   if (message.getHeader().getFieldIfSet(msgSeqNum)) {
     if (msgSeqNum.getString() != "") {
       reject.setField(RefSeqNum(msgSeqNum));
@@ -851,6 +982,11 @@ void Session::generateReject(const Message &message, int err, int field) {
   case SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP:
     reason = SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP_TEXT;
     break;
+  case SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION:
+    if (m_detached) {
+      reason = "Invalid or unsupported application version";
+    }
+    break;
   };
 
   if (reason && (field || err == SessionRejectReason_INVALID_TAG_NUMBER)) {
@@ -864,7 +1000,7 @@ void Session::generateReject(const Message &message, int err, int field) {
     m_state.onEvent("Message " + msgSeqNum.getString() + " Rejected");
   }
 
-  if (!m_state.receivedLogon()) {
+  if (!m_state.receivedLogon() && !m_detached) {
     throw std::runtime_error("Tried to send a reject while not logged on");
   }
 
@@ -879,8 +1015,10 @@ void Session::generateReject(const Message &message, const std::string &text) {
   reject.reverseRoute(message.getHeader());
   fill(reject.getHeader());
 
-  auto const &msgType = message.getHeader().getField<MsgType>();
-  auto const &msgSeqNum = message.getHeader().getField<MsgSeqNum>();
+  MsgType msgType;
+  MsgSeqNum msgSeqNum;
+  message.getHeader().getField(msgType);
+  message.getHeader().getField(msgSeqNum);
 
   if (beginString >= FIX::BeginString_FIX42) {
     reject.setField(RefMsgType(msgType));
@@ -898,13 +1036,16 @@ void Session::generateReject(const Message &message, const std::string &text) {
 
 void Session::generateBusinessReject(const Message &message, int err, int field) {
   Message reject = newMessage(MsgType(MsgType_BusinessMessageReject));
-  auto const &msgSeqNum = message.getHeader().getField<MsgSeqNum>();
+  MsgSeqNum msgSeqNum;
+  MsgType msgType;
+  message.getHeader().getField(msgSeqNum);
+  message.getHeader().getField(msgType);
 
   if (m_sessionID.isFIXT()) {
     reject.setField(DefaultApplVerID(m_senderDefaultApplVerID));
   }
   fill(reject.getHeader());
-  reject.setField(RefMsgType(message.getHeader().getField<MsgType>()));
+  reject.setField(RefMsgType(msgType));
   reject.setField(RefSeqNum(msgSeqNum));
   reject.setField(BusinessRejectReason(err));
   m_state.incrNextTargetMsgSeqNum();
@@ -963,7 +1104,8 @@ void Session::generateLogout(const std::string &text) {
 }
 
 void Session::populateRejectReason(Message &reject, int field, const std::string &text) {
-  auto const &msgType = reject.getHeader().getField<MsgType>();
+  MsgType msgType;
+  reject.getHeader().getField(msgType);
 
   if (msgType == MsgType_Reject && m_sessionID.getBeginString() >= FIX::BeginString_FIX42) {
     reject.setField(RefTagID(field));
@@ -978,22 +1120,25 @@ void Session::populateRejectReason(Message &reject, int field, const std::string
 void Session::populateRejectReason(Message &reject, const std::string &text) { reject.setField(Text(text)); }
 
 bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
-  const MsgType *pMsgType = 0;
-  const MsgSeqNum *pMsgSeqNum = 0;
+  MsgType msgType;
+  MsgSeqNum msgSeqNum;
 
   try {
     const Header &header = msg.getHeader();
 
-    pMsgType = FIELD_GET_PTR(header, MsgType);
-    const SenderCompID &senderCompID = FIELD_GET_REF(header, SenderCompID);
-    const TargetCompID &targetCompID = FIELD_GET_REF(header, TargetCompID);
-    const SendingTime &sendingTime = FIELD_GET_REF(header, SendingTime);
+    SenderCompID senderCompID;
+    TargetCompID targetCompID;
+    SendingTime sendingTime;
+    header.getField(msgType);
+    header.getField(senderCompID);
+    header.getField(targetCompID);
+    header.getField(sendingTime);
 
     if (checkTooHigh || checkTooLow) {
-      pMsgSeqNum = FIELD_GET_PTR(header, MsgSeqNum);
+      header.getField(msgSeqNum);
     }
 
-    if (!validLogonState(*pMsgType)) {
+    if (!validLogonState(msgType)) {
       throw std::logic_error("Logon state is not valid for message");
     }
 
@@ -1006,10 +1151,10 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
       return false;
     }
 
-    if (checkTooHigh && isTargetTooHigh(*pMsgSeqNum)) {
+    if (checkTooHigh && isTargetTooHigh(msgSeqNum)) {
       doTargetTooHigh(msg);
       return false;
-    } else if (checkTooLow && isTargetTooLow(*pMsgSeqNum)) {
+    } else if (checkTooLow && isTargetTooLow(msgSeqNum)) {
       doTargetTooLow(msg);
       return false;
     }
@@ -1017,7 +1162,7 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
     if ((checkTooHigh || checkTooLow) && m_state.resendRequested()) {
       SessionState::ResendRange range = m_state.resendRange();
 
-      if (*pMsgSeqNum >= range.second) {
+      if (msgSeqNum >= range.second) {
         m_state.onEvent(
             "ResendRequest for messages FROM: " + SEQNUM_CONVERTOR::convert(range.first)
             + " TO: " + SEQNUM_CONVERTOR::convert(range.second) + " has been satisfied.");
@@ -1033,7 +1178,7 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
   m_state.lastReceivedTime(m_timestamper());
   m_state.testRequest(0);
 
-  fromCallback(pMsgType ? *pMsgType : MsgType(), msg, m_sessionID);
+  fromCallback(msgType, msg, m_sessionID);
   return true;
 }
 
@@ -1088,8 +1233,10 @@ bool Session::doPossDup(const Message &msg) {
   OrigSendingTime origSendingTime = m_timestamper();
 
   const Header &header = msg.getHeader();
-  auto const &msgType = header.getField<MsgType>();
-  auto const &sendingTime = header.getField<SendingTime>();
+  MsgType msgType;
+  SendingTime sendingTime;
+  header.getField(msgType);
+  header.getField(sendingTime);
 
   if (msgType != MsgType_SequenceReset) {
     if (!header.getFieldIfSet(origSendingTime)) {
@@ -1110,7 +1257,8 @@ bool Session::doTargetTooLow(const Message &msg) {
   const Header &header = msg.getHeader();
   PossDupFlag possDupFlag(false);
   header.getFieldIfSet(possDupFlag);
-  auto const &msgSeqNum = header.getField<MsgSeqNum>();
+  MsgSeqNum msgSeqNum;
+  header.getField(msgSeqNum);
 
   if (!possDupFlag) {
     std::stringstream stream;
@@ -1124,8 +1272,10 @@ bool Session::doTargetTooLow(const Message &msg) {
 
 void Session::doTargetTooHigh(const Message &msg) {
   const Header &header = msg.getHeader();
-  auto const &beginString = header.getField<BeginString>();
-  auto const &msgSeqNum = header.getField<MsgSeqNum>();
+  BeginString beginString;
+  MsgSeqNum msgSeqNum;
+  header.getField(beginString);
+  header.getField(msgSeqNum);
 
   m_state.onEvent(
       "MsgSeqNum too high, expecting " + SEQNUM_CONVERTOR::convert(getExpectedTargetNum()) + " but received "
@@ -1156,7 +1306,8 @@ bool Session::nextQueued(SEQNUM num, const UtcTimeStamp &now) {
 
   if (m_state.retrieve(num, msg)) {
     m_state.onEvent("Processing QUEUED message: " + SEQNUM_CONVERTOR::convert(num));
-    auto const &msgType = msg.getHeader().getField<MsgType>();
+    MsgType msgType;
+    msg.getHeader().getField(msgType);
     if (msgType == MsgType_Logon || msgType == MsgType_ResendRequest) {
       m_state.incrNextTargetMsgSeqNum();
     } else {
@@ -1196,12 +1347,16 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
 
   try {
     if (!checkSessionTime(now)) {
-      reset();
+      if (!m_detached) {
+        reset();
+      }
       return;
     }
 
-    const MsgType &msgType = FIELD_GET_REF(header, MsgType);
-    const BeginString &beginString = FIELD_GET_REF(header, BeginString);
+    MsgType msgType;
+    BeginString beginString;
+    header.getField(msgType);
+    header.getField(beginString);
     // make sure these fields are present
     FIELD_THROW_IF_NOT_FOUND(header, SenderCompID);
     FIELD_THROW_IF_NOT_FOUND(header, TargetCompID);
@@ -1212,7 +1367,8 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
 
     if (msgType == MsgType_Logon) {
       if (m_sessionID.isFIXT()) {
-        const DefaultApplVerID &applVerID = FIELD_GET_REF(message, DefaultApplVerID);
+        DefaultApplVerID applVerID;
+        message.getField(applVerID);
         setTargetDefaultApplVerID(applVerID);
       } else {
         setTargetDefaultApplVerID(Message::toApplVerID(beginString));
@@ -1378,9 +1534,12 @@ Session *Session::lookupSession(const std::string &string, bool reverse) {
 
   try {
     const Header &header = message.getHeader();
-    const BeginString &beginString = FIELD_GET_REF(header, BeginString);
-    const SenderCompID &senderCompID = FIELD_GET_REF(header, SenderCompID);
-    const TargetCompID &targetCompID = FIELD_GET_REF(header, TargetCompID);
+    BeginString beginString;
+    SenderCompID senderCompID;
+    TargetCompID targetCompID;
+    header.getField(beginString);
+    header.getField(senderCompID);
+    header.getField(targetCompID);
 
     if (reverse) {
       return lookupSession(SessionID(beginString, SenderCompID(targetCompID), TargetCompID(senderCompID)));

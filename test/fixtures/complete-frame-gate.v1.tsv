@@ -1,0 +1,17 @@
+IRFQ-COMPLETE-FRAME-GATE-V1
+case_id	partition	connection	entry_kind	protocol	observed_tai_ns	candidate_tai_ns	payload_hex	expected
+single	p-a	c-1	external	fix	1000000	1000000	383d4649582e342e3201393d31320133353d41013130383d33300131303d30323601	REGISTER:1
+equal-time	p-a	c-1	external	fix	1000000	1000000	383d4649582e342e3201393d31370133353d340133363d3838013132333d590131303d30323801	REGISTER:2
+other-connection	p-a	c-2	external	fix	1000001	1000001	43	REGISTER:3
+other-partition	p-b	c-3	external	fix	1000001	1000001	44	REGISTER:1
+heartbeat-after-frame	p-a	internal	heartbeat	-	-	1000002	-	REGISTER:4
+negative-delay	p-a	c-1	external	fix	1000003	1000002	45	FENCE
+delay-at-bound	p-c	c-4	external	fix	1000000	1250000	46	REGISTER:1
+delay-one-over	p-d	c-5	external	fix	1000000	1250001	47	FENCE
+ws-empty	p-ws	ws-1	external	websocket	2000000	2000001		REGISTER:1
+ws-text	p-ws	ws-1	external	websocket	2000002	2000002	7b7d	REGISTER:2
+ws-invalid-utf8	p-ws	ws-1	external	websocket	2000003	-	ff	PRE_GATE_REJECT
+IRFQ-FIX-FRAMING-V1
+case_id	read_index	observed_tai_ns	chunk_hex	expected_frames_hex	expected_fault
+fragmented-coalesced	1	3000000	383d4649582e342e3201393d31320133353d41013130383d3330013130	-	-
+fragmented-coalesced	2	3000001	3d30323601383d4649582e342e3201393d31370133353d340133363d3838013132333d590131303d30323801	383d4649582e342e3201393d31320133353d41013130383d33300131303d30323601,383d4649582e342e3201393d31370133353d340133363d3838013132333d590131303d30323801	-

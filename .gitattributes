@@ -1,0 +1,8 @@
+test/fixtures/complete-frame-gate.v1.tsv -text
+test/fixtures/infinite-frame-adapter-abi.v2.tsv -text
+spec/infinite-rfq-1.0.0/INFINITE-FIXT11.xml -text
+spec/infinite-rfq-1.0.0/INFINITE-RFQ-1.0.0-EP299.xml -text
+spec/infinite-rfq-1.0.0/provenance.v1.json -text
+spec/infinite-rfq-1.0.0/license-inventory.v1.json -text
+spec/infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt -text
+licenses/*.txt -text

@@ -93,7 +93,16 @@ total = 0
 failures = 0
 
 begin
-  ARGV[2, ARGV.length-2].each do
+  definitions = ARGV.drop(2)
+  raise ArgumentError, "No test definitions supplied" if definitions.empty?
+
+  definitions.each do |definition|
+    unless File.file?(definition) && File.readable?(definition)
+      raise ArgumentError, "Test definition is not a readable regular file: #{definition}"
+    end
+  end
+
+  definitions.each do
     | v |
     puts v
     file = File.open(v, "r")
@@ -123,8 +132,9 @@ begin
   else
     puts "#{total} tests passed"
   end
-rescue
-  print "  ",$!,"\n"
+rescue => exception
+  print "  ", exception, "\n"
+  exitValue = 1 if exitValue == 0
 end
 
 exit exitValue

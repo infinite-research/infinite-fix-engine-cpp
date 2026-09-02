@@ -101,6 +101,7 @@ DataDictionary &DataDictionary::operator=(const DataDictionary &rhs) {
   m_fieldNames = rhs.m_fieldNames;
   m_names = rhs.m_names;
   m_valueNames = rhs.m_valueNames;
+  m_nameValues = rhs.m_nameValues;
   m_dataFields = rhs.m_dataFields;
   m_headerOrderedFields = rhs.m_headerOrderedFields;
   m_headerOrder = rhs.m_headerOrder;
@@ -125,8 +126,8 @@ void DataDictionary::validate(
     const DataDictionary *const pSessionDD,
     const DataDictionary *const pAppDD) EXCEPT(FIX::Exception) {
   const Header &header = message.getHeader();
-  const BeginString &beginString = FIELD_GET_REF(header, BeginString);
-  const MsgType &msgType = FIELD_GET_REF(header, MsgType);
+  const BeginString beginString(header.getField(FIELD::BeginString));
+  const MsgType msgType(header.getField(FIELD::MsgType));
 
   if (pSessionDD != 0 && pSessionDD->m_hasVersion) {
     if (pSessionDD->getVersion() != beginString) {

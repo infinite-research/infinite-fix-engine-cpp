@@ -25,6 +25,8 @@
 #endif
 
 #include <DataDictionaryProvider.h>
+#include <Fields.h>
+#include <Values.h>
 
 #include "catch_amalgamated.hpp"
 
@@ -40,5 +42,28 @@ TEST_CASE("DataDictionaryProviderTests") {
 
     CHECK(expected.getVersion() == actual.getVersion());
     CHECK(expected.getOrderedFields() == actual.getOrderedFields());
+  }
+
+  SECTION("copies preserve shared dictionary identity") {
+    const BeginString beginString(BeginString_FIX42);
+    const ApplVerID applVerID(ApplVerID_FIX50);
+    auto transportDictionary = std::make_shared<DataDictionary>();
+    transportDictionary->setVersion(BeginString_FIX42);
+    auto applicationDictionary = std::make_shared<DataDictionary>();
+    applicationDictionary->setVersion(BeginString_FIX50);
+    DataDictionaryProvider original;
+    original.addTransportDataDictionary(beginString, transportDictionary);
+    original.addApplicationDataDictionary(applVerID, applicationDictionary);
+
+    DataDictionaryProvider copied(original);
+    DataDictionaryProvider assigned;
+    assigned = original;
+
+    CHECK(&copied.getSessionDataDictionary(beginString) == transportDictionary.get());
+    CHECK(&assigned.getSessionDataDictionary(beginString) == transportDictionary.get());
+    CHECK(&copied.getApplicationDataDictionary(applVerID) == applicationDictionary.get());
+    CHECK(&assigned.getApplicationDataDictionary(applVerID) == applicationDictionary.get());
+    CHECK(copied.getSessionDataDictionary(beginString).getVersion() == BeginString_FIX42);
+    CHECK(copied.getApplicationDataDictionary(applVerID).getVersion() == BeginString_FIX50);
   }
 }

@@ -11,6 +11,13 @@ libquickfix_la_SOURCES = \
 	SessionState.h \
 	SessionFactory.h \
 	SessionFactory.cpp \
+	InfiniteCompleteFrame.cpp \
+	InfiniteCompleteFrame.h \
+	InfiniteSensitiveString.h \
+	InfiniteFrameAdapter.cpp \
+	InfiniteFrameAdapter.h \
+	InfiniteSessionClassification.cpp \
+	InfiniteSessionClassification.h \
 	Parser.cpp \
 	Parser.h \
 	Log.cpp \
@@ -101,7 +108,6 @@ libquickfix_la_SOURCES = \
 	HttpConnection.cpp \
 	HttpServer.cpp \
 	HttpServer.h \
-	Messages.h \
 	SessionID.h \
 	SocketConnector.h \
 	Mutex.h \
@@ -112,7 +118,6 @@ libquickfix_la_SOURCES = \
 	Utility.cpp \
 	Utility.h \
 	Values.h \
-	DeprecatedValues.h \
 	DOMDocument.h \
 	PUGIXML_DOMDocument.cpp \
 	PUGIXML_DOMDocument.h \
@@ -150,6 +155,7 @@ Allocator.h: Makefile
 	grep "_ALLOCATOR" config_unix.h >$@
 
 all-local:
+	mkdir -p $(top_builddir)/lib
 	rm -rf $(top_builddir)/lib/libquickfix.a
 	rm -rf $(top_builddir)/lib/libquickfix.la
 	rm -rf $(top_builddir)/lib/libquickfix.so
@@ -158,8 +164,11 @@ all-local:
 	ln -s ../src/C++/.libs/libquickfix.la $(top_builddir)/lib/libquickfix.la
 	ln -s ../src/C++/.libs/libquickfix.so $(top_builddir)/lib/libquickfix.so
 	ln -s ../src/C++/.libs/libquickfix.dylib $(top_builddir)/lib/libquickfix.dylib
-	bash ./copy.sh $(top_builddir)/include/quickfix *.h
-	bash ./copy.sh $(top_builddir)/include/quickfix fix*/*.h
+	mkdir -p $(top_builddir)/include/quickfix
+	for header in $(srcdir)/*.h *.h; do \
+		case $${header##*/} in Infinite*.h) ;; *) cp -pf "$$header" "$(top_builddir)/include/quickfix" || exit 1 ;; esac; \
+	done
+	cd $(srcdir) && bash ./copy.sh "$(abs_top_builddir)/include/quickfix" fix*/*.h
 
 clean-local:
 	rm -rf $(top_builddir)/lib/libquickfix.a
@@ -178,22 +187,24 @@ install-exec-local: *.h
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp1
 	mkdir $(DESTDIR)$(pkgincludedir)/fix50sp2
 	mkdir $(DESTDIR)$(pkgincludedir)/fixt11
-	cp *.h $(DESTDIR)$(pkgincludedir)
-	cp fix40/*.h $(DESTDIR)$(pkgincludedir)/fix40
-	cp fix41/*.h $(DESTDIR)$(pkgincludedir)/fix41
-	cp fix42/*.h $(DESTDIR)$(pkgincludedir)/fix42
-	cp fix43/*.h $(DESTDIR)$(pkgincludedir)/fix43
-	cp fix44/*.h $(DESTDIR)$(pkgincludedir)/fix44
-	cp fix50/*.h $(DESTDIR)$(pkgincludedir)/fix50
-	cp fix50sp1/*.h $(DESTDIR)$(pkgincludedir)/fix50sp1
-	cp fix50sp2/*.h $(DESTDIR)$(pkgincludedir)/fix50sp2
-	cp fixt11/*.h $(DESTDIR)$(pkgincludedir)/fixt11
+	for header in $(srcdir)/*.h *.h; do \
+		case $${header##*/} in InfiniteFrameAdapter.h) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; Infinite*.h) ;; *) cp "$$header" "$(DESTDIR)$(pkgincludedir)" || exit 1 ;; esac; \
+	done
+	cp $(srcdir)/fix40/*.h $(DESTDIR)$(pkgincludedir)/fix40
+	cp $(srcdir)/fix41/*.h $(DESTDIR)$(pkgincludedir)/fix41
+	cp $(srcdir)/fix42/*.h $(DESTDIR)$(pkgincludedir)/fix42
+	cp $(srcdir)/fix43/*.h $(DESTDIR)$(pkgincludedir)/fix43
+	cp $(srcdir)/fix44/*.h $(DESTDIR)$(pkgincludedir)/fix44
+	cp $(srcdir)/fix50/*.h $(DESTDIR)$(pkgincludedir)/fix50
+	cp $(srcdir)/fix50sp1/*.h $(DESTDIR)$(pkgincludedir)/fix50sp1
+	cp $(srcdir)/fix50sp2/*.h $(DESTDIR)$(pkgincludedir)/fix50sp2
+	cp $(srcdir)/fixt11/*.h $(DESTDIR)$(pkgincludedir)/fixt11
 
 uninstall-local:
 	rm -rf $(DESTDIR)$(pkgincludedir)
 
-EXTRA_DIST = strptime.c strptime.h
+EXTRA_DIST = InfiniteEmbeddedDictionaries.S strptime.c strptime.h
 
 libquickfix_la_LDFLAGS = -version-info 18:0:0
 
-AM_CPPFLAGS =-I. -I.. -I../..
+AM_CPPFLAGS = -I. -I.. -I../.. -DIRFQ_INFINITE_DICTIONARY_PATH=\"$(pkgdatadir)\"

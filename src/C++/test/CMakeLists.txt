@@ -1,10 +1,35 @@
 add_definitions(-DCATCH_AMALGAMATED_CUSTOM_MAIN)
 
 if (QUICKFIX_TESTS)
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime/log ${CMAKE_BINARY_DIR}/test-runtime/store)
+  set(infinite_complete_frame_fixture
+      ${PROJECT_SOURCE_DIR}/test/fixtures/complete-frame-gate.v1.tsv)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${infinite_complete_frame_fixture})
+  set(INFINITE_COMPLETE_FRAME_FIXTURE_PATH ${infinite_complete_frame_fixture})
+  include(${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
+  set(infinite_frame_adapter_abi_fixture
+      ${PROJECT_SOURCE_DIR}/test/fixtures/infinite-frame-adapter-abi.v2.tsv)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               ${infinite_frame_adapter_abi_fixture})
+
+  configure_file(${infinite_complete_frame_fixture}
+                 ${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv
+                 COPYONLY)
+  file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv "\n")
+  add_test(
+    NAME infinite_complete_frame_fixture_rejects_tampering
+    COMMAND ${CMAKE_COMMAND}
+            -DINFINITE_COMPLETE_FRAME_FIXTURE_PATH=${CMAKE_CURRENT_BINARY_DIR}/tampered-complete-frame-gate.v1.tsv
+            -DINFINITE_COMPLETE_FRAME_EXPECT_REJECTION=ON
+            -P ${CMAKE_CURRENT_LIST_DIR}/VerifyInfiniteCompleteFrameFixture.cmake)
+
   set (ut_SOURCES 
+  ${PROJECT_SOURCE_DIR}/src/C++/InfiniteCompleteFrame.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/InfiniteFrameAdapter.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/catch_amalgamated.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryTestCase.cpp
-  ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/DataDictionaryProviderTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/DictionaryTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/FieldBaseTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/FieldConvertorsTestCase.cpp
@@ -18,6 +43,8 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HostDetailsProviderTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpMessageTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessagesTestCase.cpp
@@ -47,19 +74,92 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/UtilitySSLTestCase.cpp)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
+  target_compile_definitions(ut PRIVATE
+    INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
+    INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}"
+    IRFQ_INFINITE_TEST_SUPPORT=1)
+  if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+    target_compile_definitions(ut PRIVATE IRFQ_INFINITE_EMBED_DICTIONARIES=1)
+  endif()
   
-  target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR} 
-    ${PROJECT_SOURCE_DIR}/src/C++)
+  target_include_directories(ut PRIVATE ${PROJECT_SOURCE_DIR}/src/C++)
     
   target_link_libraries(ut ${PROJECT_NAME})
+
+  add_test(
+    NAME infinite_complete_frame_dispatcher
+    COMMAND ut "InfiniteCompleteFrameDispatcherTests"
+               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  add_test(
+    NAME infinite_frame_adapter
+    COMMAND ut "[infinite][adapter][v2]"
+               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  if(IRFQ_INFINITE_EMBED_DICTIONARIES)
+    function(_irfq_attach_installed_consumer)
+      set(_irfq_consumer_root "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer")
+      set(_irfq_consumer_header "${_irfq_consumer_root}/include/quickfix/InfiniteFrameAdapter.h")
+      set(_irfq_consumer_object "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer.o")
+      set(_irfq_consumer_executable "${_irfq_consumer_root}/InfiniteFrameAdapterInstalledConsumer")
+      add_custom_command(
+        TARGET infinite_adapter_package POST_BUILD
+        BYPRODUCTS
+                "${_irfq_consumer_header}"
+                "${_irfq_consumer_object}"
+                "${_irfq_consumer_executable}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_irfq_consumer_root}/include/quickfix"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_BINARY_DIR}/infinite-adapter-package/InfiniteFrameAdapter.h"
+                "${_irfq_consumer_header}"
+        COMMAND "${CMAKE_C_COMPILER}" -std=c17 -Wall -Wextra -Werror -pedantic-errors
+                "-I${_irfq_consumer_root}/include"
+                -c "${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterInstalledConsumer.c"
+                -o "${_irfq_consumer_object}"
+        COMMAND "${CMAKE_CXX_COMPILER}"
+                "${_irfq_consumer_object}"
+                "${CMAKE_BINARY_DIR}/infinite-adapter-package/libquickfix.a"
+                -pthread -o "${_irfq_consumer_executable}"
+        COMMENT "Building the installed C17 Infinite adapter consumer"
+        VERBATIM)
+    endfunction()
+    cmake_language(DEFER DIRECTORY "${PROJECT_SOURCE_DIR}" CALL _irfq_attach_installed_consumer)
+    add_test(
+      NAME infinite_frame_adapter_installed_consumer_build
+      COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --parallel 2
+              --target infinite_adapter_package)
+    set_tests_properties(
+      infinite_frame_adapter_installed_consumer_build
+      PROPERTIES FIXTURES_SETUP irfq_infinite_adapter_installed_consumer
+                 RUN_SERIAL TRUE
+                 TIMEOUT 600)
+    add_test(
+      NAME infinite_frame_adapter_installed_consumer
+      COMMAND "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer/InfiniteFrameAdapterInstalledConsumer")
+    set_tests_properties(
+      infinite_frame_adapter_installed_consumer
+      PROPERTIES FIXTURES_REQUIRED irfq_infinite_adapter_installed_consumer
+                 TIMEOUT 30)
+  endif()
+  add_test(
+    NAME quickfix_unit
+    COMMAND ut --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  set_tests_properties(quickfix_unit PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime)
+
+  if (NOT WIN32)
+    add_test(
+      NAME infinite_acceptance_harness_contract
+      COMMAND sh ${PROJECT_SOURCE_DIR}/test/AcceptanceHarnessTest.sh
+                 ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+    set_tests_properties(infinite_acceptance_harness_contract PROPERTIES TIMEOUT 30)
+  endif()
   
   if (NOT WIN32)
   ADD_CUSTOM_TARGET(ut_target ALL
-                    COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE:ut> ${PROJECT_SOURCE_DIR}/test/ut)
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_BINARY_DIR}/test
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE:ut> ${PROJECT_BINARY_DIR}/test/ut)
   else()
   set_target_properties(ut PROPERTIES
-                        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PROJECT_SOURCE_DIR}/test/debug/ut/
-                        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PROJECT_SOURCE_DIR}/test/release/ut/
-                        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_SOURCE_DIR}/test/release/ut/)
+                        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${PROJECT_BINARY_DIR}/test/debug/ut/
+                        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${PROJECT_BINARY_DIR}/test/release/ut/
+                        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${PROJECT_BINARY_DIR}/test/release/ut/)
   endif()
 endif()
