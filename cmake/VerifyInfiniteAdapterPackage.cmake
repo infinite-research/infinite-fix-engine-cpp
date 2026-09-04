@@ -520,11 +520,11 @@ if(SELF_TEST)
   set(_irfq_self_fake_source_tree 2222222222222222222222222222222222222222)
   set(_irfq_self_fake_source_merge_base 3333333333333333333333333333333333333333)
   set(_irfq_self_fake_source_diff 4444444444444444444444444444444444444444444444444444444444444444)
-  set(_irfq_self_spec_commit 4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b)
-  set(_irfq_self_spec_tree 69de448251d9d7030c2d0716d9216415964ce2cc)
-  set(_irfq_self_spec_bundle e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99)
+  set(_irfq_self_spec_commit 564c7f3a2841a9af8637f7c9a81263a246cfc1d7)
+  set(_irfq_self_spec_tree c2900c998ab35bbec691d381c1e693ff3ee0ec6e)
+  set(_irfq_self_spec_bundle 83a86dfe6a2015ec14571ec03d3b150afd6be43e0bdf9195017399c6f1d4eb40)
   set(_irfq_self_image irfq-task2e-cpp:2026-08-30)
-  set(_irfq_self_image_hash c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c)
+  set(_irfq_self_image_hash 9207993c72610dc90340b5661139d89db9f57b9e61a8107b5f4d494fa20ba3c3)
   set(_irfq_self_build_command
       "cmake -S /src -B /build -G Ninja -DCMAKE_C_COMPILER=/usr/bin/gcc-13 -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=OFF -DQUICKFIX_SHARED_LIBS=OFF -DQUICKFIX_EXAMPLES=OFF -DQUICKFIX_TESTS=ON -DIRFQ_INFINITE_EMBED_DICTIONARIES=ON -DQUICKFIX_LIB_OUTPUT_DIR=/build/out && cmake --build /build --parallel 2 --target infinite_adapter_package")
 
@@ -606,13 +606,13 @@ if(SELF_TEST)
   set(_irfq_obsolete_spec ${_irfq_self_common})
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=cb12d80aecd90f52b7fbcc009246dab640ba7a7b")
+       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b")
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_TREE=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=bae719cd3d4001329f6efbe5e32d92be3549b5f9")
+       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=69de448251d9d7030c2d0716d9216415964ce2cc")
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=4a35891736502ffe2413de8d25690748879b88e4938abf89a5bda835a3ad7ab9")
+       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99")
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_obsolete_spec} -P "${_irfq_package_script}"
     RESULT_VARIABLE _irfq_obsolete_spec_result
@@ -1521,12 +1521,12 @@ _irfq_require_equal("${_irfq_value_source_commit}" "${IRFQ_VERIFIED_SOURCE_COMMI
 _irfq_require_equal("${_irfq_value_source_tree}" "${IRFQ_VERIFIED_SOURCE_TREE}" source_tree)
 _irfq_require_equal("${_irfq_value_source_merge_base}" "${IRFQ_VERIFIED_SOURCE_MERGE_BASE}" source_merge_base)
 _irfq_require_equal("${_irfq_value_source_diff_sha256}" "${IRFQ_VERIFIED_SOURCE_DIFF_SHA256}" source_diff_sha256)
-_irfq_require_equal("${_irfq_value_specification_commit}" "4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b" specification_commit)
-_irfq_require_equal("${_irfq_value_specification_tree}" "69de448251d9d7030c2d0716d9216415964ce2cc" specification_tree)
-_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99" specification_bundle_sha256)
+_irfq_require_equal("${_irfq_value_specification_commit}" "564c7f3a2841a9af8637f7c9a81263a246cfc1d7" specification_commit)
+_irfq_require_equal("${_irfq_value_specification_tree}" "c2900c998ab35bbec691d381c1e693ff3ee0ec6e" specification_tree)
+_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "83a86dfe6a2015ec14571ec03d3b150afd6be43e0bdf9195017399c6f1d4eb40" specification_bundle_sha256)
 _irfq_require_equal("${_irfq_value_target}" "x86_64-unknown-linux-gnu" target)
 _irfq_require_equal("${_irfq_value_build_image}" "irfq-task2e-cpp:2026-08-30" build_image)
-_irfq_require_equal("${_irfq_value_build_image_sha256}" "c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c" build_image_sha256)
+_irfq_require_equal("${_irfq_value_build_image_sha256}" "9207993c72610dc90340b5661139d89db9f57b9e61a8107b5f4d494fa20ba3c3" build_image_sha256)
 _irfq_require_equal("${_irfq_value_cc}" "gcc 13.3.0" cc)
 _irfq_require_equal("${_irfq_value_cxx}" "g++ 13.3.0" cxx)
 _irfq_require_equal("${_irfq_value_cmake}" "cmake 3.28.3" cmake)
