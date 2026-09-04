@@ -5764,7 +5764,7 @@ void appendAbiNumber(std::vector<AbiFixtureRow> &rows, const char *kind, const c
 
 std::vector<AbiFixtureRow> expectedAbiFixtureRows() {
   std::vector<AbiFixtureRow> rows;
-  rows.reserve(317);
+  rows.reserve(318);
 
 #define ABI_TEXT(kind, name, value) appendAbiText(rows, #kind, #name, value)
 #define ABI_NUMBER(kind, name, value) appendAbiNumber(rows, #kind, #name, value)
@@ -5866,6 +5866,10 @@ std::vector<AbiFixtureRow> expectedAbiFixtureRows() {
   ABI_NUMBER(resume, OUTPUT, IRFQ_INFINITE_RESUME_OUTPUT_V2);
   ABI_NUMBER(application_decision, ALLOW, IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2);
   ABI_NUMBER(application_decision, REJECT, IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2);
+  ABI_NUMBER(
+      application_decision,
+      SAME_OCCURRENCE_REDELIVERY,
+      IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2);
   ABI_NUMBER(epoch_reset_decision, START_SAGA, IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2);
   ABI_NUMBER(epoch_reset_decision, REJECT_TRIGGER, IRFQ_INFINITE_EPOCH_RESET_DECISION_REJECT_TRIGGER_V2);
   ABI_NUMBER(sequence_state, ABSENT, IRFQ_INFINITE_SEQUENCE_ABSENT_V2);
@@ -6116,7 +6120,7 @@ bool validAbiFixture(const std::string &bytes) {
     begin = end + 1;
   }
   const auto expected = expectedAbiFixtureRows();
-  return expected.size() == 317 && rows == expected;
+  return expected.size() == 318 && rows == expected;
 }
 
 void replaceAbiFixtureText(std::string &bytes, const std::string &from, const std::string &to) {
@@ -11765,6 +11769,125 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "InfiniteFrameAdapterV2 same-occurrence redelivery is non-consuming at and below target",
+    "[infinite][adapter][v2][stock-smoke][inbound-application][same-occurrence]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  const struct Case {
+    const char *name;
+    std::uint64_t sequence;
+    std::string fields;
+  } cases[] = {
+      {"at-target", 2, ""},
+      {"target-too-low", 1, "43=Y\001122=20231114-22:13:20.123455\001"},
+  };
+  for (const auto &testCase : cases) {
+    DYNAMIC_SECTION(testCase.name) {
+      std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> baseState{};
+      auto *baseSession = stockLoggedOnSession(config, 2, nullptr, &baseState);
+      REQUIRE(baseSession != nullptr);
+      CHECK(irfq_infinite_destroy_v2(baseSession) == IRFQ_INFINITE_STATUS_OK_V2);
+      auto *session = stockLoggedOnSession(config);
+      REQUIRE(session != nullptr);
+      InboundCall inbound(
+          session,
+          participantFrame("AJ", testCase.sequence, testCase.fields + quoteResponseBody("RFQ-REPLAY")),
+          0x90);
+      PlanBuffers pendingBuffers;
+      auto pending = pendingBuffers.response();
+      REQUIRE(
+          irfq_infinite_prepare_v2(session, &inbound.request, &pending)
+          == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+
+      irfq_infinite_resume_request_v2 resume{};
+      init(resume);
+      resume.prepare_id = pending.prepare_id;
+      resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+      resume.subject_sequence = pending.subject_sequence;
+      std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+      resume.decision = IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2;
+      resume.input_source = pending.input_source;
+      resume.input_source_bytes = {inbound.payload.data(), inbound.payload.size()};
+      PlanBuffers buffers;
+      auto result = buffers.response();
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+
+      CHECK(result.output.length == 0);
+      CHECK(read64(result.native_state.data + 132) == 2);
+      CHECK(read64(result.native_state.data + 144) == 2);
+      REQUIRE(result.action_count == 1);
+      CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+      CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+      CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+      CHECK(result.actions[0].input_source == IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2);
+      CHECK(result.actions[0].input_item_index == 0);
+      CHECK(result.actions[0].input_offset == 68);
+      CHECK(result.actions[0].input_length == inbound.payload.size() - 68);
+      CHECK(result.actions[0].sequence_begin == testCase.sequence);
+      CHECK(result.actions[0].sequence_end_exclusive == testCase.sequence + 1);
+      CHECK(std::equal(pending.subject_sha256, pending.subject_sha256 + 32, result.actions[0].binding_sha256));
+      auto expectedState = baseState;
+      write64(expectedState.data() + 56, result.result_revision);
+      write64(expectedState.data() + 80, static_cast<std::uint64_t>(inbound.request.now_tai_ns));
+      write64(expectedState.data() + 88, static_cast<std::uint64_t>(inbound.request.now_utc_ns));
+      write64(expectedState.data() + 112, static_cast<std::uint64_t>(inbound.request.now_tai_ns));
+      write64(expectedState.data() + 120, static_cast<std::uint64_t>(inbound.request.now_utc_ns));
+      REQUIRE(result.native_state.length == expectedState.size());
+      CHECK(std::equal(expectedState.begin(), expectedState.end(), result.native_state.data));
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 same-occurrence decision is closed to ineligible resume sites",
+    "[infinite][adapter][v2][stock-smoke][inbound-application][same-occurrence][invalid]") {
+  const auto config = otherwiseValidUnavailableProfile();
+
+  auto *session = stockLoggedOnSession(config);
+  REQUIRE(session != nullptr);
+  InboundCall inbound(session, participantFrame('4', 2, "36=4\001123=Y\001"), 0x91);
+  PlanBuffers pendingBuffers;
+  auto pending = pendingBuffers.response();
+  REQUIRE(
+      irfq_infinite_prepare_v2(session, &inbound.request, &pending)
+      == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+  irfq_infinite_resume_request_v2 resume{};
+  init(resume);
+  resume.prepare_id = pending.prepare_id;
+  resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+  resume.subject_sequence = pending.subject_sequence;
+  std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+  resume.decision = IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2;
+  resume.input_source = pending.input_source;
+  resume.input_source_bytes = {inbound.payload.data(), inbound.payload.size()};
+  PlanBuffers invalidBuffers;
+  auto invalid = invalidBuffers.response();
+  REQUIRE(irfq_infinite_resume_v2(session, &resume, &invalid) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+
+  session = stockLoggedOnSession(config);
+  REQUIRE(session != nullptr);
+  InboundCall application(session, participantFrame("AJ", 2, quoteResponseBody("RFQ-ID")), 0x92);
+  pending = pendingBuffers.response();
+  REQUIRE(
+      irfq_infinite_prepare_v2(session, &application.request, &pending)
+      == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2);
+  init(resume);
+  resume.prepare_id = pending.prepare_id;
+  resume.kind = IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2;
+  resume.subject_sequence = pending.subject_sequence;
+  std::copy_n(pending.subject_sha256, 32, resume.subject_sha256);
+  resume.decision = IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2;
+  resume.input_source = pending.input_source;
+  resume.input_source_bytes = {application.payload.data(), application.payload.size()};
+  const std::string dispositionId = "GID.NOT-ALLOWED";
+  resume.gateway_inbound_disposition_id = slice(dispositionId);
+  invalid = invalidBuffers.response();
+  REQUIRE(irfq_infinite_resume_v2(session, &resume, &invalid) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+  CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+}
+
+TEST_CASE(
     "InfiniteFrameAdapterV2 rejects an ineligible nine-byte inbound MsgType without crossing fixed storage",
     "[infinite][adapter][v2][stock-smoke][inbound-application][msg-type-bound]") {
   const auto config = otherwiseValidUnavailableProfile();
@@ -12355,6 +12478,37 @@ TEST_CASE(
   CHECK(result.actions[2].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
   CHECK(result.actions[2].reason_code == IRFQ_INFINITE_REASON_PROTOCOL_V2);
   CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 stock smoke terminates invalid stale application duplicates fail closed",
+    "[infinite][adapter][v2][stock-smoke][inbound-too-low-invalid][same-occurrence]") {
+  const auto config = otherwiseValidUnavailableProfile();
+  for (const std::string fields :
+       {"",
+        "43=X\001",
+        "43=Y\001",
+        "43=Y\001122=not-a-time\001",
+        "43=Y\001122=20231114-22:13:20.123457\001",
+        "43=N\001"}) {
+    const std::string section = fields.empty() ? "no-duplicate-fields" : fields;
+    DYNAMIC_SECTION(section) {
+      auto *session = stockLoggedOnSession(config);
+      REQUIRE(session != nullptr);
+      InboundCall inbound(session, participantFrame("AJ", 1, fields + quoteResponseBody("RFQ-STALE")), 0x93);
+      PlanBuffers buffers;
+      auto result = buffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &inbound.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+      const std::string output(reinterpret_cast<char *>(result.output.data), result.output.length);
+      CHECK(output.find("\00135=5\001") != std::string::npos);
+      CHECK(read64(result.native_state.data + 144) == 2);
+      REQUIRE(result.action_count >= 3);
+      CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+      CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+      CHECK(result.actions[result.action_count - 1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
 }
 
 TEST_CASE(

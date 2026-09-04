@@ -85,6 +85,7 @@ resume	EPOCH_RESET_DECISION	3
 resume	OUTPUT	4
 application_decision	ALLOW	1
 application_decision	REJECT	2
+application_decision	SAME_OCCURRENCE_REDELIVERY	3
 epoch_reset_decision	START_SAGA	1
 epoch_reset_decision	REJECT_TRIGGER	2
 sequence_state	ABSENT	0

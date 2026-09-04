@@ -2811,7 +2811,8 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
     plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
     return plan;
   }
-  if (inbound.sequence < expectedTarget && inbound.identityMatches && inbound.timeMatches) {
+  if (inbound.sequence < expectedTarget && inbound.identityMatches && inbound.timeMatches
+      && !inbound.sameOccurrenceRedelivery) {
     irfq_infinite_declarative_action_v2 disposition{};
     disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
     disposition.disposition = IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2;
@@ -4392,6 +4393,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
     }
     if (session->pending->pendingStatus == IRFQ_INFINITE_STATUS_NEED_APPLICATION_DECISION_V2) {
       auto &plan = *session->pending;
+      const bool headApplicationInput
+          = plan.kind == IRFQ_INFINITE_PREPARE_REGISTERED_INBOUND_V2 && plan.stage == IRFQ_INFINITE_STAGE_HEAD_V2
+            && plan.event == IRFQ_INFINITE_EVENT_INBOUND_FRAME_V2
+            && plan.inputSource == IRFQ_INFINITE_INPUT_PREPARE_PAYLOAD_V2 && plan.applicationDispatch;
       if (plan.event == IRFQ_INFINITE_EVENT_CONTINUE_QUEUED_INBOUND_V2) {
         if (request->kind != IRFQ_INFINITE_RESUME_APPLICATION_DECISION_V2
             || request->subject_sequence != plan.subjectSequence
@@ -4609,7 +4614,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           || request->subject_sequence != plan.subjectSequence
           || !std::equal(std::begin(request->subject_sha256), std::end(request->subject_sha256), plan.subject.begin())
           || (request->decision != IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2
-              && request->decision != IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2)
+              && request->decision != IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
+              && !(
+                  request->decision == IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2
+                  && headApplicationInput))
           || request->input_source != plan.inputSource || request->input_item_index != plan.inputItemIndex
           || request->input_source_bytes.length != plan.sourceLength || request->store_range_begin != 0
           || request->store_range_end_exclusive != 0 || request->store_rows != nullptr || request->store_row_count != 0
@@ -4683,7 +4691,9 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
           || inbound.bodyLength != plan.inputLength || (!plan.applicationDispatch && !gapFillDecision)) {
         return failPending(IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
       }
-      if (plan.applicationDispatch) {
+      const bool sameOccurrenceRedelivery
+          = request->decision == IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2;
+      if (plan.applicationDispatch && !sameOccurrenceRedelivery) {
         irfq_infinite_declarative_action_v2 dispatch{};
         dispatch.kind = IRFQ_INFINITE_ACTION_APPLICATION_DISPATCH_V2;
         if (!copyMessageType(plan.msgType, dispatch.msg_type_length, dispatch.msg_type)) {
@@ -4700,9 +4710,10 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
       }
       irfq_infinite_declarative_action_v2 disposition{};
       disposition.kind = IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2;
-      disposition.disposition = gapFillDecision ? request->decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2
-                                                      ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
-                                                      : IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2
+      disposition.disposition = sameOccurrenceRedelivery ? IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2
+                                : gapFillDecision ? request->decision == IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2
+                                                        ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
+                                                        : IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2
                                 : request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
                                     ? IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2
                                 : plan.msgType == "EC" ? IRFQ_INFINITE_DISPOSITION_PENDING_READ_V2
@@ -4715,7 +4726,8 @@ extern "C" irfq_infinite_status_v2 irfq_infinite_resume_v2(
       disposition.input_length = frameLength;
       std::copy(plan.subject.begin(), plan.subject.end(), disposition.binding_sha256);
       disposition.reason_code
-          = gapFillDecision && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
+          = sameOccurrenceRedelivery ? IRFQ_INFINITE_REASON_SEQUENCE_V2
+            : gapFillDecision && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
                 ? IRFQ_INFINITE_REASON_SEQUENCE_V2
             : plan.applicationDispatch && request->decision == IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2
                 ? IRFQ_INFINITE_REASON_PROTOCOL_V2

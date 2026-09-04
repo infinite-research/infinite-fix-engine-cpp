@@ -95,6 +95,7 @@ struct InfiniteInboundPlan {
   bool logonTimeMatches{false};
   bool dictionaryValid{false};
   bool disconnected{false};
+  bool sameOccurrenceRedelivery{false};
   std::uint64_t resendBegin{0};
   std::uint64_t resendEndInclusive{0};
   bool resendRangeValid{false};

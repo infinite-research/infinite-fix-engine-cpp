@@ -1050,6 +1050,19 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     const bool resetSafeToIntercept = dictionaryValid && completeIdentity && timeMatches;
     const bool headerSafe = completeIdentity && timeMatches && sessionTimeMatches;
     const bool safeToIntercept = dictionaryValid && headerSafe;
+    bool sameOccurrenceRedelivery = false;
+    if (safeToIntercept && incoming.isApp() && sequenceValid && sequence < targetSequence) {
+      try {
+        PossDupFlag possDup(false);
+        OrigSendingTime originalSendingTime;
+        SendingTime sending;
+        sameOccurrenceRedelivery = header.getFieldIfSet(possDup) && static_cast<bool>(possDup)
+                                   && header.getFieldIfSet(originalSendingTime) && header.getFieldIfSet(sending)
+                                   && sending >= originalSendingTime;
+      } catch (const Exception &) {
+        sameOccurrenceRedelivery = false;
+      }
+    }
     bool intercepted = false;
     if (!identified) {
       session.next(incoming, now, queuedReplay);
@@ -1075,6 +1088,9 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
     } else if (
         msgType == MsgType_Logon && !static_cast<bool>(reset) && dictionaryValid && completeIdentity && timeMatches
         && (!sessionTimeMatches || !logonTimeMatches)) {
+      intercepted = true;
+    } else if (sameOccurrenceRedelivery) {
+      application.application = true;
       intercepted = true;
     } else if (
         safeToIntercept && msgType == MsgType_Logon && !static_cast<bool>(reset)
@@ -1203,6 +1219,7 @@ InfiniteInboundPlan InfiniteSessionPlanner::inbound(
         logonTimeMatches,
         dictionaryValid,
         responder.disconnected,
+        sameOccurrenceRedelivery,
         resendBegin,
         resendEndInclusive,
         resendRangeValid,
