@@ -123,6 +123,7 @@ typedef uint32_t irfq_infinite_resume_kind_v2;
 typedef uint32_t irfq_infinite_application_decision_v2;
 #define IRFQ_INFINITE_APPLICATION_DECISION_ALLOW_V2 UINT32_C(1)
 #define IRFQ_INFINITE_APPLICATION_DECISION_REJECT_V2 UINT32_C(2)
+#define IRFQ_INFINITE_APPLICATION_DECISION_SAME_OCCURRENCE_REDELIVERY_V2 UINT32_C(3)
 
 typedef uint32_t irfq_infinite_epoch_reset_decision_v2;
 #define IRFQ_INFINITE_EPOCH_RESET_DECISION_START_SAGA_V2 UINT32_C(1)
