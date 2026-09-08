@@ -126,25 +126,28 @@ std::string resolveEnvVars(const std::string &str) {
 }
 
 std::istream &operator>>(std::istream &stream, Settings &s) {
-  char buffer[1024];
+  Settings::Sections sections;
   std::string line;
-  Settings::Sections::iterator section = s.m_sections.end();
-  ;
+  Settings::Sections::iterator section = sections.end();
 
-  while (stream.getline(buffer, sizeof(buffer))) {
-    line = string_strip(buffer);
+  while (std::getline(stream, line)) {
+    line = string_strip(line);
     if (isComment(line)) {
       continue;
     } else if (isSection(line)) {
-      section = s.m_sections.insert(s.m_sections.end(), Dictionary(splitSection(line)));
+      section = sections.insert(sections.end(), Dictionary(splitSection(line)));
     } else if (isKeyValue(line)) {
       std::pair<std::string, std::string> keyValue = splitKeyValue(line);
-      if (section == s.m_sections.end()) {
+      if (section == sections.end()) {
         continue;
       }
       (*section).setString(keyValue.first, s.m_resolveEnvVars ? resolveEnvVars(keyValue.second) : keyValue.second);
     }
   }
+  if (stream.bad() || (stream.fail() && !stream.eof())) {
+    throw ConfigError("Unable to read complete settings stream");
+  }
+  s.m_sections.insert(s.m_sections.end(), sections.begin(), sections.end());
   return stream;
 }
 
