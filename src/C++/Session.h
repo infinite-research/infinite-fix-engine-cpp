@@ -219,6 +219,11 @@ public:
   }
 
   bool send(Message &);
+  /// Authenticate an initial Logon before registering or attaching its responder.
+  /// The caller must first enforce listener membership and the source address ACL.
+  /// Authenticated admission prepares the session period before attaching the responder.
+  /// On an escaping exception, restore the previous responder and release this registration.
+  bool acceptLogon(const std::string &, Responder &);
   void next(const UtcTimeStamp &now);
   void next(const std::string &, const UtcTimeStamp &now, bool queued = false);
   void next(const Message &, const UtcTimeStamp &now, bool queued = false);
@@ -251,6 +256,8 @@ private:
   static bool addSession(Session &);
   static void removeSession(Session &);
   void next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow);
+  void next(const Message &, const UtcTimeStamp &, bool queued, bool authenticated);
+  bool authenticateLogon(const Message &, const UtcTimeStamp &);
 
   bool send(const std::string &);
   bool sendRaw(Message &, SEQNUM msgSeqNum = 0);
@@ -321,7 +328,7 @@ private:
   void populateRejectReason(Message &, int field, const std::string &text);
   void populateRejectReason(Message &, const std::string &text);
 
-  bool verify(const Message &msg, bool checkTooHigh = true, bool checkTooLow = true);
+  bool verify(const Message &msg, bool checkTooHigh = true, bool checkTooLow = true, bool invokeCallback = true);
 
   Message newMessage(const MsgType &msgType) const;
 

@@ -58,11 +58,13 @@
 
 #include "catch_amalgamated.hpp"
 
+#include <future>
 #include <memory>
 
 namespace FIX {
 class SessionTestAccess {
 public:
+  static Responder *responder(Session &session) { return session.m_pResponder; }
   static std::unique_ptr<Session> detached(
       std::function<UtcTimeStamp()> timestamper,
       Application &application,
@@ -94,6 +96,304 @@ public:
 } // namespace FIX
 
 using namespace FIX;
+
+TEST_CASE("rejected first initiator response allows immediate reconnect", "[admission][review-r2]") {
+  const std::string type = GENERATE("A", "4", "5");
+  CAPTURE(type);
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &) override {
+      ++authentications;
+      throw RejectLogon();
+    }
+    void onLogout(const SessionID &) override { ++logouts; }
+    bool send(const std::string &wire) override {
+      CHECK(identifyType(wire) == MsgType_Logon);
+      ++sent;
+      return true;
+    }
+    void disconnect() override { ++disconnections; }
+    int authentications = 0, logouts = 0, sent = 0, disconnections = 0;
+  } application;
+  MemoryStoreFactory stores;
+  DataDictionaryProvider dictionaries;
+  SessionID id("FIX.4.2", "INITIATOR-RECONNECT", "PEER");
+  const auto now = UtcTimeStamp::now();
+  Session session(
+      [&]() { return now; },
+      application,
+      stores,
+      id,
+      dictionaries,
+      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      30,
+      nullptr);
+  session.setResponder(&application);
+  session.next(now);
+  REQUIRE(session.sentLogon());
+  REQUIRE_FALSE(session.receivedLogon());
+  REQUIRE(application.sent == 1);
+  FIX42::Logon response(EncryptMethod(0), HeartBtInt(30));
+  response.getHeader().setField(MsgType(type));
+  response.getHeader().setField(SenderCompID("PEER"));
+  response.getHeader().setField(TargetCompID("INITIATOR-RECONNECT"));
+  response.getHeader().setField(SendingTime(now));
+  response.getHeader().setField(MsgSeqNum(1));
+  session.next(response, now);
+  CHECK_FALSE(session.sentLogon());
+  CHECK_FALSE(session.receivedLogon());
+  CHECK(SessionTestAccess::responder(session) == nullptr);
+  CHECK(application.logouts == 1);
+  CHECK(application.disconnections == 1);
+  CHECK(application.authentications == (type == "A" ? 1 : 0));
+  CHECK(session.getExpectedSenderNum() == 2);
+  CHECK(session.getExpectedTargetNum() == 1);
+  session.setResponder(&application);
+  session.next(now);
+  CHECK(session.sentLogon());
+  CHECK(application.sent == 2);
+  CHECK(application.logouts == 1);
+  session.disconnect();
+}
+
+TEST_CASE("first authenticated Logon after session rollover stays connected", "[admission][review-r1]") {
+  const bool refresh = GENERATE(false, true);
+  auto now = UtcTimeStamp::now();
+  now += -86400;
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &) override {
+      ++authentications;
+      CHECK(session->getExpectedSenderNum() == 7);
+      CHECK(session->getExpectedTargetNum() == 9);
+    }
+    bool send(const std::string &wire) override {
+      CHECK(identifyType(wire) == MsgType_Logon);
+      ++sent;
+      return true;
+    }
+    void disconnect() override { ++disconnections; }
+    Session *session = nullptr;
+    int authentications = 0, sent = 0, disconnections = 0;
+  } application;
+  MemoryStoreFactory stores;
+  DataDictionaryProvider dictionaries;
+  SessionID id("FIX.4.2", "ROLLOVER", "PEER");
+  Session session(
+      [&]() { return now; },
+      application,
+      stores,
+      id,
+      dictionaries,
+      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      0,
+      nullptr);
+  application.session = &session;
+  session.setNextSenderMsgSeqNum(7);
+  session.setNextTargetMsgSeqNum(9);
+  session.setRefreshOnLogon(refresh);
+  now = UtcTimeStamp::now();
+  FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+  logon.getHeader().setField(SenderCompID("PEER"));
+  logon.getHeader().setField(TargetCompID("ROLLOVER"));
+  logon.getHeader().setField(SendingTime(now));
+  logon.getHeader().setField(MsgSeqNum(1));
+  CHECK(session.acceptLogon(logon.toString(), application));
+  CHECK(session.isLoggedOn());
+  CHECK(session.getExpectedSenderNum() == 2);
+  CHECK(session.getExpectedTargetNum() == 2);
+  CHECK(application.authentications == 1);
+  CHECK(application.sent == 1);
+  CHECK(application.disconnections == 0);
+  CHECK(SessionTestAccess::responder(session) == &application);
+  session.disconnect();
+  Session::unregisterSession(id);
+}
+
+TEST_CASE("admission exceptions release only their responder and registration", "[admission][review-r1]") {
+  const std::string phase = GENERATE(
+      "incoming",
+      "nonstandard-incoming",
+      "event",
+      "outgoing",
+      "logon-callback",
+      "existing-registration",
+      "competing-admission");
+  CAPTURE(phase);
+  struct Hooks : NullApplication, NullLog, LogFactory {
+    Log *create() override { return this; }
+    Log *create(const SessionID &) override { return this; }
+    void destroy(Log *) override {}
+    void fail(const char *at) {
+      if (phase == at) {
+        throw std::runtime_error("admission hook failure");
+      }
+    }
+    void onIncoming(const std::string &) override {
+      if (phase == "nonstandard-incoming") {
+        throw 17;
+      }
+      if (phase == "competing-admission") {
+        phase.clear();
+        throw std::runtime_error("first admission fails");
+      }
+      fail("incoming");
+    }
+    void onEvent(const std::string &) override { fail("event"); }
+    void onOutgoing(const std::string &) override { fail("outgoing"); }
+    void onLogon(const SessionID &) override { fail("logon-callback"); }
+    void fromAdmin(const Message &, const SessionID &) override { ++authentications; }
+    std::string phase;
+    int authentications = 0;
+  } hooks;
+  struct TestResponder : Responder {
+    bool send(const std::string &) override { return true; }
+    void disconnect() override {}
+  } previous, candidate;
+  MemoryStoreFactory stores;
+  DataDictionaryProvider dictionaries;
+  SessionID id("FIX.4.2", "ROLLBACK", "PEER");
+  const auto now = UtcTimeStamp::now();
+  Session session(
+      [&]() { return now; },
+      hooks,
+      stores,
+      id,
+      dictionaries,
+      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      0,
+      &hooks);
+  session.setResponder(&previous);
+  FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+  logon.getHeader().setField(SenderCompID("PEER"));
+  logon.getHeader().setField(TargetCompID("ROLLBACK"));
+  logon.getHeader().setField(SendingTime(now));
+  logon.getHeader().setField(MsgSeqNum(1));
+  hooks.phase = phase;
+  if (phase == "competing-admission") {
+    std::promise<void> start;
+    auto ready = start.get_future().share();
+    const auto wire = logon.toString();
+    auto admit = [&](Responder &responder) {
+      ready.wait();
+      try {
+        return session.acceptLogon(wire, responder) ? 1 : 0;
+      } catch (const std::runtime_error &) {
+        return 2;
+      }
+    };
+    auto first = std::async(std::launch::async, [&]() { return admit(previous); });
+    auto second = std::async(std::launch::async, [&]() { return admit(candidate); });
+    start.set_value();
+    const auto firstResult = first.get();
+    const auto secondResult = second.get();
+    CHECK(firstResult + secondResult == 3);
+    CHECK(firstResult * secondResult == 2);
+    CHECK(hooks.authentications == 2);
+    CHECK(Session::isSessionRegistered(id));
+    CHECK(session.isLoggedOn());
+    CHECK(SessionTestAccess::responder(session) == (firstResult == 1 ? &previous : &candidate));
+    session.disconnect();
+    Session::unregisterSession(id);
+    return;
+  }
+  if (phase == "existing-registration") {
+    REQUIRE(Session::registerSession(id) == &session);
+    CHECK_FALSE(session.acceptLogon(logon.toString(), candidate));
+    CHECK(Session::isSessionRegistered(id));
+    CHECK(hooks.authentications == 0);
+  } else {
+    if (phase == "nonstandard-incoming") {
+      CHECK_THROWS_AS(session.acceptLogon(logon.toString(), candidate), int);
+    } else {
+      CHECK_THROWS_AS(session.acceptLogon(logon.toString(), candidate), std::runtime_error);
+    }
+    CHECK_FALSE(Session::isSessionRegistered(id));
+    CHECK_FALSE(session.receivedLogon());
+    CHECK_FALSE(session.sentLogon());
+    CHECK(hooks.authentications == 1);
+  }
+  CHECK(SessionTestAccess::responder(session) == &previous);
+  hooks.phase.clear();
+  session.disconnect();
+  Session::unregisterSession(id);
+  logon.setField(ResetSeqNumFlag(true));
+  CHECK(session.acceptLogon(logon.toString(), candidate));
+  CHECK(session.isLoggedOn());
+  session.disconnect();
+  Session::unregisterSession(id);
+}
+
+TEST_CASE("unauthenticated messages preserve persisted session state", "[admission]") {
+  const std::string type = GENERATE("A", "4", "3", "0", "5", "D");
+  const bool resetOnLogon = GENERATE(false, true);
+  const bool refreshOnLogon = GENERATE(false, true);
+  CAPTURE(type, resetOnLogon, refreshOnLogon);
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &) override {
+      ++authenticationCalls;
+      CHECK(session->getExpectedSenderNum() == 7);
+      CHECK(session->getExpectedTargetNum() == 9);
+      throw RejectLogon();
+    }
+    void fromApp(const Message &, const SessionID &) override { ++appCalls; }
+    void toAdmin(Message &, const SessionID &) override { ++outgoingCalls; }
+    bool send(const std::string &) override { return true; }
+    void disconnect() override {}
+    Session *session = nullptr;
+    int authenticationCalls = 0, appCalls = 0, outgoingCalls = 0;
+  } application;
+  SessionID id("FIX.4.2", "AUTHENTICATION", "PEER");
+  FileStoreFactory stores("store");
+  const auto now = UtcTimeStamp::now();
+  {
+    DataDictionaryProvider provider;
+    Session session(
+        [&]() { return now; },
+        application,
+        stores,
+        id,
+        provider,
+        TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+        0,
+        nullptr);
+    application.session = &session;
+    session.setResponder(&application);
+    session.setNextSenderMsgSeqNum(7);
+    session.setNextTargetMsgSeqNum(9);
+    session.setResetOnLogon(resetOnLogon);
+    session.setRefreshOnLogon(refreshOnLogon);
+    if (refreshOnLogon) {
+      FileStore external(now, "store", id);
+      external.setNextSenderMsgSeqNum(11);
+      external.setNextTargetMsgSeqNum(13);
+    }
+    const auto responder = SessionTestAccess::responder(session);
+    Message message;
+    message.getHeader().setField(BeginString("FIX.4.2"));
+    message.getHeader().setField(MsgType(type));
+    message.getHeader().setField(SenderCompID("PEER"));
+    message.getHeader().setField(TargetCompID("AUTHENTICATION"));
+    message.getHeader().setField(SendingTime(now));
+    message.getHeader().setField(MsgSeqNum(1));
+    if (type == "A") {
+      message.setField(EncryptMethod(0));
+      message.setField(HeartBtInt(30));
+      message.setField(ResetSeqNumFlag(true));
+    } else if (type == "4") {
+      message.setField(NewSeqNo(50));
+    }
+    session.next(message, now);
+    CHECK(application.authenticationCalls == (type == "A" ? 1 : 0));
+    CHECK(application.appCalls == 0);
+    CHECK(application.outgoingCalls == 0);
+    CHECK(session.getExpectedSenderNum() == 7);
+    CHECK(session.getExpectedTargetNum() == 9);
+    CHECK(SessionTestAccess::responder(session) == responder);
+    CHECK_FALSE(Session::isSessionRegistered(id));
+  }
+  FileStore reopened(now, "store", id);
+  CHECK(reopened.getNextSenderMsgSeqNum() == (refreshOnLogon ? 11 : 7));
+  CHECK(reopened.getNextTargetMsgSeqNum() == (refreshOnLogon ? 13 : 9));
+}
 
 namespace {
 void fillHeader(FIX::Header &header, const char *sender, const char *target, int seq) {

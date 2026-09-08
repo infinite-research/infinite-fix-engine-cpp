@@ -292,6 +292,77 @@ void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
   }
 }
 
+bool Session::authenticateLogon(const Message &logon, const UtcTimeStamp &now) {
+  try {
+    const Header &header = logon.getHeader();
+    ResetSeqNumFlag reset(false);
+    logon.getFieldIfSet(reset);
+    if (header.getField<MsgType>() != MsgType_Logon || header.getField<BeginString>() != m_sessionID.getBeginString()
+        || !isEnabled() || !isLogonTime(now) || (!reset && !validLogonState(MsgType(MsgType_Logon)))) {
+      return false;
+    }
+    if (!isGoodTime(header.getField<SendingTime>())) {
+      if (receivedLogon()) {
+        doBadTime(logon);
+      }
+      return false;
+    }
+    if (!isCorrectCompID(header.getField<SenderCompID>(), header.getField<TargetCompID>())) {
+      if (receivedLogon()) {
+        doBadCompID(logon);
+      }
+      return false;
+    }
+    fromCallback(MsgType(MsgType_Logon), logon, m_sessionID);
+    return true;
+  } catch (std::exception &e) {
+    m_state.onEvent(e.what());
+    return false;
+  }
+}
+
+bool Session::acceptLogon(const std::string &wire, Responder &responder) {
+  Locker locker(m_mutex);
+  if (isSessionRegistered(m_sessionID)) {
+    return false;
+  }
+  const auto now = UtcTimeStamp::now();
+  Message logon;
+  try {
+    const DataDictionary &dictionary = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
+    logon = Message(wire, dictionary, m_validateLengthAndChecksum);
+    dictionary.validate(logon);
+    if (!authenticateLogon(logon, now)) {
+      return false;
+    }
+  } catch (std::exception &e) {
+    m_state.onEvent(e.what());
+    return false;
+  }
+  if (!registerSession(m_sessionID)) {
+    return false;
+  }
+  Responder *previousResponder = m_pResponder;
+  try {
+    setResponder(&responder);
+    m_state.onIncoming(wire);
+    next(logon, now, false, true);
+  } catch (...) {
+    // A log or application hook may have thrown; release ownership without invoking it again.
+    m_pResponder = previousResponder;
+    m_state.receivedLogon(false);
+    m_state.sentLogon(false);
+    m_state.sentLogout(false);
+    m_state.receivedReset(false);
+    m_state.sentReset(false);
+    m_state.clearQueue();
+    m_state.resendRange(0, 0);
+    unregisterSession(m_sessionID);
+    throw;
+  }
+  return true;
+}
+
 void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
   SenderCompID senderCompId;
   TargetCompID targetCompId;
@@ -335,7 +406,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
     m_state.reset(m_timestamper());
   }
 
-  if (!verify(logon, false, true)) {
+  if (!verify(logon, false, true, false)) {
     return;
   }
   m_state.receivedLogon(true);
@@ -1119,7 +1190,7 @@ void Session::populateRejectReason(Message &reject, int field, const std::string
 
 void Session::populateRejectReason(Message &reject, const std::string &text) { reject.setField(Text(text)); }
 
-bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
+bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow, bool invokeCallback) {
   MsgType msgType;
   MsgSeqNum msgSeqNum;
 
@@ -1178,7 +1249,9 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
   m_state.lastReceivedTime(m_timestamper());
   m_state.testRequest(0);
 
-  fromCallback(msgType, msg, m_sessionID);
+  if (invokeCallback) {
+    fromCallback(msgType, msg, m_sessionID);
+  }
   return true;
 }
 
@@ -1189,6 +1262,9 @@ bool Session::shouldSendReset() {
 }
 
 bool Session::validLogonState(const MsgType &msgType) {
+  if (msgType != MsgType_Logon && !m_state.receivedLogon()) {
+    return false;
+  }
   if ((msgType == MsgType_Logon && m_state.sentReset()) || (m_state.receivedReset())) {
     return true;
   }
@@ -1342,20 +1418,23 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
   }
 }
 
-void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
+void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) { next(message, now, queued, false); }
+
+void Session::next(const Message &message, const UtcTimeStamp &now, bool queued, bool authenticated) {
   const Header &header = message.getHeader();
 
   try {
-    if (!checkSessionTime(now)) {
-      if (!m_detached) {
-        reset();
-      }
-      return;
-    }
-
     MsgType msgType;
     BeginString beginString;
     header.getField(msgType);
+    if (msgType != MsgType_Logon && !receivedLogon()) {
+      if (sentLogon()) {
+        disconnect();
+      } else if (m_pResponder) {
+        m_pResponder->disconnect();
+      }
+      return;
+    }
     header.getField(beginString);
     // make sure these fields are present
     FIELD_THROW_IF_NOT_FOUND(header, SenderCompID);
@@ -1363,6 +1442,31 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
 
     if (beginString != m_sessionID.getBeginString()) {
       throw UnsupportedVersion();
+    }
+
+    if (msgType == MsgType_Logon && !authenticated) {
+      const DataDictionary &dictionary
+          = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
+      dictionary.validate(message);
+      if (!authenticateLogon(message, now)) {
+        if (receivedLogon() || sentLogon()) {
+          disconnect();
+        } else if (m_pResponder) {
+          m_pResponder->disconnect();
+          if (!isLogonTime(now)) {
+            m_pResponder = nullptr;
+          }
+        }
+        return;
+      }
+      authenticated = true;
+    }
+
+    if (!checkSessionTime(now)) {
+      if (!m_detached) {
+        reset();
+      }
+      return;
     }
 
     if (msgType == MsgType_Logon) {

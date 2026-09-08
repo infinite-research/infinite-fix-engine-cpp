@@ -318,11 +318,18 @@ void ThreadedSSLSocketConnection::processStream() {
     if (!m_pSession) {
       if (!setSession(message)) {
         disconnect();
-        continue;
+        return;
       }
+      if (!m_pSession->receivedLogon()) {
+        return;
+      }
+      continue;
     }
     try {
       m_pSession->next(message, UtcTimeStamp::now());
+      if (m_disconnect) {
+        return;
+      }
     } catch (InvalidMessage &) {
       if (!m_pSession->isLoggedOn()) {
         disconnect();
@@ -333,38 +340,31 @@ void ThreadedSSLSocketConnection::processStream() {
 }
 
 bool ThreadedSSLSocketConnection::setSession(const std::string &message) {
-  m_pSession = Session::lookupSession(message, true);
-  if (!m_pSession) {
+  Session *candidate = Session::lookupSession(message, true);
+  if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+      || (!candidate->getAllowedRemoteAddresses().empty()
+          && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
     if (m_pLog) {
-      m_pLog->onEvent("Session not found for incoming message: " + message);
-      m_pLog->onIncoming(message);
+      m_pLog->onEvent("Incoming connection was not admitted");
     }
     return false;
   }
 
-  SessionID sessionID = m_pSession->getSessionID();
-  m_pSession = 0;
+  const SessionID &sessionID = candidate->getSessionID();
 
   // see if the session frees up within 5 seconds
   for (int i = 1; i <= 5; i++) {
     if (!Session::isSessionRegistered(sessionID)) {
-      m_pSession = Session::registerSession(sessionID);
-    }
-    if (m_pSession) {
-      break;
+      if (!candidate->acceptLogon(message, *this)) {
+        return false;
+      }
+      m_pSession = candidate;
+      return true;
     }
     process_sleep(1);
   }
 
-  if (!m_pSession) {
-    return false;
-  }
-  if (m_sessions.find(m_pSession->getSessionID()) == m_sessions.end()) {
-    return false;
-  }
-
-  m_pSession->setResponder(this);
-  return true;
+  return false;
 }
 
 } // namespace FIX

@@ -163,35 +163,23 @@ bool SocketConnection::read(SocketAcceptor &acceptor, SocketServer &server) {
         }
       }
 
-      m_pSession = Session::lookupSession(message, true);
-      if (!isValidSession()) {
-        m_pSession = 0;
+      Session *candidate = Session::lookupSession(message, true);
+      if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+          || Session::isSessionRegistered(candidate->getSessionID())
+          || (!candidate->getAllowedRemoteAddresses().empty()
+              && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
         if (acceptor.getLog()) {
-          acceptor.getLog()->onEvent("Session not found for incoming message: " + message);
-          acceptor.getLog()->onIncoming(message);
+          acceptor.getLog()->onEvent("Incoming connection was not admitted");
         }
-      }
-      if (m_pSession) {
-        m_pSession = acceptor.getSession(message, *this);
-      }
-      if (m_pSession) {
-        m_pSession->next(message, UtcTimeStamp::now());
-      }
-      if (!m_pSession) {
         server.getMonitor().drop(m_socket);
         return false;
       }
-
-      if (m_pSession->isAcceptor()) {
-        std::string remote_address = socket_peername(m_socket);
-        if (!m_pSession->getAllowedRemoteAddresses().empty() && !m_pSession->inAllowedRemoteAddresses(remote_address)) {
-          m_pSession->getLog()->onEvent("Deny connections to the acceptor from " + remote_address);
-          return false;
-        }
-        m_pSession->getLog()->onEvent("Allows connections to the acceptor from " + remote_address);
+      if (!candidate->acceptLogon(message, *this)) {
+        server.getMonitor().drop(m_socket);
+        return false;
       }
+      m_pSession = candidate;
 
-      Session::registerSession(m_pSession->getSessionID());
       return true;
     } else {
       readFromSocket();
@@ -215,17 +203,6 @@ bool SocketConnection::read(SocketAcceptor &acceptor, SocketServer &server) {
   return false;
 }
 
-bool SocketConnection::isValidSession() {
-  if (m_pSession == 0) {
-    return false;
-  }
-  SessionID sessionID = m_pSession->getSessionID();
-  if (Session::isSessionRegistered(sessionID)) {
-    return false;
-  }
-  return !(m_sessions.find(sessionID) == m_sessions.end());
-}
-
 void SocketConnection::readFromSocket() EXCEPT(SocketRecvFailed) {
   ssize_t size = socket_recv(m_socket, m_buffer, sizeof(m_buffer));
   if (size <= 0) {
@@ -245,9 +222,13 @@ void SocketConnection::readMessages(SocketMonitor &socketMonitor) {
   while (readMessage(message)) {
     try {
       m_pSession->next(message, UtcTimeStamp::now());
+      if (!m_pSession->receivedLogon()) {
+        return;
+      }
     } catch (InvalidMessage &) {
       if (!m_pSession->isLoggedOn()) {
         socketMonitor.drop(m_socket);
+        return;
       }
     }
   }

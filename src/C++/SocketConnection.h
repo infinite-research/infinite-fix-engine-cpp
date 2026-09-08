@@ -76,7 +76,6 @@ public:
 private:
   typedef std::deque<std::string, ALLOCATOR<std::string>> Queue;
 
-  bool isValidSession();
   void readFromSocket() EXCEPT(SocketRecvFailed);
   bool readMessage(std::string &msg);
   void readMessages(SocketMonitor &s);
