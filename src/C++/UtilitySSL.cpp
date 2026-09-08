@@ -117,6 +117,8 @@
 
 #if (HAVE_SSL > 0)
 
+#include <filesystem>
+#include <openssl/x509v3.h>
 #include <vector>
 
 #include "Mutex.h"
@@ -939,6 +941,9 @@ long protocolOptions(const char *opt) {
       while ((*w == ' ') || (*w == '\t')) {
         w++;
       }
+      if (w == e) {
+        break;
+      }
       if (*w == '+' || *w == '-') {
         action = *(w++);
       }
@@ -969,6 +974,10 @@ long protocolOptions(const char *opt) {
         thisopt = SSL_PROTOCOL_ALL;
         w += 3 /* strlen("all") */;
       } else {
+        return -1;
+      }
+
+      if (w < e && *w != ' ' && *w != '\t') {
         return -1;
       }
 
@@ -1058,6 +1067,14 @@ SSL_CTX *createSSLContext(bool server, const SessionSettings &settings, std::str
   }
 
   long options = protocolOptions(strOptions.c_str());
+  if (options < 0
+      || !(
+          options
+          & (SSL_PROTOCOL_ALL
+             & ~(SSL_PROTOCOL_SSLV2 | SSL_PROTOCOL_SSLV3 | SSL_PROTOCOL_TLSV1 | SSL_PROTOCOL_TLSV1_1)))) {
+    errStr = "Invalid SSLProtocol: select TLSv1_2 or newer";
+    return 0;
+  }
 
   /* set up the application context */
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L)
@@ -1080,6 +1097,15 @@ SSL_CTX *createSSLContext(bool server, const SessionSettings &settings, std::str
   }
 
   setCtxOptions(ctx, options);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)) {
+    errStr = "Unable to enforce TLS 1.2 minimum";
+    SSL_CTX_free(ctx);
+    return 0;
+  }
+#else
+  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#endif
 
   SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
   if (server) {
@@ -1319,6 +1345,22 @@ bool loadCAInfo(
 
   log->onEvent("Loading CA info");
 
+  verifyLevel = SSL_CLIENT_VERIFY_NONE;
+  if (settings.get().has(CERTIFICATE_VERIFY_LEVEL)) {
+    const std::string level = settings.get().getString(CERTIFICATE_VERIFY_LEVEL);
+    if (level != "0" && level != "1" && level != "2") {
+      errStr = "CertificateVerifyLevel must be 0, 1, or 2";
+      return false;
+    }
+    verifyLevel = level[0] - '0';
+  }
+
+  const int mode = !server || verifyLevel != SSL_CLIENT_VERIFY_NONE ? SSL_VERIFY_PEER : SSL_VERIFY_NONE;
+  SSL_CTX_set_verify(
+      ctx,
+      mode | (server && verifyLevel == SSL_CLIENT_VERIFY_REQUIRE ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+      nullptr);
+
   std::string caFile;
   if (settings.get().has(CERTIFICATE_AUTHORITIES_FILE)) {
     caFile.assign(settings.get().getString(CERTIFICATE_AUTHORITIES_FILE));
@@ -1330,43 +1372,33 @@ bool loadCAInfo(
   }
 
   if (caFile.empty() && caDir.empty()) {
+    if (settings.get().has(CERTIFICATE_AUTHORITIES_FILE) || settings.get().has(CERTIFICATE_AUTHORITIES_DIRECTORY)
+        || (server && verifyLevel != SSL_CLIENT_VERIFY_NONE)) {
+      errStr = "Certificate verification requires usable certification authorities";
+      return false;
+    }
+    if (!server && !SSL_CTX_set_default_verify_paths(ctx)) {
+      errStr = "Unable to load default certification authorities";
+      return false;
+    }
     return true;
   }
 
-  if (!SSL_CTX_load_verify_locations(ctx, caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())
-      || !SSL_CTX_set_default_verify_paths(ctx)) {
+  if ((!caDir.empty() && !std::filesystem::is_directory(caDir))
+      || !SSL_CTX_load_verify_locations(ctx, caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())) {
     errStr.assign("Unable to configure verify locations for client authentication");
     return false;
   }
 
-  STACK_OF(X509_NAME) * caList;
-  if ((caList = findCAList(caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())) == 0) {
-    errStr.assign(
-        "Unable to determine list of available CA certificates "
-        "for client authentication");
-    return false;
-  }
-  SSL_CTX_set_client_CA_list(ctx, caList);
-
-  if (server) {
-    if (settings.get().has(CERTIFICATE_VERIFY_LEVEL)) {
-      verifyLevel = (settings.get().getInt(CERTIFICATE_VERIFY_LEVEL));
+  if (server && verifyLevel != SSL_CLIENT_VERIFY_NONE) {
+    STACK_OF(X509_NAME) *caList = caFile.empty() ? sk_X509_NAME_new_null() : SSL_load_client_CA_file(caFile.c_str());
+    if (!caList || (!caDir.empty() && !SSL_add_dir_cert_subjects_to_stack(caList, caDir.c_str()))
+        || sk_X509_NAME_num(caList) == 0) {
+      sk_X509_NAME_pop_free(caList, X509_NAME_free);
+      errStr = "Unable to load client certification authorities";
+      return false;
     }
-
-    if (verifyLevel != SSL_CLIENT_VERIFY_NOTSET) {
-      /* configure new state */
-      int cVerify = SSL_VERIFY_NONE;
-      if (verifyLevel == SSL_CLIENT_VERIFY_REQUIRE) {
-        cVerify |= SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-      } else if (verifyLevel == SSL_CLIENT_VERIFY_OPTIONAL) {
-        cVerify |= SSL_VERIFY_PEER;
-      }
-
-      SSL_CTX_set_verify(ctx, cVerify, callbackVerify);
-    }
-  } else {
-    /* Set the certificate verification callback */
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, callbackVerify);
+    SSL_CTX_set_client_CA_list(ctx, caList);
   }
 
   return true;
@@ -1392,22 +1424,43 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
   }
 
   if (crlFile.empty() && crlDir.empty()) {
+    if (settings.get().has(CERTIFICATE_REVOCATION_LIST_FILE)
+        || settings.get().has(CERTIFICATE_REVOCATION_LIST_DIRECTORY)) {
+      errStr = "Configured certificate revocation list is empty";
+    }
     return revocationStore;
   }
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-  revocationStore = createX509Store(crlFile.c_str(), crlDir.empty() ? 0 : crlDir.c_str());
-  if (revocationStore == 0) {
-    errStr.assign("Unable to create revocation store");
-  }
-#else
+  // The SSL context owns the store on legacy OpenSSL as well as modern OpenSSL.
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  if (!store || !X509_STORE_load_locations(store, crlFile.c_str(), crlDir.c_str())) {
+  X509_LOOKUP *lookup = store ? X509_STORE_add_lookup(store, X509_LOOKUP_file()) : nullptr;
+  if (!lookup || (!crlFile.empty() && X509_load_crl_file(lookup, crlFile.c_str(), X509_FILETYPE_PEM) <= 0)
+      || !X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL)) {
     errStr.assign("Unable to create revocation store");
     return 0;
   }
-  X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
-#endif
+
+  if (!crlDir.empty()) {
+    int loaded = 0;
+    // A general hash-directory lookup would also trust certificates in this
+    // directory. Load only CRLs, identified by OpenSSL's <hash>.r<number> names.
+    for (const auto &entry : std::filesystem::directory_iterator(crlDir)) {
+      const std::string name = entry.path().filename().string();
+      if (name.size() <= 10 || name.substr(8, 2) != ".r"
+          || name.substr(0, 8).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos
+          || name.find_first_not_of("0123456789", 10) != std::string::npos) {
+        continue;
+      }
+      if (X509_load_crl_file(lookup, entry.path().string().c_str(), X509_FILETYPE_PEM) <= 0) {
+        errStr = "Unable to load CRL directory entry";
+        return 0;
+      }
+      ++loaded;
+    }
+    if (!loaded) {
+      errStr = "No CRLs found in configured directory";
+    }
+  }
 
   return revocationStore;
 }
@@ -1661,8 +1714,7 @@ bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log) {
     if (log) {
       log->onEvent("Failed to set SNI hostname: " + hostname);
     }
-    // Don't fail the connection - SNI is optional
-    return true;
+    return false;
   }
 
   if (log) {
@@ -1670,6 +1722,57 @@ bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log) {
   }
 
   return true;
+}
+
+bool ssl_set_peer_name(SSL *ssl, const std::string &name, Log *log) {
+  if (!ssl || name.empty() || name.find('\0') != std::string::npos) {
+    return false;
+  }
+#if OPENSSL_VERSION_NUMBER < 0x10002000L
+  return false; // This OpenSSL cannot verify a peer's DNS/IP identity.
+#else
+  X509_VERIFY_PARAM *parameters = SSL_get0_param(ssl);
+  unsigned int flags = X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
+#ifdef X509_CHECK_FLAG_NEVER_CHECK_SUBJECT
+  flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+#endif
+  X509_VERIFY_PARAM_set_hostflags(parameters, flags);
+  if (is_ip_address(name)) {
+    const std::string address = name.front() == '[' ? name.substr(1, name.size() - 2) : name;
+    return X509_VERIFY_PARAM_set1_ip_asc(parameters, address.c_str()) == 1;
+  }
+  return X509_VERIFY_PARAM_set1_host(parameters, name.c_str(), name.size()) == 1
+         && ssl_set_sni_hostname(ssl, name, log);
+#endif
+}
+
+bool ssl_peer_matches(SSL *ssl, const std::string &name) {
+  if (name.empty()) {
+    return true;
+  }
+  if (!ssl || !SSL_is_init_finished(ssl) || !(SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER)
+      || SSL_get_verify_result(ssl) != X509_V_OK || name.front() == '.' || name.find('*') != std::string::npos
+      || name.find('\0') != std::string::npos) {
+    return false;
+  }
+#ifndef X509_CHECK_FLAG_NEVER_CHECK_SUBJECT
+  return false; // Exact SAN-only binding requires native OpenSSL support.
+#else
+  X509 *peer = SSL_get_peer_certificate(ssl);
+  if (!peer) {
+    return false;
+  }
+  const std::string address = name.front() == '[' ? name.substr(1, name.size() - 2) : name;
+  const int result = is_ip_address(name) ? X509_check_ip_asc(peer, address.c_str(), 0)
+                                         : X509_check_host(
+                                               peer,
+                                               name.c_str(),
+                                               name.size(),
+                                               X509_CHECK_FLAG_NO_WILDCARDS | X509_CHECK_FLAG_NEVER_CHECK_SUBJECT,
+                                               nullptr);
+  X509_free(peer);
+  return result == 1;
+#endif
 }
 
 } // namespace FIX

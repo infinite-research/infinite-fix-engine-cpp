@@ -154,9 +154,6 @@ ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(
       m_disconnect(false) {
   FD_ZERO(&m_fds);
   FD_SET(m_socket, &m_fds);
-  if (m_pSession) {
-    m_pSession->setResponder(this);
-  }
 }
 
 ThreadedSSLSocketConnection::~ThreadedSSLSocketConnection() {
@@ -342,6 +339,7 @@ void ThreadedSSLSocketConnection::processStream() {
 bool ThreadedSSLSocketConnection::setSession(const std::string &message) {
   Session *candidate = Session::lookupSession(message, true);
   if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+      || !ssl_peer_matches(m_ssl, candidate->getCertificateAcceptedPeerName())
       || (!candidate->getAllowedRemoteAddresses().empty()
           && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
     if (m_pLog) {

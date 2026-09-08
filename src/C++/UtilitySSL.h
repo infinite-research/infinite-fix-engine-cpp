@@ -264,6 +264,7 @@ bool loadCAInfo(
     std::string &errStr,
     int &verifyLevel);
 
+/// Load CRLs into the context-owned store. Returns null; a nonempty errStr indicates failure.
 X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log, std::string &errStr);
 
 int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify);
@@ -287,6 +288,10 @@ bool is_ip_address(const std::string &address);
  * @return true if SNI was set or appropriately skipped, false on error
  */
 bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log = nullptr);
+/// Configure mandatory DNS/IP SAN verification before connecting; send SNI only for DNS.
+bool ssl_set_peer_name(SSL *ssl, const std::string &name, Log *log = nullptr);
+/// Check an optional exact peer SAN against a verified certificate; never match CN or wildcards.
+bool ssl_peer_matches(SSL *ssl, const std::string &name);
 
 } // namespace FIX
 

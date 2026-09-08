@@ -73,9 +73,21 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/UtcTimeStampTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/UtilityTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/UtilitySSLTestCase.cpp)
+  list(APPEND ut_SOURCES ${PROJECT_SOURCE_DIR}/src/C++/test/TLSVerificationTestCase.cpp)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
+  if(HAVE_SSL AND NOT WIN32)
+    add_custom_command(
+      OUTPUT ${CMAKE_BINARY_DIR}/test-runtime/certs/server.crt
+      COMMAND sh ${PROJECT_SOURCE_DIR}/test/generate-test-pki.sh
+                 ${CMAKE_BINARY_DIR}/test-runtime/certs
+      DEPENDS ${PROJECT_SOURCE_DIR}/test/generate-test-pki.sh
+      VERBATIM)
+    add_custom_target(quickfix_test_pki DEPENDS ${CMAKE_BINARY_DIR}/test-runtime/certs/server.crt)
+    add_dependencies(ut quickfix_test_pki)
+  endif()
   target_compile_definitions(ut PRIVATE
+    QUICKFIX_TEST_PKI="${CMAKE_BINARY_DIR}/test-runtime/certs"
     INFINITE_COMPLETE_FRAME_FIXTURE_PATH="${infinite_complete_frame_fixture}"
     INFINITE_FRAME_ADAPTER_ABI_FIXTURE_PATH="${infinite_frame_adapter_abi_fixture}"
     IRFQ_INFINITE_TEST_SUPPORT=1)

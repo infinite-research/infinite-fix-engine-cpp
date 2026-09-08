@@ -86,6 +86,53 @@ public:
     initiator.m_connections[socket] = new SocketConnection(initiator, id, socket, &initiator.m_connector.getMonitor());
   }
 #if HAVE_SSL
+  static void expireTLSHandshake(SSLSocketInitiator &owner, const SessionID &id) {
+    REQUIRE(owner.m_pendingSSLHandshakes.size() == 1);
+    REQUIRE(owner.m_connector.getMonitor().numSockets() == 1);
+    const time_t now = time(nullptr);
+    owner.m_pendingSSLHandshakes.begin()->second->setHandshakeStartTime(now - 11);
+    owner.m_lastConnect = now;
+    owner.onTimeout(owner.m_connector);
+    CHECK(owner.m_pendingSSLHandshakes.empty());
+    CHECK(owner.isDisconnected(id));
+    CHECK(owner.m_connector.getMonitor().numSockets() == 0);
+    owner.m_connector.block(owner, true); // Drain the deferred disconnect before descriptor reuse.
+    CHECK(owner.m_connector.getMonitor().numSockets() == 0);
+  }
+  static void reconnectTLS(SSLSocketInitiator &owner) {
+    owner.m_lastConnect = 0;
+    owner.onTimeout(owner.m_connector);
+  }
+  template <typename Owner>
+  static SSLSocketConnection *attachTLS(
+      Owner &owner,
+      const SessionID &id,
+      socket_handle socket,
+      SSL *ssl,
+      SocketMonitor &monitor) {
+    auto *connection = new SSLSocketConnection(socket, ssl, {id}, &monitor);
+    connection->m_pSession = Session::lookupSession(id);
+    connection->m_pSession->setResponder(connection);
+    owner.m_connections[socket] = connection;
+    return connection;
+  }
+  static void requireWriteRetry(SSLSocketConnection &connection) {
+    connection.readFromSocket();
+    REQUIRE(connection.didReadFromSocketRequestToWrite());
+  }
+  static void writeCallback(SSLSocketInitiator &owner, socket_handle socket, SocketServer &) {
+    owner.onWrite(owner.m_connector, socket);
+    CHECK(owner.m_connections.empty());
+  }
+  static void writeCallback(SSLSocketAcceptor &owner, socket_handle socket, SocketServer &server) {
+    owner.onWrite(server, socket);
+    CHECK(owner.m_connections.empty());
+  }
+  static void deferredDisconnect(SSLSocketAcceptor &owner, socket_handle socket, SocketServer &server) {
+    server.block(owner, true);
+    owner.onDisconnect(server, socket);
+    CHECK(owner.m_connections.empty());
+  }
   static void attachConnection(SSLSocketAcceptor &acceptor, const SessionID &id) {
     auto *connection = new SSLSocketConnection(INVALID_SOCKET_HANDLE, nullptr, {id}, nullptr);
     connection->m_pSession = acceptor.getSession(id);
@@ -147,6 +194,194 @@ public:
 } // namespace FIX
 
 using namespace FIX;
+
+#if HAVE_SSL && !defined(_MSC_VER) && defined(QUICKFIX_TEST_PKI)
+TEST_CASE("TLS handshake timeout drops monitored socket before reconnect", "[tls][timeout]") {
+  NullApplication application;
+  MemoryStoreFactory stores;
+  const SessionID id("FIX.4.2", "TLS-TIMEOUT", "PEER");
+  const std::string certs = QUICKFIX_TEST_PKI;
+  auto closeSocket = [](socket_handle *socket) { socket_close(*socket); };
+  socket_handle listener = socket_createAcceptor(0, true);
+  std::unique_ptr<socket_handle, decltype(closeSocket)> listenerGuard(&listener, closeSocket);
+  REQUIRE(listener != INVALID_SOCKET_HANDLE);
+  sockaddr_in address{};
+  socklen_t length = sizeof(address);
+  REQUIRE(getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length) == 0);
+  Dictionary config;
+  config.setString(CONNECTION_TYPE, "initiator");
+  config.setString(START_TIME, "00:00:00");
+  config.setString(END_TIME, "00:00:00");
+  config.setBool(USE_DATA_DICTIONARY, false);
+  config.setBool(RESET_ON_DISCONNECT, true);
+  config.setInt(HEARTBTINT, 30);
+  config.setInt(RECONNECT_INTERVAL, 60);
+  config.setString(SOCKET_CONNECT_HOST, "localhost");
+  config.setInt(SOCKET_CONNECT_PORT, ntohs(address.sin_port));
+  config.setString(CERTIFICATE_AUTHORITIES_FILE, certs + "/ca.crt");
+  SessionSettings settings;
+  settings.set(config);
+  settings.set(id, config);
+  SSLSocketInitiator owner(application, stores, settings);
+  Session *session = Session::lookupSession(id);
+  REQUIRE(session);
+  session->setNextSenderMsgSeqNum(7);
+  session->setNextTargetMsgSeqNum(9);
+  REQUIRE(owner.poll());
+  socket_handle stalled = socket_accept(listener);
+  std::unique_ptr<socket_handle, decltype(closeSocket)> stalledGuard(&stalled, closeSocket);
+  REQUIRE(stalled != INVALID_SOCKET_HANDLE);
+  CHECK(SessionTestAccess::responder(*session) == nullptr);
+  SessionTestAccess::expireTLSHandshake(owner, id);
+  CHECK(SessionTestAccess::responder(*session) == nullptr);
+  CHECK_FALSE(Session::isSessionRegistered(id));
+  CHECK(session->getExpectedSenderNum() == 7);
+  CHECK(session->getExpectedTargetNum() == 9);
+
+  std::string error;
+  std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(createSSLContext(true, settings, error), SSL_CTX_free);
+  REQUIRE(context);
+  REQUIRE(SSL_CTX_use_certificate_file(context.get(), (certs + "/server.crt").c_str(), SSL_FILETYPE_PEM) == 1);
+  REQUIRE(SSL_CTX_use_PrivateKey_file(context.get(), (certs + "/server.key").c_str(), SSL_FILETYPE_PEM) == 1);
+  SessionTestAccess::reconnectTLS(owner);
+  socket_handle connected = socket_accept(listener);
+  std::unique_ptr<socket_handle, decltype(closeSocket)> connectedGuard(&connected, closeSocket);
+  REQUIRE(connected != INVALID_SOCKET_HANDLE);
+  timeval interval{2, 0};
+  REQUIRE(setsockopt(connected, SOL_SOCKET, SO_RCVTIMEO, &interval, sizeof(interval)) == 0);
+  REQUIRE(setsockopt(connected, SOL_SOCKET, SO_SNDTIMEO, &interval, sizeof(interval)) == 0);
+  auto peer = std::async(std::launch::async, [&]() {
+    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(context.get()), SSL_free);
+    char buffer[4096];
+    int bytes = -1;
+    if (ssl && SSL_set_fd(ssl.get(), connected) == 1 && SSL_accept(ssl.get()) == 1) {
+      bytes = SSL_read(ssl.get(), buffer, sizeof(buffer));
+    }
+    shutdown(connected, SHUT_RDWR);
+    return bytes > 0 ? std::string(buffer, bytes) : std::string();
+  });
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (peer.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready
+         && std::chrono::steady_clock::now() < deadline) {
+    owner.poll();
+  }
+  const auto wire = peer.get();
+  REQUIRE_FALSE(wire.empty());
+  Message logon(wire, false);
+  CHECK(logon.getHeader().getField(FIELD::MsgType) == MsgType_Logon);
+  CHECK(logon.getHeader().getField(FIELD::MsgSeqNum) == "7");
+  SessionTestAccess::dispatchDisconnect(owner, id);
+  owner.stop(true);
+}
+
+TEST_CASE("TLS write retry releases both connection owners", "[tls][write-retry]") {
+  const bool accepting = GENERATE(false, true);
+  CAPTURE(accepting);
+  struct Application : NullApplication, Responder {
+    void onLogout(const SessionID &) override { ++logouts; }
+    bool send(const std::string &) override { return true; }
+    void disconnect() override {}
+    int logouts = 0;
+  } application;
+  MemoryStoreFactory stores;
+  const SessionID id("FIX.4.2", "TLS-RETRY", "PEER");
+  Dictionary config;
+  config.setString(CONNECTION_TYPE, accepting ? "acceptor" : "initiator");
+  config.setString(START_TIME, "00:00:00");
+  config.setString(END_TIME, "00:00:00");
+  config.setBool(USE_DATA_DICTIONARY, false);
+  config.setInt(HEARTBTINT, 30);
+  SessionSettings settings;
+  settings.set(id, config);
+  const auto exercise = [&](auto &owner) {
+    constexpr bool initiating = std::is_base_of_v<Initiator, std::decay_t<decltype(owner)>>;
+    Session *session = Session::lookupSession(id);
+    REQUIRE(session);
+    session->setResponder(&application);
+    if constexpr (initiating) {
+      session->next(UtcTimeStamp::now());
+    }
+    FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+    logon.getHeader().setField(SenderCompID("PEER"));
+    logon.getHeader().setField(TargetCompID("TLS-RETRY"));
+    logon.getHeader().setField(MsgSeqNum(1));
+    logon.getHeader().setField(SendingTime(UtcTimeStamp::now()));
+    session->next(logon, UtcTimeStamp::now());
+    REQUIRE(session->isLoggedOn());
+    REQUIRE(Session::registerSession(id));
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(SSL_CTX_new(TLS_method()), SSL_CTX_free);
+#else
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(SSL_CTX_new(SSLv23_method()), SSL_CTX_free);
+#endif
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+    REQUIRE(SSL_CTX_set_num_tickets(context.get(), 0) == 1);
+#else
+    SSL_CTX_set_options(context.get(), SSL_OP_NO_TICKET);
+#endif
+    const std::string certs = QUICKFIX_TEST_PKI;
+    REQUIRE(SSL_CTX_use_certificate_file(context.get(), (certs + "/server.crt").c_str(), SSL_FILETYPE_PEM) == 1);
+    REQUIRE(SSL_CTX_use_PrivateKey_file(context.get(), (certs + "/server.key").c_str(), SSL_FILETYPE_PEM) == 1);
+    SSL *local = SSL_new(context.get());
+    std::unique_ptr<SSL, decltype(&SSL_free)> peer(SSL_new(context.get()), SSL_free);
+    BIO *localBio = nullptr, *peerBio = nullptr;
+    REQUIRE(BIO_new_bio_pair(&localBio, 128, &peerBio, 128) == 1);
+    SSL_set_bio(local, localBio, localBio);
+    SSL_set_bio(peer.get(), peerBio, peerBio);
+    SSL_set_connect_state(local);
+    SSL_set_accept_state(peer.get());
+    SSL_set_quiet_shutdown(local, 1);
+    const auto sockets = socket_createpair();
+    REQUIRE(sockets.first != INVALID_SOCKET_HANDLE);
+    REQUIRE(sockets.second != INVALID_SOCKET_HANDLE);
+    SocketServer server;
+    SocketMonitor *monitor = &server.getMonitor();
+    if constexpr (initiating) {
+      monitor = &SessionTestAccess::connectMonitor(owner, id);
+    }
+    REQUIRE(monitor->addRead(sockets.second));
+    auto *connection = SessionTestAccess::attachTLS(owner, id, sockets.second, local, *monitor);
+    // A 128-byte BIO fills while SSL_read writes ClientHello. The retry flag is
+    // produced by real OpenSSL I/O, never assigned by the test.
+    SessionTestAccess::requireWriteRetry(*connection);
+    for (int i = 0; i < 1000 && (!SSL_is_init_finished(local) || !SSL_is_init_finished(peer.get())); ++i) {
+      SSL_do_handshake(peer.get());
+      SSL_do_handshake(local);
+    }
+    REQUIRE(SSL_is_init_finished(local));
+    REQUIRE(SSL_is_init_finished(peer.get()));
+    const std::string oversized = "8=FIX.4.2\0019=16777217\001";
+    // TLS 1.3 post-handshake tickets can occupy the bounded BIO first.
+    char buffer[4096];
+    for (int i = 0; i < 100; ++i) {
+      int sent = SSL_write(peer.get(), oversized.data(), static_cast<int>(oversized.size()));
+      if (sent > 0) {
+        break;
+      }
+      SSL_read(local, buffer, sizeof(buffer));
+    }
+    SessionTestAccess::writeCallback(owner, sockets.second, server);
+    CHECK_FALSE(session->isLoggedOn());
+    CHECK(SessionTestAccess::responder(*session) == nullptr);
+    CHECK_FALSE(Session::isSessionRegistered(id));
+    CHECK(application.logouts == 1);
+    if constexpr (initiating) {
+      SessionTestAccess::dispatchDisconnect(owner, id);
+    } else {
+      SessionTestAccess::deferredDisconnect(owner, sockets.second, server);
+    }
+    CHECK(application.logouts == 1);
+    socket_close(sockets.first);
+  };
+  if (accepting) {
+    SSLSocketAcceptor owner(application, stores, settings);
+    exercise(owner);
+  } else {
+    SSLSocketInitiator owner(application, stores, settings);
+    exercise(owner);
+  }
+}
+#endif
 
 TEST_CASE("rejected first initiator response allows immediate reconnect", "[admission][review-r2]") {
   const std::string type = GENERATE("A", "4", "5");

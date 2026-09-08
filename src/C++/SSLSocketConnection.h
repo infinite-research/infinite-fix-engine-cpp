@@ -189,6 +189,7 @@ public:
 
 private:
   friend class SessionTestAccess;
+  friend class SSLSocketInitiator;
   typedef std::deque<std::string, ALLOCATOR<std::string>> Queue;
 
   void readFromSocket() EXCEPT(SocketRecvFailed);

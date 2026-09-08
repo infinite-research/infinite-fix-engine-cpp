@@ -234,6 +234,9 @@ Session *SessionFactory::create(const SessionID &sessionID, const Dictionary &se
   if (settings.has(ALLOWED_REMOTE_ADDRESSES)) {
     pSession->setAllowedRemoteAddresses(string_split(settings.getString(ALLOWED_REMOTE_ADDRESSES), ','));
   }
+  if (settings.has(CERTIFICATE_ACCEPTED_PEER_NAME)) {
+    pSession->setCertificateAcceptedPeerName(settings.getString(CERTIFICATE_ACCEPTED_PEER_NAME));
+  }
 
   return pSession.release();
 }

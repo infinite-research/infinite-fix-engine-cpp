@@ -124,6 +124,7 @@
 #include "Session.h"
 #include "Settings.h"
 #include "UtilitySSL.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 
@@ -208,6 +209,13 @@ void SSLSocketInitiator::onInitialize(const SessionSettings &s) EXCEPT(RuntimeEr
   }
 
   ssl_init();
+  auto cleanup = sg::make_scope_guard([&]() {
+    if (!m_sslInit) {
+      SSL_CTX_free(m_ctx);
+      m_ctx = nullptr;
+      ssl_term();
+    }
+  });
 
   std::string errStr;
 
@@ -218,22 +226,23 @@ void SSLSocketInitiator::onInitialize(const SessionSettings &s) EXCEPT(RuntimeEr
 
   if (m_cert && m_key) {
     if (SSL_CTX_use_certificate(m_ctx, m_cert) < 1) {
-      ssl_term();
       throw RuntimeError("Failed to set certificate");
     }
 
     if (SSL_CTX_use_RSAPrivateKey(m_ctx, m_key) <= 0) {
-      ssl_term();
       throw RuntimeError("Failed to set key");
     }
   } else if (!loadSSLCert(m_ctx, false, s, getLog(), SSLSocketInitiator::passwordHandleCB, this, errStr)) {
-    ssl_term();
     throw RuntimeError(errStr);
   }
 
   int verifyLevel;
   if (!loadCAInfo(m_ctx, false, s, getLog(), errStr, verifyLevel)) {
-    ssl_term();
+    throw RuntimeError(errStr);
+  }
+
+  loadCRLInfo(m_ctx, s, getLog(), errStr);
+  if (!errStr.empty()) {
     throw RuntimeError(errStr);
   }
 
@@ -328,7 +337,12 @@ void SSLSocketInitiator::doConnect(const SessionID &sessionID, const Dictionary 
     SSL_set_bio(ssl, sbio, sbio);
 
     // Set SNI hostname for TLS connections
-    ssl_set_sni_hostname(ssl, host.address, log);
+    if (!ssl_set_peer_name(ssl, host.address, log)) {
+      log->onEvent("Unable to configure TLS peer name verification");
+      SSL_free(ssl);
+      m_connector.getMonitor().drop(result);
+      return;
+    }
 
     setPending(sessionID);
     m_pendingConnections[result] = new SSLSocketConnection(*this, sessionID, result, ssl, &m_connector.getMonitor());
@@ -372,7 +386,7 @@ SSLHandshakeStatus SSLSocketInitiator::handshakeSSL(SSLSocketConnection *connect
     }
   }
 
-  return SSL_HANDSHAKE_SUCCEDED;
+  return SSL_get_verify_result(ssl) == X509_V_OK ? SSL_HANDSHAKE_SUCCEDED : SSL_HANDSHAKE_FAILED;
 }
 
 void SSLSocketInitiator::onConnect(SocketConnector &connector, socket_handle socket) {
@@ -404,6 +418,7 @@ void SSLSocketInitiator::handshakeSSLAndHandleConnection(SocketConnector &connec
   SSLHandshakeStatus sslHandshakeStatus = handshakeSSL(pSocketConnection);
 
   if (sslHandshakeStatus == SSL_HANDSHAKE_SUCCEDED) {
+    getSession(pSocketConnection->getSession()->getSessionID(), *pSocketConnection);
     m_connections[socket] = pSocketConnection;
     m_pendingSSLHandshakes.erase(i);
     setConnected(pSocketConnection->getSession()->getSessionID());
@@ -415,7 +430,7 @@ void SSLSocketInitiator::handshakeSSLAndHandleConnection(SocketConnector &connec
 
     Session *pSession = pSocketConnection->getSession();
     if (pSession) {
-      pSession->disconnect();
+      pSession->disconnectIfConnected();
       setDisconnected(pSession->getSessionID());
     }
 
@@ -537,11 +552,11 @@ void SSLSocketInitiator::disconnectPendingSSLHandshakesThatTakeTooLong(time_t no
     if (pSocketConnection->getSecondsFromHandshakeStart(now) > 10) {
       getLog()->onEvent("SSL Handshake took too long to complete");
 
-      setDisconnected(pSocketConnection->getSession()->getSessionID());
+      pSocketConnection->disconnect();
 
       Session *pSession = pSocketConnection->getSession();
       if (pSession) {
-        pSession->disconnect();
+        pSession->disconnectIfConnected();
         setDisconnected(pSession->getSessionID());
       }
 

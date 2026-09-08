@@ -123,6 +123,7 @@
 #include "Settings.h"
 #include "ThreadedSSLSocketAcceptor.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 
@@ -184,28 +185,31 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
   if (!m_sslInit) {
 
     ssl_init();
+    auto cleanup = sg::make_scope_guard([&]() {
+      if (!m_sslInit) {
+        SSL_CTX_free(m_ctx);
+        m_ctx = nullptr;
+        ssl_term();
+      }
+    });
 
     std::string errStr;
 
     /* set up the application context */
     if ((m_ctx = createSSLContext(true, m_settings, errStr)) == 0) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadSSLCert(m_ctx, true, m_settings, getLog(), ThreadedSSLSocketAcceptor::passPhraseHandleCB, this, errStr)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadCAInfo(m_ctx, true, m_settings, getLog(), errStr, m_verify)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     m_revocationStore = loadCRLInfo(m_ctx, m_settings, getLog(), errStr);
     if (!m_revocationStore && !errStr.empty()) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 

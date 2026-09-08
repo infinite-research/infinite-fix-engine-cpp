@@ -203,6 +203,10 @@ public:
   void setIsNonStopSession(bool value) { m_isNonStopSession = value; }
 
   const std::set<std::string> &getAllowedRemoteAddresses() const { return m_allowedRemoteAddresses; }
+  /// Optional exact peer SAN enforced by TLS acceptors before Logon admission.
+  const std::string &getCertificateAcceptedPeerName() const { return m_certificateAcceptedPeerName; }
+  /// Set an exact DNS/IP SAN; an empty value disables certificate-to-session binding.
+  void setCertificateAcceptedPeerName(const std::string &value) { m_certificateAcceptedPeerName = value; }
   void setAllowedRemoteAddresses(const std::set<std::string> &value) { m_allowedRemoteAddresses = value; }
   bool inAllowedRemoteAddresses(const std::string &value) const {
     return (m_allowedRemoteAddresses.cend() != m_allowedRemoteAddresses.find(value));
@@ -371,6 +375,7 @@ private:
   Responder *m_pResponder;
   bool m_detached;
   Mutex m_mutex;
+  std::string m_certificateAcceptedPeerName;
 
   static Sessions s_sessions;
   static SessionIDs s_sessionIDs;

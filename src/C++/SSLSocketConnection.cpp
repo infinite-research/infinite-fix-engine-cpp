@@ -150,7 +150,7 @@ SSLSocketConnection::SSLSocketConnection(
     : m_socket(socket),
       m_ssl(ssl),
       m_sendLength(0),
-      m_pSession(initiator.getSession(sessionID, *this)),
+      m_pSession(initiator.getSession(sessionID)),
       m_pMonitor(pMonitor) {
 #ifdef _MSC_VER
   FD_ZERO(&m_fds);
@@ -299,6 +299,7 @@ bool SSLSocketConnection::read(SSLSocketAcceptor &acceptor, SocketServer &server
       Session *candidate = Session::lookupSession(message, true);
       if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
           || Session::isSessionRegistered(candidate->getSessionID())
+          || !ssl_peer_matches(m_ssl, candidate->getCertificateAcceptedPeerName())
           || (!candidate->getAllowedRemoteAddresses().empty()
               && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
         if (acceptor.getLog()) {

@@ -139,6 +139,8 @@ const char CLIENT_CERTIFICATE_FILE[] = "ClientCertificateFile";
 const char CLIENT_CERTIFICATE_KEY_FILE[] = "ClientCertificateKeyFile";
 const char CERTIFICATE_AUTHORITIES_FILE[] = "CertificationAuthoritiesFile";
 const char CERTIFICATE_AUTHORITIES_DIRECTORY[] = "CertificationAuthoritiesDirectory";
+/// Optional exact DNS/IP subject alternative name required for an accepted TLS session.
+const char CERTIFICATE_ACCEPTED_PEER_NAME[] = "CertificateAcceptedPeerName";
 const char CERTIFICATE_REVOCATION_LIST_FILE[] = "CertificateRevocationListFile";
 const char CERTIFICATE_REVOCATION_LIST_DIRECTORY[] = "CertificateRevocationListDirectory";
 const char CERTIFICATE_VERIFY_LEVEL[] = "CertificateVerifyLevel";
