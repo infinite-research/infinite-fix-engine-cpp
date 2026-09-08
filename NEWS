@@ -2,6 +2,11 @@
 1.16.0
 ------
 
+HttpAcceptPort is no longer supported and configurations containing it are
+rejected. Use in-process Session methods behind a host-owned authenticated
+management boundary. Physical removal of the HTTP compatibility types is
+deferred to the next ABI-major release.
+
 Session synchronisation at initiation using tag NextExpectedMsgSeqNum (789)
 
 MillisecondsInTimeStamp=N config correctly disabled milliseconds

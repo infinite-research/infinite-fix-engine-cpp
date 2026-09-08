@@ -43,6 +43,7 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/HostDetailsProviderTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpMessageTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/HttpParserTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/HttpServerTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteCompleteFrameTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/InfiniteFrameAdapterTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp

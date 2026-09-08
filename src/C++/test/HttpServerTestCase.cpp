@@ -1,5 +1,3 @@
-/* -*- C++ -*- */
-
 /****************************************************************************
 ** Copyright (c) 2001-2014
 **
@@ -19,36 +17,33 @@
 **
 ****************************************************************************/
 
-#ifndef FIX_HTTPCONNECTION_H
-#define FIX_HTTPCONNECTION_H
-
 #ifdef _MSC_VER
-#pragma warning(disable : 4503 4355 4786 4290)
+#pragma warning(disable : 4503 4355 4786)
+#include "stdafx.h"
+#else
+#include "config.h"
 #endif
 
-#include "HttpParser.h"
-#include <stdio.h>
+#include <HttpServer.h>
 
-namespace FIX {
-class HttpMessage;
+#include "catch_amalgamated.hpp"
 
-/// @deprecated Embedded HTTP administration is no longer supported.
-class HttpConnection {
-public:
-  HttpConnection(socket_handle s);
+using namespace FIX;
 
-  socket_handle getSocket() const { return m_socket; }
-  bool read();
+TEST_CASE("HttpServerTests") {
+  SessionSettings configured;
+  Dictionary defaults;
+  defaults.setString(HTTP_ACCEPT_PORT, "9911");
+  configured.set(defaults);
 
-private:
-  socket_handle m_socket;
-  char m_buffer[BUFSIZ];
+  CHECK_THROWS_WITH(
+      HttpServer::startGlobal(configured),
+      Catch::Matchers::ContainsSubstring("HttpAcceptPort is no longer supported"));
+  CHECK_THROWS_WITH(
+      HttpServer(configured).start(),
+      Catch::Matchers::ContainsSubstring("HttpAcceptPort is no longer supported"));
 
-  HttpParser m_parser;
-#if _MSC_VER
-  fd_set m_fds;
-#endif
-};
-} // namespace FIX
-
-#endif
+  SessionSettings unconfigured;
+  CHECK_NOTHROW(HttpServer::startGlobal(unconfigured));
+  CHECK_NOTHROW(HttpServer::stopGlobal());
+}
