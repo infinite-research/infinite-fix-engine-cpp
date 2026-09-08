@@ -34,6 +34,7 @@ namespace FIX {
 /// Socket implementation of Acceptor.
 class SocketAcceptor : public Acceptor, SocketServer::Strategy {
   friend class SocketConnection;
+  friend class SessionTestAccess;
 
 public:
   typedef std::map<SessionID, uint16_t> SessionToPort;

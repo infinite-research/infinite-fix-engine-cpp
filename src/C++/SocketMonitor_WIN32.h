@@ -53,6 +53,8 @@ public:
   size_t numSockets() { return m_readSockets.size() - 1; }
 
 private:
+  friend class ConnectorWrapper;
+  bool drop(socket_handle socket, bool notify);
   typedef std::set<socket_handle> Sockets;
   typedef std::queue<socket_handle> Queue;
 

@@ -135,6 +135,7 @@ namespace FIX {
 /// Socket implementation of Acceptor.
 class SSLSocketAcceptor : public Acceptor, SocketServer::Strategy {
   friend class SSLSocketConnection;
+  friend class SessionTestAccess;
 
 public:
   SSLSocketAcceptor(Application &, MessageStoreFactory &, const SessionSettings &) EXCEPT(ConfigError);

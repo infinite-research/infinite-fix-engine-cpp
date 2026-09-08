@@ -94,7 +94,9 @@ bool SocketMonitor::addWrite(socket_handle s) {
   return true;
 }
 
-bool SocketMonitor::drop(socket_handle s) {
+bool SocketMonitor::drop(socket_handle s) { return drop(s, true); }
+
+bool SocketMonitor::drop(socket_handle s, bool notify) {
   Sockets::iterator i = m_readSockets.find(s);
   Sockets::iterator j = m_writeSockets.find(s);
   Sockets::iterator k = m_connectSockets.find(s);
@@ -104,7 +106,9 @@ bool SocketMonitor::drop(socket_handle s) {
     m_readSockets.erase(s);
     m_writeSockets.erase(s);
     m_connectSockets.erase(s);
-    m_dropped.push(s);
+    if (notify) {
+      m_dropped.push(s);
+    }
     return true;
   }
   return false;
@@ -211,7 +215,7 @@ void SocketMonitor::processReadSet(Strategy &strategy, fd_set &readSet) {
       socket_handle socket = 0;
       socket_recv(s, (char *)&socket, sizeof(socket));
       addWrite(socket);
-    } else {
+    } else if (m_readSockets.count(s)) {
       strategy.onEvent(*this, s);
     }
   }
@@ -224,7 +228,7 @@ void SocketMonitor::processWriteSet(Strategy &strategy, fd_set &writeSet) {
       m_connectSockets.erase(s);
       m_readSockets.insert(s);
       strategy.onConnect(*this, s);
-    } else {
+    } else if (m_writeSockets.count(s)) {
       strategy.onWrite(*this, s);
     }
   }
@@ -233,7 +237,9 @@ void SocketMonitor::processWriteSet(Strategy &strategy, fd_set &writeSet) {
 void SocketMonitor::processExceptSet(Strategy &strategy, fd_set &exceptSet) {
   for (unsigned i = 0; i < exceptSet.fd_count; ++i) {
     socket_handle s = exceptSet.fd_array[i];
-    strategy.onError(*this, s);
+    if (m_connectSockets.count(s)) {
+      strategy.onError(*this, s);
+    }
   }
 }
 

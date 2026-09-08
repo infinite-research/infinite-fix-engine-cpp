@@ -339,14 +339,35 @@ bool Session::acceptLogon(const std::string &wire, Responder &responder) {
     m_state.onEvent(e.what());
     return false;
   }
-  if (!registerSession(m_sessionID)) {
-    return false;
-  }
   Responder *previousResponder = m_pResponder;
+  bool registered = false;
   try {
+    if (m_sessionID.isFIXT() && logon.isSetField(FIELD::DefaultApplVerID)) {
+      try {
+        m_dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(logon.getField<DefaultApplVerID>()));
+      } catch (DataDictionaryNotFound &e) {
+        // Send the protocol rejection without refreshing or preparing a new session period.
+        m_pResponder = &responder;
+        m_state.onIncoming(wire);
+        m_state.onEvent(e.what());
+        generateLogout(e.what());
+        disconnect(false);
+        m_pResponder = previousResponder;
+        return false;
+      }
+    }
+    if (!registerSession(m_sessionID)) {
+      return false;
+    }
+    registered = true;
     setResponder(&responder);
     m_state.onIncoming(wire);
     next(logon, now, false, true);
+    if (!receivedLogon()) {
+      m_pResponder = previousResponder;
+      unregisterSession(m_sessionID);
+      return false;
+    }
   } catch (...) {
     // A log or application hook may have thrown; release ownership without invoking it again.
     m_pResponder = previousResponder;
@@ -357,7 +378,9 @@ bool Session::acceptLogon(const std::string &wire, Responder &responder) {
     m_state.sentReset(false);
     m_state.clearQueue();
     m_state.resendRange(0, 0);
-    unregisterSession(m_sessionID);
+    if (registered) {
+      unregisterSession(m_sessionID);
+    }
     throw;
   }
   return true;
@@ -810,7 +833,16 @@ bool Session::send(const std::string &string) {
   return m_pResponder->send(string);
 }
 
-void Session::disconnect() {
+void Session::disconnect() { disconnect(m_resetOnDisconnect); }
+
+void Session::disconnectIfConnected() {
+  Locker l(m_mutex);
+  if (m_pResponder) {
+    disconnect();
+  }
+}
+
+void Session::disconnect(bool resetStore) {
   Locker l(m_mutex);
 
   if (m_pResponder) {
@@ -831,7 +863,7 @@ void Session::disconnect() {
   m_state.sentReset(false);
   m_state.clearQueue();
   m_state.logoutReason();
-  if (!m_detached && m_resetOnDisconnect) {
+  if (!m_detached && resetStore) {
     m_state.reset(m_timestamper());
   }
 
@@ -1054,9 +1086,7 @@ void Session::generateReject(const Message &message, int err, int field) {
     reason = SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP_TEXT;
     break;
   case SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION:
-    if (m_detached) {
-      reason = "Invalid or unsupported application version";
-    }
+    reason = "Invalid or unsupported application version";
     break;
   };
 
@@ -1405,6 +1435,9 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
     } else {
       next(Message(msg, sessionDD, m_validateLengthAndChecksum), now, queued);
     }
+  } catch (DataDictionaryNotFound &e) {
+    m_state.onEvent(e.what());
+    disconnect();
   } catch (InvalidMessage &e) {
     m_state.onEvent(e.what());
 
@@ -1462,6 +1495,10 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued,
       authenticated = true;
     }
 
+    if (msgType == MsgType_Logon && m_sessionID.isFIXT()) {
+      m_dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(message.getField<DefaultApplVerID>()));
+    }
+
     if (!checkSessionTime(now)) {
       if (!m_detached) {
         reset();
@@ -1514,6 +1551,14 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued,
     }
   } catch (MessageParseError &e) {
     m_state.onEvent(e.what());
+  } catch (DataDictionaryNotFound &e) {
+    m_state.onEvent(e.what());
+    if (message.isApp()) {
+      LOGEX(generateReject(message, SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION, FIELD::ApplVerID));
+    } else {
+      generateLogout(e.what());
+      disconnect(header.getField<MsgType>() != MsgType_Logon && m_resetOnDisconnect);
+    }
   } catch (RequiredTagMissing &e) {
     LOGEX(generateReject(message, SessionRejectReason_REQUIRED_TAG_MISSING, e.field));
   } catch (FieldNotFound &e) {

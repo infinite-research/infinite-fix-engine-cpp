@@ -74,6 +74,7 @@ public:
   void onTimeout();
 
 private:
+  friend class SessionTestAccess;
   typedef std::deque<std::string, ALLOCATOR<std::string>> Queue;
 
   void readFromSocket() EXCEPT(SocketRecvFailed);

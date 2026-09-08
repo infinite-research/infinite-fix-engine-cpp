@@ -209,11 +209,14 @@ public:
   }
 
   void setResponder(Responder *pR) {
-    if (m_refreshOnLogon) {
-      refresh();
-    }
-    if (!m_detached && !checkSessionTime(m_timestamper())) {
-      reset();
+    Locker locker(m_mutex);
+    if (pR) {
+      if (m_refreshOnLogon) {
+        refresh();
+      }
+      if (!m_detached && !checkSessionTime(m_timestamper())) {
+        reset();
+      }
     }
     m_pResponder = pR;
   }
@@ -238,6 +241,10 @@ public:
 private:
   friend class InfiniteSessionPlanner;
   friend class SessionTestAccess;
+  friend class SocketInitiator;
+  friend class SSLSocketInitiator;
+  friend class SocketAcceptor;
+  friend class SSLSocketAcceptor;
 
   Session(
       std::function<UtcTimeStamp()> timestamper,
@@ -297,6 +304,8 @@ private:
   void fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID);
 
   void doBadTime(const Message &msg);
+  void disconnect(bool resetStore);
+  void disconnectIfConnected();
   void doBadCompID(const Message &msg);
   bool doPossDup(const Message &msg);
   bool doTargetTooLow(const Message &msg);

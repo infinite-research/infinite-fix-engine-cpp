@@ -377,7 +377,7 @@ void SSLSocketAcceptor::onDisconnect(SocketServer &, socket_handle s) {
 
   Session *pSession = pSocketConnection->getSession();
   if (pSession) {
-    pSession->disconnect();
+    pSession->disconnectIfConnected();
   }
 
   delete pSocketConnection;

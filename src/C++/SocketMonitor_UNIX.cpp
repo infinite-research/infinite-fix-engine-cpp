@@ -90,7 +90,9 @@ bool SocketMonitor::addWrite(socket_handle s) {
   return true;
 }
 
-bool SocketMonitor::drop(socket_handle s) {
+bool SocketMonitor::drop(socket_handle s) { return drop(s, true); }
+
+bool SocketMonitor::drop(socket_handle s, bool notify) {
   Sockets::iterator i = m_readSockets.find(s);
   Sockets::iterator j = m_writeSockets.find(s);
   Sockets::iterator k = m_connectSockets.find(s);
@@ -100,7 +102,9 @@ bool SocketMonitor::drop(socket_handle s) {
     m_readSockets.erase(s);
     m_writeSockets.erase(s);
     m_connectSockets.erase(s);
-    m_dropped.push(s);
+    if (notify) {
+      m_dropped.push(s);
+    }
     return true;
   }
   return false;
@@ -212,14 +216,16 @@ void SocketMonitor::processError(Strategy &strategy, socket_handle socket_fd) { 
 
 void SocketMonitor::processPollList(Strategy &strategy, struct pollfd *pfds, unsigned pfds_size) {
   for (unsigned i = 0; i < pfds_size; ++i) {
-    if ((pfds[i].revents & POLLIN) || (pfds[i].revents & POLLPRI)) {
+    if (((pfds[i].revents & POLLIN) || (pfds[i].revents & POLLPRI)) && m_readSockets.count(pfds[i].fd)) {
       processRead(strategy, pfds[i].fd);
     }
 
-    if ((pfds[i].revents & POLLOUT)) {
+    if ((pfds[i].revents & POLLOUT) && (m_writeSockets.count(pfds[i].fd) || m_connectSockets.count(pfds[i].fd))) {
       processWrite(strategy, pfds[i].fd);
     }
-    if ((pfds[i].revents & POLLERR) || ((pfds[i].revents & POLLHUP) && !(pfds[i].revents & POLLIN))) {
+    if (((pfds[i].revents & POLLERR) || ((pfds[i].revents & POLLHUP) && !(pfds[i].revents & POLLIN)))
+        && (m_readSockets.count(pfds[i].fd) || m_writeSockets.count(pfds[i].fd)
+            || m_connectSockets.count(pfds[i].fd))) {
       processError(strategy, pfds[i].fd);
     }
   }

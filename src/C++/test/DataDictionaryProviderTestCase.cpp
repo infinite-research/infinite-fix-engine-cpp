@@ -26,6 +26,8 @@
 
 #include <DataDictionaryProvider.h>
 #include <Fields.h>
+#include <InfiniteSessionClassification.h>
+#include <Message.h>
 #include <Values.h>
 
 #include "catch_amalgamated.hpp"
@@ -33,6 +35,15 @@
 using namespace FIX;
 
 TEST_CASE("DataDictionaryProviderTests") {
+  SECTION("configured application dictionaries reject unknown versions") {
+    DataDictionaryProvider object;
+    auto dictionary = std::make_shared<DataDictionary>();
+    dictionary->setVersion(BeginString_FIX50);
+    object.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX50), dictionary);
+    CHECK_THROWS_AS(object.getApplicationDataDictionary(ApplVerID(ApplVerID_FIX42)), DataDictionaryNotFound);
+    CHECK(&object.getApplicationDataDictionary(ApplVerID(ApplVerID_FIX50)) == dictionary.get());
+  }
+
   SECTION("getApplicationDataDictionary_DataDictionaryNotSet") {
     DataDictionaryProvider object;
     DataDictionary expected;
@@ -65,5 +76,86 @@ TEST_CASE("DataDictionaryProviderTests") {
     CHECK(&assigned.getApplicationDataDictionary(applVerID) == applicationDictionary.get());
     CHECK(copied.getSessionDataDictionary(beginString).getVersion() == BeginString_FIX42);
     CHECK(copied.getApplicationDataDictionary(applVerID).getVersion() == BeginString_FIX50);
+  }
+}
+
+TEST_CASE("Infinite callers reject missing configured application dictionary", "[infinite][dictionary]") {
+  DataDictionaryProvider dictionaries;
+  dictionaries.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX50), std::make_shared<DataDictionary>());
+  InfiniteSessionStaticProfile profile;
+  profile.scheduleMode = 1;
+  profile.timestampPrecision = 6;
+  const auto now = INT64_C(1700000000123456000);
+  Message message;
+  message.getHeader().setField(BeginString("FIXT.1.1"));
+  message.getHeader().setField(MsgType("U1"));
+  message.getHeader().setField(SenderCompID("LOCAL"));
+  message.getHeader().setField(TargetCompID("PEER"));
+  message.getHeader().setField(MsgSeqNum(1));
+  message.getHeader().setField(SendingTime(UtcTimeStamp(22, 13, 20, 14, 11, 2023)));
+  message.setField(Text("hello"));
+  SECTION("application rendering") {
+    CHECK_THROWS_AS(
+        InfiniteSessionPlanner::application(
+            "FIXT.1.1",
+            "LOCAL",
+            "PEER",
+            30,
+            2,
+            2,
+            now,
+            "U1",
+            "58=hello\001",
+            InfiniteApplicationRenderMode::Original,
+            0,
+            dictionaries,
+            profile),
+        DataDictionaryNotFound);
+  }
+  SECTION("stored frame validation translates the dictionary exception") {
+    CHECK_THROWS_AS(
+        InfiniteSessionPlanner::
+            storedFrame("FIXT.1.1", "LOCAL", "PEER", 30, 2, 2, now, 0, message.toString(), dictionaries, profile),
+        std::invalid_argument);
+  }
+  SECTION("inbound classification translates the dictionary exception") {
+    message.getHeader().setField(SenderCompID("PEER"));
+    message.getHeader().setField(TargetCompID("LOCAL"));
+    CHECK_THROWS_AS(
+        InfiniteSessionPlanner::inbound(
+            "FIXT.1.1",
+            "LOCAL",
+            "PEER",
+            30,
+            2,
+            1,
+            now,
+            now,
+            now,
+            now,
+            7,
+            0,
+            0,
+            message.toString(),
+            dictionaries,
+            profile),
+        std::invalid_argument);
+  }
+  SECTION("gap fill fails closed with unavailable configured dictionaries") {
+    CHECK_THROWS(
+        InfiniteSessionPlanner::gapFill(
+            "FIXT.1.1",
+            "LOCAL",
+            "PEER",
+            30,
+            4,
+            2,
+            now,
+            1,
+            2,
+            0,
+            &dictionaries,
+            &profile,
+            "20231114-22:13:20.000000"));
   }
 }

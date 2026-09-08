@@ -33,6 +33,9 @@
 #include <Responder.h>
 #include <Session.h>
 #include <SessionID.h>
+#include <SocketAcceptor.h>
+#include <SocketInitiator.h>
+#include <ThreadedSocketConnection.h>
 #include <TimeRange.h>
 #include <Values.h>
 #include <fix40/ExecutionReport.h>
@@ -60,10 +63,58 @@
 
 #include <future>
 #include <memory>
+#include <type_traits>
+#if HAVE_SSL
+#include <SSLSocketAcceptor.h>
+#include <SSLSocketInitiator.h>
+#include <ThreadedSSLSocketConnection.h>
+#endif
 
 namespace FIX {
 class SessionTestAccess {
 public:
+  static void attachConnection(SocketAcceptor &acceptor, const SessionID &id) {
+    auto *connection = new SocketConnection(INVALID_SOCKET_HANDLE, {id}, nullptr);
+    connection->m_pSession = acceptor.getSession(id);
+    acceptor.m_connections[INVALID_SOCKET_HANDLE] = connection;
+  }
+  static void disconnectCallback(SocketAcceptor &acceptor) {
+    SocketServer server;
+    acceptor.onDisconnect(server, INVALID_SOCKET_HANDLE);
+  }
+  static void attachConnection(SocketInitiator &initiator, const SessionID &id, socket_handle socket) {
+    initiator.m_connections[socket] = new SocketConnection(initiator, id, socket, &initiator.m_connector.getMonitor());
+  }
+#if HAVE_SSL
+  static void attachConnection(SSLSocketAcceptor &acceptor, const SessionID &id) {
+    auto *connection = new SSLSocketConnection(INVALID_SOCKET_HANDLE, nullptr, {id}, nullptr);
+    connection->m_pSession = acceptor.getSession(id);
+    acceptor.m_connections[INVALID_SOCKET_HANDLE] = connection;
+  }
+  static void disconnectCallback(SSLSocketAcceptor &acceptor) {
+    SocketServer server;
+    acceptor.onDisconnect(server, INVALID_SOCKET_HANDLE);
+  }
+  static void attachConnection(SSLSocketInitiator &initiator, const SessionID &id, socket_handle socket) {
+    initiator.m_connections[socket]
+        = new SSLSocketConnection(initiator, id, socket, nullptr, &initiator.m_connector.getMonitor());
+  }
+#endif
+  template <typename InitiatorType>
+  static SocketMonitor &connectMonitor(InitiatorType &initiator, const SessionID &id) {
+    initiator.setConnected(id);
+    CHECK(initiator.isConnected(id));
+    return initiator.m_connector.getMonitor();
+  }
+  template <typename InitiatorType> static void dispatchDisconnect(InitiatorType &initiator, const SessionID &id) {
+    initiator.m_connector.block(initiator, true);
+    CHECK(initiator.m_connections.empty());
+    CHECK(initiator.isDisconnected(id));
+    CHECK_FALSE(Session::isSessionRegistered(id));
+    initiator.m_connector.block(initiator, true);
+    CHECK(initiator.m_connections.empty());
+  }
+  static Message newMessage(Session &session, const MsgType &type) { return session.newMessage(type); }
   static Responder *responder(Session &session) { return session.m_pResponder; }
   static std::unique_ptr<Session> detached(
       std::function<UtcTimeStamp()> timestamper,
@@ -996,7 +1047,423 @@ struct acceptorT11Fixture : public sessionT11Fixture {
   acceptorT11Fixture()
       : sessionT11Fixture(0) {}
 };
+
+struct dictionaryFixture : public acceptorT11Fixture {
+  void fromAdmin(const Message &message, const SessionID &) override {
+    if (message.getHeader().getField<MsgType>() == MsgType_Logon) {
+      ++authentications;
+    }
+  }
+  void fromApp(const Message &, const SessionID &) override { ++applications; }
+  bool send(const std::string &wire) override {
+    output.emplace_back(wire, false);
+    return true;
+  }
+  int authentications = 0, applications = 0;
+  std::vector<Message> output;
+};
 } // namespace
+
+TEST_CASE_METHOD(
+    dictionaryFixture,
+    "unknown FIXT Logon version is rejected before state changes",
+    "[session][dictionary]") {
+  const bool initiator = GENERATE(false, true);
+  const bool admitted = GENERATE(false, true);
+  const std::string version = GENERATE(ApplVerID_FIX44, "unknown");
+  if (initiator && admitted) {
+    return;
+  }
+  if (initiator) {
+    createSession(30);
+    object->next(now);
+  }
+  object->setNextSenderMsgSeqNum(7);
+  object->setNextTargetMsgSeqNum(9);
+  object->setNextSenderMsgSeqNum(6);
+  auto retained = createT1150NewOrderSingle("TW", "ISLD", 6);
+  REQUIRE(object->send(retained));
+  std::vector<std::string> history;
+  object->getStore()->get(6, 6, history);
+  REQUIRE(history.size() == 1);
+  object->setResetOnLogon(true);
+  object->setRefreshOnLogon(true);
+  object->setResetOnDisconnect(true);
+  auto logon = createT11Logon("ISLD", "TW", 1);
+  logon.setField(DefaultApplVerID(version));
+  logon.setField(ResetSeqNumFlag(true));
+  if (admitted) {
+    CHECK_FALSE(object->acceptLogon(logon.toString(), *this));
+  } else {
+    CHECK_NOTHROW(object->next(logon.toString(), now));
+  }
+  CHECK(authentications == 1);
+  CHECK_FALSE(object->isLoggedOn());
+  CHECK_FALSE(Session::isSessionRegistered(object->getSessionID()));
+  CHECK(object->getTargetDefaultApplVerID() == ApplVerID(ApplVerID_FIX50));
+  CHECK(object->getExpectedSenderNum() == 8);
+  CHECK(object->getExpectedTargetNum() == 9);
+  std::vector<std::string> afterRejection;
+  object->getStore()->get(6, 6, afterRejection);
+  CHECK(afterRejection == history);
+  REQUIRE_FALSE(output.empty());
+  CHECK(output.back().getHeader().getField<MsgType>() == MsgType_Logout);
+  CHECK(disconnected == 1);
+  CHECK(object->getResetOnDisconnect());
+  object->disconnect();
+  CHECK(object->getExpectedSenderNum() == 1);
+  CHECK(object->getExpectedTargetNum() == 1);
+  afterRejection.clear();
+  object->getStore()->get(6, 6, afterRejection);
+  CHECK(afterRejection.empty());
+}
+
+TEST_CASE(
+    "unsupported FIXT admission and threaded teardown preserve refresh and rollover state",
+    "[session][dictionary][admission]") {
+  const bool rollover = GENERATE(false, true);
+  const bool threaded = GENERATE(false, true);
+#if HAVE_SSL
+  const bool tls = GENERATE(false, true);
+#endif
+  struct Store : MemoryStore {
+    using MemoryStore::MemoryStore;
+    void refresh() override {
+      ++refreshes;
+      setNextSenderMsgSeqNum(11);
+      setNextTargetMsgSeqNum(13);
+    }
+    int refreshes = 0;
+  };
+  struct Stores : MemoryStoreFactory {
+    MessageStore *create(const UtcTimeStamp &now, const SessionID &) override { return store = new Store(now); }
+    Store *store = nullptr;
+  } stores;
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &id) override {
+      ++authentications;
+      CHECK_FALSE(Session::isSessionRegistered(id));
+    }
+    bool send(const std::string &wire) override {
+      output = wire;
+      return true;
+    }
+    void disconnect() override { ++drops; }
+    std::string output;
+    int authentications = 0, drops = 0;
+  } application;
+  auto now = UtcTimeStamp::now();
+  if (rollover) {
+    now += -86400;
+  }
+  DataDictionaryProvider dictionaries;
+  dictionaries.addTransportDataDictionary(BeginString("FIXT.1.1"), TestSettings::pathForSpec("FIXT11"));
+  dictionaries.addApplicationDataDictionary(ApplVerID("7"), TestSettings::pathForSpec("FIX50"));
+  SessionID id("FIXT.1.1", "PREPARATION", "PEER");
+  Session session(
+      [&] { return now; },
+      application,
+      stores,
+      id,
+      dictionaries,
+      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      0,
+      nullptr);
+  std::unique_ptr<ThreadedSocketConnection> plain;
+#if HAVE_SSL
+  std::unique_ptr<ThreadedSSLSocketConnection> secure;
+  if (threaded && tls) {
+    secure.reset(new ThreadedSSLSocketConnection(id, INVALID_SOCKET_HANDLE, nullptr, "", 0, nullptr));
+  } else
+#endif
+      if (threaded) {
+    plain.reset(new ThreadedSocketConnection(id, INVALID_SOCKET_HANDLE, "", 0, nullptr));
+  }
+  session.setResponder(&application);
+  session.setNextSenderMsgSeqNum(6);
+  auto retained = createT1150NewOrderSingle("PREPARATION", "PEER", 6);
+  REQUIRE(session.send(retained));
+  session.setNextTargetMsgSeqNum(9);
+  std::vector<std::string> history;
+  session.getStore()->get(6, 6, history);
+  REQUIRE(history.size() == 1);
+  session.setRefreshOnLogon(true);
+  session.setResetOnDisconnect(true);
+  now = UtcTimeStamp::now();
+  auto logon = createT11Logon("PEER", "PREPARATION", 9);
+  logon.setField(DefaultApplVerID("6"));
+  if (threaded) {
+    session.next(logon, now);
+    plain.reset();
+#if HAVE_SSL
+    secure.reset();
+#endif
+  } else {
+    CHECK_FALSE(session.acceptLogon(logon.toString(), application));
+  }
+  CHECK(stores.store->refreshes == 0);
+  CHECK(session.getExpectedSenderNum() == 8);
+  CHECK(session.getExpectedTargetNum() == 9);
+  std::vector<std::string> after;
+  session.getStore()->get(6, 6, after);
+  CHECK(after == history);
+  CHECK(application.authentications == 1);
+  CHECK(application.drops == 1);
+  CHECK(identifyType(application.output) == MsgType_Logout);
+  CHECK_FALSE(session.isLoggedOn());
+  CHECK_FALSE(Session::isSessionRegistered(id));
+  CHECK(session.getTargetDefaultApplVerID() == "7");
+}
+
+TEST_CASE("socket disconnect callbacks preserve rejected FIXT Logon history", "[session][dictionary]") {
+  const bool rejected = GENERATE(false, true);
+  const bool acceptor = GENERATE(false, true);
+#if HAVE_SSL
+  const bool tls = GENERATE(false, true);
+#endif
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &) override { ++authentications; }
+    bool send(const std::string &) override { return true; }
+    void disconnect() override {
+      ++drops;
+      if (monitor) {
+        monitor->drop(socket);
+      }
+    }
+    SocketMonitor *monitor = nullptr;
+    socket_handle socket = INVALID_SOCKET_HANDLE;
+    int authentications = 0, drops = 0;
+  } application;
+  MemoryStoreFactory stores;
+  SessionID id("FIXT.1.1", "DICTIONARY-DROP", "PEER");
+  SessionSettings settings;
+  Dictionary config;
+  config.setString(CONNECTION_TYPE, acceptor ? "acceptor" : "initiator");
+  config.setString(START_TIME, "00:00:00");
+  config.setString(END_TIME, "00:00:00");
+  config.setInt(HEARTBTINT, 30);
+  config.setString(DEFAULT_APPLVERID, "7");
+  config.setBool(USE_DATA_DICTIONARY, false);
+  config.setBool(RESET_ON_DISCONNECT, true);
+  settings.set(id, config);
+  const auto exercise = [&](auto &initiator) {
+    constexpr bool isInitiator = std::is_base_of_v<Initiator, std::decay_t<decltype(initiator)>>;
+    socket_handle peer = INVALID_SOCKET_HANDLE;
+    if constexpr (isInitiator) {
+      const auto sockets = socket_createpair();
+      REQUIRE(sockets.first != INVALID_SOCKET_HANDLE);
+      REQUIRE(sockets.second != INVALID_SOCKET_HANDLE);
+      peer = sockets.first;
+      application.socket = sockets.second;
+      application.monitor = &SessionTestAccess::connectMonitor(initiator, id);
+      REQUIRE(application.monitor->addRead(application.socket));
+      SessionTestAccess::attachConnection(initiator, id, application.socket);
+      REQUIRE(Session::registerSession(id));
+    } else {
+      SessionTestAccess::attachConnection(initiator, id);
+    }
+    Session *session = Session::lookupSession(id);
+    REQUIRE(session);
+    // Capture sends/closes while executing the real connection ownership and deferred callback cleanup.
+    session->setResponder(&application);
+    auto dictionaries = session->getDataDictionaryProvider();
+    dictionaries.addApplicationDataDictionary(ApplVerID("7"), TestSettings::pathForSpec("FIX50"));
+    session->setDataDictionaryProvider(dictionaries);
+    const auto now = UtcTimeStamp::now();
+    if (!acceptor) {
+      session->next(now);
+      REQUIRE(session->sentLogon());
+    }
+    if (acceptor || !rejected) {
+      session->next(createT11Logon("PEER", "DICTIONARY-DROP", 1), now);
+      REQUIRE(session->isLoggedOn());
+    }
+    session->setNextSenderMsgSeqNum(6);
+    auto retained = createT1150NewOrderSingle("DICTIONARY-DROP", "PEER", 6);
+    REQUIRE(session->send(retained));
+    session->setNextTargetMsgSeqNum(9);
+    std::vector<std::string> history;
+    session->getStore()->get(6, 6, history);
+    REQUIRE(history.size() == 1);
+    if (rejected) {
+      auto logon = createT11Logon("PEER", "DICTIONARY-DROP", 9);
+      logon.setField(DefaultApplVerID("6"));
+      logon.setField(ResetSeqNumFlag(acceptor));
+      session->next(logon, now);
+      CHECK(application.authentications == (acceptor ? 2 : 1));
+      CHECK(application.drops == 1);
+    }
+    if constexpr (isInitiator) {
+      if (!rejected) {
+        REQUIRE(application.monitor->drop(application.socket));
+      }
+      SessionTestAccess::dispatchDisconnect(initiator, id);
+      socket_close(peer);
+    } else {
+      SessionTestAccess::disconnectCallback(initiator);
+    }
+    CHECK(application.drops == 1);
+    CHECK(session->getExpectedSenderNum() == (rejected ? 8 : 1));
+    CHECK(session->getExpectedTargetNum() == (rejected ? 9 : 1));
+    std::vector<std::string> after;
+    session->getStore()->get(6, 6, after);
+    CHECK(after == (rejected ? history : std::vector<std::string>()));
+  };
+#if HAVE_SSL
+  if (tls && acceptor) {
+    SSLSocketAcceptor controller(application, stores, settings);
+    exercise(controller);
+  } else if (tls) {
+    SSLSocketInitiator initiator(application, stores, settings);
+    exercise(initiator);
+  } else
+#endif
+      if (acceptor) {
+    SocketAcceptor controller(application, stores, settings);
+    exercise(controller);
+  } else {
+    SocketInitiator initiator(application, stores, settings);
+    exercise(initiator);
+  }
+}
+
+TEST_CASE_METHOD(dictionaryFixture, "FIXT application dictionary selection", "[session][dictionary]") {
+  const bool wire = GENERATE(false, true);
+  object->next(createT11Logon("ISLD", "TW", 1), now);
+  REQUIRE(object->isLoggedOn());
+  REQUIRE(authentications == 1);
+  auto order = createNewOrderSingle("ISLD", "TW", 2);
+  order.getHeader().setField(BeginString("FIXT.1.1"));
+  order.getHeader().setField(ApplVerID(ApplVerID_FIX42));
+  bool rejected = false;
+  SECTION("configured alternate version") {}
+  SECTION("valid but unconfigured application version") {
+    order.getHeader().setField(ApplVerID(ApplVerID_FIX44));
+    rejected = true;
+  }
+  SECTION("unknown application version") {
+    order.getHeader().setField(ApplVerID("unknown"));
+    rejected = true;
+  }
+  SECTION("unknown default application version") {
+    object->setTargetDefaultApplVerID(ApplVerID(ApplVerID_FIX44));
+    order.getHeader().removeField(FIELD::ApplVerID);
+    rejected = true;
+  }
+  if (wire) {
+    CHECK_NOTHROW(object->next(order.toString(), now));
+  } else {
+    CHECK_NOTHROW(object->next(order, now));
+  }
+  CHECK(applications == (rejected ? 0 : 1));
+  CHECK(object->getExpectedTargetNum() == 3);
+  CHECK(object->isLoggedOn());
+  if (rejected) {
+    REQUIRE_FALSE(output.empty());
+    CHECK(output.back().getHeader().getField<MsgType>() == MsgType_Reject);
+    CHECK(output.back().getField<SessionRejectReason>() == 18);
+    CHECK(output.back().getField<RefTagID>() == 1128);
+  }
+}
+
+TEST_CASE_METHOD(
+    dictionaryFixture,
+    "FIXT dictionary misses remain contained during recovery",
+    "[session][dictionary]") {
+  object->next(createT11Logon("ISLD", "TW", 1), now);
+  REQUIRE(object->isLoggedOn());
+  auto order = createNewOrderSingle("ISLD", "TW", 3);
+  order.getHeader().setField(BeginString("FIXT.1.1"));
+  order.getHeader().setField(ApplVerID(ApplVerID_FIX42));
+  DataDictionaryProvider onlyFIX50;
+  onlyFIX50.addTransportDataDictionary(BeginString("FIXT.1.1"), TestSettings::pathForSpec("FIXT11"));
+  onlyFIX50.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX50), TestSettings::pathForSpec("FIX50"));
+  SECTION("queued message is revalidated after dictionaries change") {
+    object->next(order, now);
+    REQUIRE(applications == 0);
+    object->setDataDictionaryProvider(onlyFIX50);
+    CHECK_NOTHROW(object->next(createT11Heartbeat("ISLD", "TW", 2), now));
+    CHECK(applications == 0);
+    CHECK(object->getExpectedTargetNum() == 4);
+    REQUIRE_FALSE(output.empty());
+    CHECK(output.back().getHeader().getField<MsgType>() == MsgType_Reject);
+    CHECK(output.back().getField<SessionRejectReason>() == 18);
+  }
+  SECTION("stored unsupported application version disconnects on resend") {
+    REQUIRE(object->send(order));
+    object->setDataDictionaryProvider(onlyFIX50);
+    output.clear();
+    CHECK_NOTHROW(object->next(createT11ResendRequest("ISLD", "TW", 2, 2, 2), now));
+    CHECK(disconnected == 1);
+    REQUIRE(output.size() == 1);
+    CHECK(output.front().getHeader().getField<MsgType>() == MsgType_Logout);
+  }
+  SECTION("unconfigured local parse dictionary cannot escape the receive loop") {
+    object->setSenderDefaultApplVerID(ApplVerID(ApplVerID_FIX44));
+    CHECK_NOTHROW(object->next(createT11Heartbeat("ISLD", "TW", 2).toString(), now));
+    CHECK(disconnected == 1);
+  }
+}
+
+TEST_CASE_METHOD(dictionaryFixture, "dictionary-free FIXT remains supported", "[session][dictionary]") {
+  object->setDataDictionaryProvider(DataDictionaryProvider());
+  object->setSenderDefaultApplVerID(ApplVerID("custom"));
+  auto logon = createT11Logon("ISLD", "TW", 1);
+  logon.setField(DefaultApplVerID("custom"));
+  object->next(logon.toString(), now);
+  REQUIRE(object->isLoggedOn());
+  CHECK(authentications == 1);
+  auto order = createNewOrderSingle("ISLD", "TW", 2);
+  order.getHeader().setField(BeginString("FIXT.1.1"));
+  order.getHeader().setField(ApplVerID("another-custom-version"));
+  object->next(order.toString(), now);
+  CHECK(applications == 1);
+  CHECK(object->getExpectedTargetNum() == 3);
+  CHECK(object->send(order));
+  CHECK_NOTHROW(object->next(createT11ResendRequest("ISLD", "TW", 3, 2, 2), now));
+  CHECK(disconnected == 0);
+}
+
+TEST_CASE_METHOD(
+    dictionaryFixture,
+    "dictionary-free FIXT admission contains missing version",
+    "[session][dictionary][admission]") {
+  object->setDataDictionaryProvider(DataDictionaryProvider());
+  auto logon = createT11Logon("ISLD", "TW", 1);
+  logon.removeField(FIELD::DefaultApplVerID);
+  CHECK_FALSE(object->acceptLogon(logon.toString(), *this));
+  CHECK(authentications == 1);
+  CHECK(disconnected == 1);
+  CHECK_FALSE(Session::isSessionRegistered(object->getSessionID()));
+}
+
+TEST_CASE_METHOD(acceptorFixture, "non-FIXT ignores application dictionary selection", "[session][dictionary]") {
+  auto dictionaries = object->getDataDictionaryProvider();
+  dictionaries.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX50), TestSettings::pathForSpec("FIX50"));
+  object->setDataDictionaryProvider(dictionaries);
+  object->next(createLogon("ISLD", "TW", 1).toString(), now);
+  REQUIRE(object->isLoggedOn());
+  CHECK_NOTHROW(object->next(createNewOrderSingle("ISLD", "TW", 2).toString(), now));
+  CHECK(object->getExpectedTargetNum() == 3);
+  CHECK(toReject == 0);
+}
+
+TEST_CASE_METHOD(
+    dictionaryFixture,
+    "outbound message creation uses the configured FIXT dictionary",
+    "[session][dictionary]") {
+  auto dictionaries = object->getDataDictionaryProvider();
+  auto transport = std::make_shared<DataDictionary>(TestSettings::pathForSpec("FIXT11"), true);
+  dictionaries.addTransportDataDictionary(BeginString("FIXT.1.1"), transport);
+  dictionaries.addApplicationDataDictionary(
+      ApplVerID(ApplVerID_FIX50),
+      std::make_shared<DataDictionary>(TestSettings::pathForSpec("FIX50"), true));
+  object->setDataDictionaryProvider(dictionaries);
+  CHECK_NOTHROW(SessionTestAccess::newMessage(*object, MsgType(MsgType_NewOrderSingle)));
+  object->setSenderDefaultApplVerID(ApplVerID(ApplVerID_FIX44));
+  CHECK_THROWS_AS(SessionTestAccess::newMessage(*object, MsgType(MsgType_NewOrderSingle)), DataDictionaryNotFound);
+  CHECK_NOTHROW(SessionTestAccess::newMessage(*object, MsgType(MsgType_Logout)));
+}
 
 TEST_CASE("ordinary and detached sessions preserve dictionary pointer identity", "[session][dictionary]") {
   TestCallback callback;
@@ -1825,6 +2292,7 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     object->logon();
 
     FIX::Message receivedLogon = createT11Logon("ISLD", "TW", 1);
+    receivedLogon.setField(DefaultApplVerID("20"));
     object->next(receivedLogon, now);
 
     FIX::Message resendReq = createT11ResendRequest("ISLD", "TW", 2, 1, 2);
@@ -1884,6 +2352,7 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
 
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
     provider.addApplicationDataDictionary(ApplVerID("20"), pDataDictionary);
+    provider.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX42), TestSettings::pathForSpec("FIX42"));
 
     object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
     object->setSenderDefaultApplVerID(ApplVerID("20"));
@@ -1895,6 +2364,7 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     object->logon();
 
     FIX::Message receivedLogon = createT11Logon("ISLD", "TW", 1);
+    receivedLogon.setField(DefaultApplVerID("20"));
     object->next(receivedLogon, now);
 
     FIX::Message executionReport = createT1142ExecutionReport("ISLD", "TW", 2);
