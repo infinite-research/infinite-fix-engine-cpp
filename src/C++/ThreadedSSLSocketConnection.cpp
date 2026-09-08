@@ -281,6 +281,17 @@ bool ThreadedSSLSocketConnection::read() {
     }
 
     return true;
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : m_pLog;
+    if (log) {
+      log->onEvent(e.what());
+    }
+    if (m_pSession) {
+      m_pSession->disconnect();
+    } else {
+      disconnect();
+    }
+    return false;
   } catch (SocketRecvFailed &e) {
     if (m_disconnect) {
       return false;
@@ -298,10 +309,7 @@ bool ThreadedSSLSocketConnection::read() {
 }
 
 bool ThreadedSSLSocketConnection::readMessage(std::string &message) EXCEPT(SocketRecvFailed) {
-  try {
-    return m_parser.readFixMessage(message);
-  } catch (MessageParseError &) {}
-  return true;
+  return m_parser.readFixMessage(message);
 }
 
 void ThreadedSSLSocketConnection::processStream() {

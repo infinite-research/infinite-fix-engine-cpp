@@ -42,12 +42,15 @@ public:
   bool extractLength(int &length, std::string::size_type &pos, const std::string &buffer) EXCEPT(MessageParseError);
   bool readFixMessage(std::string &str) EXCEPT(MessageParseError);
 
-  void addToStream(const char *str, size_t len) { m_buffer.append(str, len); }
-  void addToStream(const std::string &str) { m_buffer.append(str); }
+  /// Append bytes, throwing MessageParseError and clearing buffered input above 16 MiB.
+  void addToStream(const char *str, size_t len) EXCEPT(MessageParseError);
+  /// Append bytes subject to the same fixed accumulator limit.
+  void addToStream(const std::string &str) { addToStream(str.data(), str.size()); }
 
 private:
   friend class InfiniteCompleteFrameDispatcher;
 
+  static constexpr std::size_t MAX_BUFFER_BYTES = 16U * 1024U * 1024U;
   std::string m_buffer;
 };
 } // namespace FIX

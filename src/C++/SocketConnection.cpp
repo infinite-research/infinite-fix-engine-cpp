@@ -125,6 +125,10 @@ bool SocketConnection::read(SocketConnector &s) {
   try {
     readFromSocket();
     readMessages(s.getMonitor());
+  } catch (MessageParseError &e) {
+    m_pSession->getLog()->onEvent(e.what());
+    s.getMonitor().drop(m_socket);
+    return false;
   } catch (SocketRecvFailed &e) {
     m_pSession->getLog()->onEvent(e.what());
     return false;
@@ -194,6 +198,12 @@ bool SocketConnection::read(SocketAcceptor &acceptor, SocketServer &server) {
       readMessages(server.getMonitor());
       return true;
     }
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : acceptor.getLog();
+    if (log) {
+      log->onEvent(e.what());
+    }
+    server.getMonitor().drop(m_socket);
   } catch (SocketRecvFailed &e) {
     if (m_pSession) {
       m_pSession->getLog()->onEvent(e.what());
@@ -224,12 +234,7 @@ void SocketConnection::readFromSocket() EXCEPT(SocketRecvFailed) {
   m_parser.addToStream(m_buffer, size);
 }
 
-bool SocketConnection::readMessage(std::string &msg) {
-  try {
-    return m_parser.readFixMessage(msg);
-  } catch (MessageParseError &) {}
-  return true;
-}
+bool SocketConnection::readMessage(std::string &msg) { return m_parser.readFixMessage(msg); }
 
 void SocketConnection::readMessages(SocketMonitor &socketMonitor) {
   if (!m_pSession) {

@@ -37,6 +37,16 @@
     telling you what setting is missing or improperly
     formatted.</p>
 
+    <p>FIX socket transports, including SSL and threaded variants, enforce a
+    fixed 16 MiB (16,777,216 byte) limit on each complete wire frame and on
+    accumulated input awaiting parsing. The limit applies before authentication
+    and includes the header, body, and checksum. A complete frame exactly at the
+    limit is accepted; oversized declarations, appends exceeding the limit, and
+    incomplete framing at the limit disconnect the connection. Buffered coalesced
+    messages also count toward the accumulator limit until drained. This is not a
+    configurable transport setting. Before upgrading, deployments sending larger
+    messages or batches must reduce their size to fit this ceiling.</p>
+
     <br/><hr/>
     <h1>Sample Settings File</h1>
     <pre class='fragment'>

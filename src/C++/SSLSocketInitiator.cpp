@@ -442,7 +442,10 @@ void SSLSocketInitiator::onWrite(SocketConnector &connector, socket_handle socke
   SSLSocketConnection *pSocketConnection = i->second;
 
   if (pSocketConnection->didReadFromSocketRequestToWrite()) {
-    pSocketConnection->read(connector);
+    if (!pSocketConnection->read(connector)) {
+      onDisconnect(connector, socket);
+      return;
+    }
   }
 
   if (pSocketConnection->processQueue()) {

@@ -342,7 +342,10 @@ void SSLSocketAcceptor::onWrite(SocketServer &server, socket_handle s) {
   SSLSocketConnection *pSocketConnection = i->second;
 
   if (pSocketConnection->didReadFromSocketRequestToWrite()) {
-    pSocketConnection->read(*this, server);
+    if (!pSocketConnection->read(*this, server)) {
+      onDisconnect(server, s);
+      return;
+    }
   }
 
   if (pSocketConnection->processQueue()) {

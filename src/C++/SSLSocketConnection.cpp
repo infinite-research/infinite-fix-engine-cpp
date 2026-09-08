@@ -258,6 +258,10 @@ bool SSLSocketConnection::read(SocketConnector &connector) {
   try {
     readFromSocket();
     readMessages(connector.getMonitor());
+  } catch (MessageParseError &e) {
+    m_pSession->getLog()->onEvent(e.what());
+    connector.getMonitor().drop(m_socket);
+    return false;
   } catch (SocketRecvFailed &e) {
     m_pSession->getLog()->onEvent(e.what());
     return false;
@@ -318,6 +322,12 @@ bool SSLSocketConnection::read(SSLSocketAcceptor &acceptor, SocketServer &server
       readMessages(server.getMonitor());
       return true;
     }
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : acceptor.getLog();
+    if (log) {
+      log->onEvent(e.what());
+    }
+    server.getMonitor().drop(m_socket);
   } catch (SocketRecvFailed &e) {
     if (m_pSession) {
       m_pSession->getLog()->onEvent(e.what());
@@ -399,12 +409,7 @@ bool SSLSocketConnection::didReadFromSocketRequestToWrite() const {
   return m_readFromSocketNeedsToWriteData;
 }
 
-bool SSLSocketConnection::readMessage(std::string &message) {
-  try {
-    return m_parser.readFixMessage(message);
-  } catch (MessageParseError &) {}
-  return true;
-}
+bool SSLSocketConnection::readMessage(std::string &message) { return m_parser.readFixMessage(message); }
 
 void SSLSocketConnection::readMessages(SocketMonitor &socketMonitor) {
   if (!m_pSession) {

@@ -137,6 +137,17 @@ bool ThreadedSocketConnection::read() {
 
     processStream();
     return true;
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : m_pLog;
+    if (log) {
+      log->onEvent(e.what());
+    }
+    if (m_pSession) {
+      m_pSession->disconnect();
+    } else {
+      disconnect();
+    }
+    return false;
   } catch (SocketRecvFailed &e) {
     if (m_disconnect) {
       return false;
@@ -154,10 +165,7 @@ bool ThreadedSocketConnection::read() {
 }
 
 bool ThreadedSocketConnection::readMessage(std::string &msg) EXCEPT(SocketRecvFailed) {
-  try {
-    return m_parser.readFixMessage(msg);
-  } catch (MessageParseError &) {}
-  return true;
+  return m_parser.readFixMessage(msg);
 }
 
 void ThreadedSocketConnection::processStream() {
