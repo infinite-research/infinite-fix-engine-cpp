@@ -22,8 +22,11 @@
 #ifndef ORDERMATCH_ORDER_H
 #define ORDERMATCH_ORDER_H
 
+#include <cmath>
 #include <iomanip>
+#include <limits>
 #include <ostream>
+#include <stdexcept>
 #include <string>
 
 class Order {
@@ -47,7 +50,7 @@ public:
       Side side,
       Type type,
       double price,
-      long quantity)
+      double quantity)
       : m_clientId(clientId),
         m_symbol(symbol),
         m_owner(owner),
@@ -55,12 +58,22 @@ public:
         m_side(side),
         m_type(type),
         m_price(price),
-        m_quantity(quantity) {
+        m_quantity(0),
+        m_openQuantity(0),
+        m_executedQuantity(0),
+        m_avgExecutedPrice(0),
+        m_lastExecutedPrice(0),
+        m_lastExecutedQuantity(0) {
+    const double exclusiveLongUpperBound = std::ldexp(1.0, std::numeric_limits<long>::digits);
+    if (!std::isfinite(quantity) || quantity <= 0 || std::trunc(quantity) != quantity
+        || quantity >= exclusiveLongUpperBound) {
+      throw std::logic_error("Order quantity must be a positive whole long");
+    }
+    if (!std::isfinite(price) || price <= 0) {
+      throw std::logic_error("Limit price must be finite and positive");
+    }
+    m_quantity = static_cast<long>(quantity);
     m_openQuantity = m_quantity;
-    m_executedQuantity = 0;
-    m_avgExecutedPrice = 0;
-    m_lastExecutedPrice = 0;
-    m_lastExecutedQuantity = 0;
   }
 
   const std::string &getClientID() const { return m_clientId; }
@@ -82,11 +95,14 @@ public:
   bool isClosed() const { return m_openQuantity == 0; }
 
   void execute(double price, long quantity) {
-    m_avgExecutedPrice
-        = ((quantity * price) + (m_avgExecutedPrice * m_executedQuantity)) / (quantity + m_executedQuantity);
+    if (quantity <= 0 || quantity > m_openQuantity) {
+      throw std::logic_error("Invalid execution quantity");
+    }
 
+    const long executedQuantity = m_executedQuantity + quantity;
+    m_avgExecutedPrice += (price - m_avgExecutedPrice) * (static_cast<double>(quantity) / executedQuantity);
     m_openQuantity -= quantity;
-    m_executedQuantity += quantity;
+    m_executedQuantity = executedQuantity;
     m_lastExecutedPrice = price;
     m_lastExecutedQuantity = quantity;
   }
