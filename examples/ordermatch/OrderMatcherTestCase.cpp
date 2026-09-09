@@ -251,11 +251,22 @@ TEST_CASE("ordermatch trusts the session owner and scopes cancellation", "[order
   CHECK(placed->getOwner() == "OWNER-A");
   CHECK(placed->getTarget() == "VENUE");
   CHECK(findOrder(application, "SPOOFED", "same") == nullptr);
+  const auto checkVictimUnchanged = [&application] {
+    const Order *victim = findOrder(application, "OWNER-A", "same");
+    REQUIRE(victim != nullptr);
+    CHECK(victim->getQuantity() == 10);
+    CHECK(victim->getOpenQuantity() == 10);
+    CHECK(victim->getExecutedQuantity() == 0);
+    CHECK(victim->getAvgExecutedPrice() == 0.0);
+    CHECK(victim->getLastExecutedPrice() == 0.0);
+    CHECK(victim->getLastExecutedQuantity() == 0);
+  };
 
   dispatch(application, cancelRequest("same", "foreign-cancel"), "OWNER-B");
-  CHECK(findOrder(application, "OWNER-A", "same") != nullptr);
+  checkVictimUnchanged();
 
   dispatch(application, cancelRequest("missing", "missing-cancel"), "OWNER-B");
+  checkVictimUnchanged();
   const std::vector<FIX::Message> rejects = storedMessages(sessions.b);
   REQUIRE(rejects.size() == 2);
   for (std::size_t i : {0U, 1U}) {
