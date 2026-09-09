@@ -50,8 +50,8 @@ FIX42::NewOrderSingle newOrder(
       FIX::OrdType(FIX::OrdType_LIMIT));
   message.set(FIX::OrderQty(quantity));
   message.set(FIX::Price(price));
-  message.getHeader().set(FIX::SenderCompID(headerOwner));
-  message.getHeader().set(FIX::TargetCompID("VENUE"));
+  static_cast<FIX::Message &>(message).getHeader().setField(FIX::SenderCompID(headerOwner));
+  static_cast<FIX::Message &>(message).getHeader().setField(FIX::TargetCompID("VENUE"));
   return message;
 }
 
