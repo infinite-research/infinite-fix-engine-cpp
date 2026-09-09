@@ -31,6 +31,8 @@
 #include <MySQLLog.h>
 #include <MySQLStore.h>
 
+#include <memory>
+
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
@@ -41,7 +43,7 @@ struct mySQLStoreFixture {
     SessionID sessionID(BeginString("FIX.4.2"), SenderCompID("SETGET"), TargetCompID("TEST"));
 
     try {
-      object = factory.create(UtcTimeStamp::now(), sessionID);
+      object.reset(factory.create(UtcTimeStamp::now(), sessionID));
     } catch (std::exception &e) {
       std::cerr << e.what() << std::endl;
       throw;
@@ -54,10 +56,8 @@ struct mySQLStoreFixture {
     this->resetAfter = reset;
   }
 
-  ~mySQLStoreFixture() { factory.destroy(object); }
-
   MySQLStoreFactory factory;
-  MessageStore *object;
+  std::unique_ptr<MessageStore> object;
   bool resetAfter;
 };
 
@@ -100,9 +100,16 @@ TEST_CASE_METHOD(
   const std::string replacement(replacementBytes, sizeof(replacementBytes));
   REQUIRE(object->set(101, "safe"));
   REQUIRE(object->set(102, "old"));
-  REQUIRE(object->set(102, replacement));
 
   const Dictionary &settings = TestSettings::sessionSettings.get();
+  const SessionID otherSessionID(BeginString("FIX.4.2"), SenderCompID("SETGET-OTHER"), TargetCompID("TEST"));
+  MySQLStoreFactory otherFactory(settings);
+  std::unique_ptr<MessageStore> otherStore(otherFactory.create(UtcTimeStamp::now(), otherSessionID));
+  otherStore->reset(UtcTimeStamp::now());
+  REQUIRE(otherStore->set(102, "other"));
+
+  REQUIRE(object->set(102, replacement));
+
   short port = MySQLStoreFactory::DEFAULT_PORT;
   if (settings.has(MYSQL_STORE_PORT)) {
     port = static_cast<short>(settings.getInt(MYSQL_STORE_PORT));
@@ -123,6 +130,80 @@ TEST_CASE_METHOD(
   CHECK(std::string(query.getValue(0, 1)) == "73616665");
   CHECK(std::string(query.getValue(1, 0)) == "102");
   CHECK(std::string(query.getValue(1, 1)) == "6127225C0D0A01007FC3A9");
+
+  std::vector<std::string> otherMessages;
+  otherStore->get(102, 102, otherMessages);
+  REQUIRE(otherMessages.size() == 1);
+  CHECK(otherMessages[0] == "other");
+}
+
+static int informationSchemaConnectionCount() {
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  short port = MySQLStoreFactory::DEFAULT_PORT;
+  if (settings.has(MYSQL_STORE_PORT)) {
+    port = static_cast<short>(settings.getInt(MYSQL_STORE_PORT));
+  }
+  MySQLConnection connection(
+      settings.getString(MYSQL_STORE_DATABASE),
+      settings.getString(MYSQL_STORE_USER),
+      settings.getString(MYSQL_STORE_PASSWORD),
+      settings.getString(MYSQL_STORE_HOST),
+      port);
+  MySQLQuery query("SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE DB='information_schema'");
+  REQUIRE(connection.execute(query));
+  REQUIRE(query.rows() == 1);
+  return std::stoi(query.getValue(0, 0));
+}
+
+TEST_CASE("MySQL database construction releases ownership on failure", "[mysql][database-ownership]") {
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  const std::string user = settings.getString(MYSQL_STORE_USER);
+  const std::string password = settings.getString(MYSQL_STORE_PASSWORD);
+  const std::string host = settings.getString(MYSQL_STORE_HOST);
+  short port = MySQLStoreFactory::DEFAULT_PORT;
+  if (settings.has(MYSQL_STORE_PORT)) {
+    port = static_cast<short>(settings.getInt(MYSQL_STORE_PORT));
+  }
+  const SessionID sessionID(BeginString("FIX.4.2"), SenderCompID("OWNERSHIP"), TargetCompID("TEST"));
+
+  SECTION("direct store releases connection when cache population fails") {
+    const int before = informationSchemaConnectionCount();
+    CHECK_THROWS_AS(
+        std::make_unique<MySQLStore>(UtcTimeStamp::now(), sessionID, "information_schema", user, password, host, port),
+        ConfigError);
+    CHECK(informationSchemaConnectionCount() == before);
+  }
+
+  SECTION("pooled store releases connection when cache population fails") {
+    const int before = informationSchemaConnectionCount();
+    MySQLConnectionPool pool(true);
+    const DatabaseConnectionID id("information_schema", user, password, host, port);
+    CHECK_THROWS_AS(std::make_unique<MySQLStore>(UtcTimeStamp::now(), sessionID, id, &pool), ConfigError);
+    CHECK(informationSchemaConnectionCount() == before);
+  }
+
+  SECTION("failed native and log connections remain repeatable") {
+    const std::string missingDatabase = "quickfix_missing_raii_database";
+    for (int attempt = 0; attempt != 3; ++attempt) {
+      CHECK_THROWS_AS(MySQLConnection(missingDatabase, user, password, host, port), ConfigError);
+    }
+    CHECK_THROWS_AS(std::make_unique<MySQLLog>(sessionID, missingDatabase, user, password, host, port), ConfigError);
+    CHECK_THROWS_AS(std::make_unique<MySQLLog>(missingDatabase, user, password, host, port), ConfigError);
+
+    Dictionary logSettings;
+    logSettings.setString(MYSQL_LOG_DATABASE, missingDatabase);
+    logSettings.setString(MYSQL_LOG_USER, user);
+    logSettings.setString(MYSQL_LOG_PASSWORD, password);
+    logSettings.setString(MYSQL_LOG_HOST, host);
+    logSettings.setInt(MYSQL_LOG_PORT, port);
+    logSettings.setString(CONNECTION_TYPE, "initiator");
+    SessionSettings sessionSettings;
+    sessionSettings.set(logSettings);
+    sessionSettings.set(sessionID, logSettings);
+    MySQLLogFactory logFactory(sessionSettings);
+    CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create()), ConfigError);
+    CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create(sessionID)), ConfigError);
+  }
 }
 
 TEST_CASE("MySQL database factories require explicit credentials", "[mysql][database-security]") {
@@ -209,9 +290,8 @@ TEST_CASE("MySQL database factories require explicit credentials", "[mysql][data
   SECTION("settings and direct empty passwords connect") {
     const Dictionary &storeSettings = TestSettings::sessionSettings.get();
     MySQLStoreFactory storeFactory(storeSettings);
-    MessageStore *store = storeFactory.create(UtcTimeStamp::now(), sessionID);
+    std::unique_ptr<MessageStore> store(storeFactory.create(UtcTimeStamp::now(), sessionID));
     REQUIRE(store != nullptr);
-    storeFactory.destroy(store);
 
     short port = MySQLStoreFactory::DEFAULT_PORT;
     if (storeSettings.has(MYSQL_STORE_PORT)) {
@@ -223,9 +303,8 @@ TEST_CASE("MySQL database factories require explicit credentials", "[mysql][data
         "",
         storeSettings.getString(MYSQL_STORE_HOST),
         port);
-    MessageStore *directStore = directStoreFactory.create(UtcTimeStamp::now(), sessionID);
+    std::unique_ptr<MessageStore> directStore(directStoreFactory.create(UtcTimeStamp::now(), sessionID));
     REQUIRE(directStore != nullptr);
-    directStoreFactory.destroy(directStore);
 
     Dictionary logSettings;
     logSettings.setString(MYSQL_LOG_DATABASE, storeSettings.getString(MYSQL_STORE_DATABASE));
@@ -238,9 +317,8 @@ TEST_CASE("MySQL database factories require explicit credentials", "[mysql][data
     SessionSettings sessionSettings;
     sessionSettings.set(logSettings);
     MySQLLogFactory logFactory(sessionSettings);
-    Log *log = logFactory.create();
+    std::unique_ptr<Log> log(logFactory.create());
     REQUIRE(log != nullptr);
-    logFactory.destroy(log);
 
     MySQLLogFactory directLogFactory(
         storeSettings.getString(MYSQL_STORE_DATABASE),
@@ -248,9 +326,8 @@ TEST_CASE("MySQL database factories require explicit credentials", "[mysql][data
         "",
         storeSettings.getString(MYSQL_STORE_HOST),
         port);
-    Log *directLog = directLogFactory.create();
+    std::unique_ptr<Log> directLog(directLogFactory.create());
     REQUIRE(directLog != nullptr);
-    directLogFactory.destroy(directLog);
   }
 }
 

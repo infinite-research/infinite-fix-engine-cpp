@@ -29,8 +29,10 @@
 #include "SessionID.h"
 #include "SessionSettings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #include "strptime.h"
 #include <fstream>
+#include <memory>
 
 namespace FIX {
 
@@ -41,17 +43,27 @@ const std::string MySQLLogFactory::DEFAULT_HOST = "localhost";
 const short MySQLLogFactory::DEFAULT_PORT = 0;
 
 MySQLLog::MySQLLog(const SessionID &sessionID, const DatabaseConnectionID &connectionID, MySQLConnectionPool *pool)
-    : m_pConnectionPool(pool) {
+    : m_pConnection(nullptr),
+      m_pConnectionPool(pool),
+      m_pSessionID(nullptr) {
   init();
-  m_pSessionID = new SessionID(sessionID);
-  m_pConnection = m_pConnectionPool->create(connectionID);
+  auto ownedSessionID = std::make_unique<SessionID>(sessionID);
+  MySQLConnection *connection = m_pConnectionPool->create(connectionID);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(connection); });
+  m_pConnection = connection;
+  m_pSessionID = ownedSessionID.release();
+  connectionGuard.dismiss();
 }
 
 MySQLLog::MySQLLog(const DatabaseConnectionID &connectionID, MySQLConnectionPool *pool)
-    : m_pConnectionPool(pool),
+    : m_pConnection(nullptr),
+      m_pConnectionPool(pool),
       m_pSessionID(0) {
   init();
-  m_pConnection = m_pConnectionPool->create(connectionID);
+  MySQLConnection *connection = m_pConnectionPool->create(connectionID);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(connection); });
+  m_pConnection = connection;
+  connectionGuard.dismiss();
 }
 
 MySQLLog::MySQLLog(
@@ -61,10 +73,14 @@ MySQLLog::MySQLLog(
     const std::string &password,
     const std::string &host,
     short port)
-    : m_pConnectionPool(0) {
+    : m_pConnection(nullptr),
+      m_pConnectionPool(0),
+      m_pSessionID(nullptr) {
   init();
-  m_pSessionID = new SessionID(sessionID);
-  m_pConnection = new MySQLConnection(database, user, password, host, port);
+  auto ownedSessionID = std::make_unique<SessionID>(sessionID);
+  auto connection = std::make_unique<MySQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.release();
+  m_pSessionID = ownedSessionID.release();
 }
 
 MySQLLog::MySQLLog(
@@ -73,9 +89,11 @@ MySQLLog::MySQLLog(
     const std::string &password,
     const std::string &host,
     short port)
-    : m_pConnectionPool(0),
+    : m_pConnection(nullptr),
+      m_pConnectionPool(0),
       m_pSessionID(0) {
-  m_pConnection = new MySQLConnection(database, user, password, host, port);
+  auto connection = std::make_unique<MySQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.release();
 }
 
 void MySQLLog::init() {
@@ -102,9 +120,9 @@ Log *MySQLLogFactory::create() {
 
   init(m_settings.get(), database, user, password, host, port);
   DatabaseConnectionID id(database, user, password, host, port);
-  MySQLLog *result = new MySQLLog(id, m_connectionPoolPtr.get());
+  auto result = std::make_unique<MySQLLog>(id, m_connectionPoolPtr.get());
   initLog(m_settings.get(), *result);
-  return result;
+  return result.release();
 }
 
 Log *MySQLLogFactory::create(const SessionID &s) {
@@ -121,9 +139,9 @@ Log *MySQLLogFactory::create(const SessionID &s) {
 
   init(settings, database, user, password, host, port);
   DatabaseConnectionID id(database, user, password, host, port);
-  MySQLLog *result = new MySQLLog(s, id, m_connectionPoolPtr.get());
+  auto result = std::make_unique<MySQLLog>(s, id, m_connectionPoolPtr.get());
   initLog(settings, *result);
-  return result;
+  return result.release();
 }
 
 void MySQLLogFactory::init(

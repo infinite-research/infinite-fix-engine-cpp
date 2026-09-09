@@ -31,8 +31,10 @@
 #include "SessionID.h"
 #include "SessionSettings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #include "strptime.h"
 #include <fstream>
+#include <memory>
 #include <string>
 
 namespace FIX {
@@ -49,10 +51,13 @@ PostgreSQLStore::PostgreSQLStore(
     const DatabaseConnectionID &connection,
     PostgreSQLConnectionPool *pool)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(pool),
       m_sessionID(sessionID) {
   m_pConnection = m_pConnectionPool->create(connection);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(m_pConnection); });
   populateCache();
+  connectionGuard.dismiss();
 }
 
 PostgreSQLStore::PostgreSQLStore(
@@ -64,10 +69,13 @@ PostgreSQLStore::PostgreSQLStore(
     const std::string &host,
     short port)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(0),
       m_sessionID(sessionID) {
-  m_pConnection = new PostgreSQLConnection(database, user, password, host, port);
+  auto connection = std::make_unique<PostgreSQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.get();
   populateCache();
+  connection.release();
 }
 
 PostgreSQLStore::~PostgreSQLStore() {

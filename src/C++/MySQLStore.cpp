@@ -31,8 +31,10 @@
 #include "SessionID.h"
 #include "SessionSettings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #include "strptime.h"
 #include <fstream>
+#include <memory>
 
 namespace FIX {
 
@@ -48,10 +50,13 @@ MySQLStore::MySQLStore(
     const DatabaseConnectionID &connection,
     MySQLConnectionPool *pool)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(pool),
       m_sessionID(sessionID) {
   m_pConnection = m_pConnectionPool->create(connection);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(m_pConnection); });
   populateCache();
+  connectionGuard.dismiss();
 }
 
 MySQLStore::MySQLStore(
@@ -63,10 +68,13 @@ MySQLStore::MySQLStore(
     const std::string &host,
     short port)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(0),
       m_sessionID(sessionID) {
-  m_pConnection = new MySQLConnection(database, user, password, host, port);
+  auto connection = std::make_unique<MySQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.get();
   populateCache();
+  connection.release();
 }
 
 MySQLStore::~MySQLStore() {

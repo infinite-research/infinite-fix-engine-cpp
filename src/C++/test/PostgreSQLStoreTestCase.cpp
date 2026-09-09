@@ -31,6 +31,8 @@
 #include <PostgreSQLLog.h>
 #include <PostgreSQLStore.h>
 
+#include <memory>
+
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
@@ -41,7 +43,7 @@ struct postgreSQLStoreFixture {
     SessionID sessionID(BeginString("FIX.4.2"), SenderCompID("SETGET"), TargetCompID("TEST"));
 
     try {
-      object = factory.create(UtcTimeStamp::now(), sessionID);
+      object.reset(factory.create(UtcTimeStamp::now(), sessionID));
     } catch (std::exception &e) {
       std::cerr << e.what() << std::endl;
       throw;
@@ -54,10 +56,8 @@ struct postgreSQLStoreFixture {
     this->resetAfter = reset;
   }
 
-  ~postgreSQLStoreFixture() { factory.destroy(object); }
-
   PostgreSQLStoreFactory factory;
-  MessageStore *object;
+  std::unique_ptr<MessageStore> object;
   bool resetAfter;
 };
 
@@ -100,6 +100,14 @@ TEST_CASE_METHOD(
   const std::string replacement(replacementBytes, sizeof(replacementBytes));
   REQUIRE(object->set(101, "safe"));
   REQUIRE(object->set(102, "old"));
+
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  const SessionID otherSessionID(BeginString("FIX.4.2"), SenderCompID("SETGET-OTHER"), TargetCompID("TEST"));
+  PostgreSQLStoreFactory otherFactory(settings);
+  std::unique_ptr<MessageStore> otherStore(otherFactory.create(UtcTimeStamp::now(), otherSessionID));
+  otherStore->reset(UtcTimeStamp::now());
+  REQUIRE(otherStore->set(102, "other"));
+
   REQUIRE(object->set(102, replacement));
 
   std::vector<std::string> messages;
@@ -107,6 +115,82 @@ TEST_CASE_METHOD(
   REQUIRE(messages.size() == 2);
   CHECK(messages[0] == "safe");
   CHECK(messages[1] == replacement);
+
+  std::vector<std::string> otherMessages;
+  otherStore->get(102, 102, otherMessages);
+  REQUIRE(otherMessages.size() == 1);
+  CHECK(otherMessages[0] == "other");
+}
+
+static int postgresDatabaseConnectionCount() {
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  short port = PostgreSQLStoreFactory::DEFAULT_PORT;
+  if (settings.has(POSTGRESQL_STORE_PORT)) {
+    port = static_cast<short>(settings.getInt(POSTGRESQL_STORE_PORT));
+  }
+  PostgreSQLConnection connection(
+      settings.getString(POSTGRESQL_STORE_DATABASE),
+      settings.getString(POSTGRESQL_STORE_USER),
+      settings.getString(POSTGRESQL_STORE_PASSWORD),
+      settings.getString(POSTGRESQL_STORE_HOST),
+      port);
+  PostgreSQLQuery query("SELECT COUNT(*) FROM pg_stat_activity WHERE datname='postgres' AND usename=current_user");
+  REQUIRE(connection.execute(query));
+  REQUIRE(query.rows() == 1);
+  return std::stoi(query.getValue(0, 0));
+}
+
+TEST_CASE("PostgreSQL database construction releases ownership on failure", "[postgresql][database-ownership]") {
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  const std::string user = settings.getString(POSTGRESQL_STORE_USER);
+  const std::string password = settings.getString(POSTGRESQL_STORE_PASSWORD);
+  const std::string host = settings.getString(POSTGRESQL_STORE_HOST);
+  short port = PostgreSQLStoreFactory::DEFAULT_PORT;
+  if (settings.has(POSTGRESQL_STORE_PORT)) {
+    port = static_cast<short>(settings.getInt(POSTGRESQL_STORE_PORT));
+  }
+  const SessionID sessionID(BeginString("FIX.4.2"), SenderCompID("OWNERSHIP"), TargetCompID("TEST"));
+
+  SECTION("direct store releases connection when cache population fails") {
+    const int before = postgresDatabaseConnectionCount();
+    CHECK_THROWS_AS(
+        std::make_unique<PostgreSQLStore>(UtcTimeStamp::now(), sessionID, "postgres", user, password, host, port),
+        ConfigError);
+    CHECK(postgresDatabaseConnectionCount() == before);
+  }
+
+  SECTION("pooled store releases connection when cache population fails") {
+    const int before = postgresDatabaseConnectionCount();
+    PostgreSQLConnectionPool pool(true);
+    const DatabaseConnectionID id("postgres", user, password, host, port);
+    CHECK_THROWS_AS(std::make_unique<PostgreSQLStore>(UtcTimeStamp::now(), sessionID, id, &pool), ConfigError);
+    CHECK(postgresDatabaseConnectionCount() == before);
+  }
+
+  SECTION("failed native and log connections remain repeatable") {
+    const std::string missingDatabase = "quickfix_missing_raii_database";
+    for (int attempt = 0; attempt != 3; ++attempt) {
+      CHECK_THROWS_AS(PostgreSQLConnection(missingDatabase, user, password, host, port), ConfigError);
+    }
+    CHECK_THROWS_AS(
+        std::make_unique<PostgreSQLLog>(sessionID, missingDatabase, user, password, host, port),
+        ConfigError);
+    CHECK_THROWS_AS(std::make_unique<PostgreSQLLog>(missingDatabase, user, password, host, port), ConfigError);
+
+    Dictionary logSettings;
+    logSettings.setString(POSTGRESQL_LOG_DATABASE, missingDatabase);
+    logSettings.setString(POSTGRESQL_LOG_USER, user);
+    logSettings.setString(POSTGRESQL_LOG_PASSWORD, password);
+    logSettings.setString(POSTGRESQL_LOG_HOST, host);
+    logSettings.setInt(POSTGRESQL_LOG_PORT, port);
+    logSettings.setString(CONNECTION_TYPE, "initiator");
+    SessionSettings sessionSettings;
+    sessionSettings.set(logSettings);
+    sessionSettings.set(sessionID, logSettings);
+    PostgreSQLLogFactory logFactory(sessionSettings);
+    CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create()), ConfigError);
+    CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create(sessionID)), ConfigError);
+  }
 }
 
 TEST_CASE("PostgreSQL database factories require explicit credentials", "[postgresql][database-security]") {
@@ -195,9 +279,8 @@ TEST_CASE("PostgreSQL database factories require explicit credentials", "[postgr
   SECTION("settings and direct empty passwords connect") {
     const Dictionary &storeSettings = TestSettings::sessionSettings.get();
     PostgreSQLStoreFactory storeFactory(storeSettings);
-    MessageStore *store = storeFactory.create(UtcTimeStamp::now(), sessionID);
+    std::unique_ptr<MessageStore> store(storeFactory.create(UtcTimeStamp::now(), sessionID));
     REQUIRE(store != nullptr);
-    storeFactory.destroy(store);
 
     short port = PostgreSQLStoreFactory::DEFAULT_PORT;
     if (storeSettings.has(POSTGRESQL_STORE_PORT)) {
@@ -209,9 +292,8 @@ TEST_CASE("PostgreSQL database factories require explicit credentials", "[postgr
         "",
         storeSettings.getString(POSTGRESQL_STORE_HOST),
         port);
-    MessageStore *directStore = directStoreFactory.create(UtcTimeStamp::now(), sessionID);
+    std::unique_ptr<MessageStore> directStore(directStoreFactory.create(UtcTimeStamp::now(), sessionID));
     REQUIRE(directStore != nullptr);
-    directStoreFactory.destroy(directStore);
 
     Dictionary logSettings;
     logSettings.setString(POSTGRESQL_LOG_DATABASE, storeSettings.getString(POSTGRESQL_STORE_DATABASE));
@@ -224,9 +306,8 @@ TEST_CASE("PostgreSQL database factories require explicit credentials", "[postgr
     SessionSettings sessionSettings;
     sessionSettings.set(logSettings);
     PostgreSQLLogFactory logFactory(sessionSettings);
-    Log *log = logFactory.create();
+    std::unique_ptr<Log> log(logFactory.create());
     REQUIRE(log != nullptr);
-    logFactory.destroy(log);
 
     PostgreSQLLogFactory directLogFactory(
         storeSettings.getString(POSTGRESQL_STORE_DATABASE),
@@ -234,9 +315,8 @@ TEST_CASE("PostgreSQL database factories require explicit credentials", "[postgr
         "",
         storeSettings.getString(POSTGRESQL_STORE_HOST),
         port);
-    Log *directLog = directLogFactory.create();
+    std::unique_ptr<Log> directLog(directLogFactory.create());
     REQUIRE(directLog != nullptr);
-    directLogFactory.destroy(directLog);
   }
 }
 
