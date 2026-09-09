@@ -14,6 +14,10 @@
 
 %{
 static int quickfixPythonAppendOutput(PyObject **result, PyObject *value) {
+  if( !*result ) {
+    Py_XDECREF(value);
+    return -1;
+  }
   if( !value ) {
     Py_CLEAR(*result);
     return -1;

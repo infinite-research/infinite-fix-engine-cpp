@@ -113852,12 +113852,18 @@ _wrap_DataDictionary__getGroup(int argc, VALUE *argv, VALUE self) {
   }
   {
     if( result ) {
-      if( !*arg5 )
-      SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+      if( !*arg5 ) {
+        if (SWIG_IsNewObj(res2)) delete arg2;
+        
+        SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+      }
       void *argp = nullptr;
       int res = SWIG_ConvertPtr(argv[3], &argp, SWIGTYPE_p_FIX__DataDictionary, 0);
-      if( !SWIG_IsOK(res) || !argp )
-      SWIG_exception_fail(SWIG_TypeError, Ruby_Format_TypeError("", "FIX::DataDictionary *", "DataDictionary__getGroup", 5, argv[3]));
+      if( !SWIG_IsOK(res) || !argp ) {
+        if (SWIG_IsNewObj(res2)) delete arg2;
+        
+        SWIG_exception_fail(SWIG_TypeError, Ruby_Format_TypeError("", "FIX::DataDictionary *", "DataDictionary__getGroup", 5, argv[3]));
+      }
       FIX::DataDictionary *pDD = reinterpret_cast< FIX::DataDictionary * >(argp);
       *pDD = **arg5;
     }

@@ -48,12 +48,16 @@
 	  	 
 %typemap(argout) FIX::DataDictionary const *& {
   if( result ) {
-    if( !*$1 )
+    if( !*$1 ) {
+      $cleanup
       SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+    }
     void *argp = nullptr;
     int res = SWIG_ConvertPtr($input, &argp, SWIGTYPE_p_FIX__DataDictionary, 0);
-    if( !SWIG_IsOK(res) || !argp )
+    if( !SWIG_IsOK(res) || !argp ) {
+      $cleanup
       SWIG_exception_fail(SWIG_TypeError, Ruby_Format_TypeError("", "FIX::DataDictionary *", "$symname", $argnum, $input));
+    }
     FIX::DataDictionary *pDD = reinterpret_cast< FIX::DataDictionary * >(argp);
     *pDD = **$1;
   }

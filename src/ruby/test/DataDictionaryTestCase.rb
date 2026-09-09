@@ -62,12 +62,19 @@ class DataDictionaryTestCase < Test::Unit::TestCase
 		assert_binding_subprocess(<<~'RUBY')
 			require 'quickfix_ruby'
 			dictionary = Quickfix::DataDictionary.new
-			dictionary.addGroup('A', 100, 101, Quickfix::DataDictionary.new)
-			begin
-				dictionary._getGroup('A', 100, 0, Object.new)
-				raise 'wrong output type was accepted'
-			rescue TypeError
+			group = Quickfix::DataDictionary.new
+			group.addMsgType('group')
+			dictionary.addGroup('A', 100, 101, group)
+			10_000.times do
+				begin
+					dictionary._getGroup('A', 100, 0, Object.new)
+					raise 'wrong output type was accepted'
+				rescue TypeError
+				end
 			end
+			output = Quickfix::DataDictionary.new
+			raise unless dictionary._getGroup('A', 100, 0, output) == 101
+			raise unless output.isMsgType('group')
 		RUBY
 	end
 
