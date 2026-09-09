@@ -25,6 +25,7 @@
 
 #include "Session.h"
 #include "Values.h"
+#include "scope_guard.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -183,9 +184,19 @@ Session::Session(
       m_detached(detached) {
   m_state.heartBtInt(heartBtInt);
   m_state.initiate(heartBtInt != 0);
-  m_state.store(m_messageStoreFactory.create(m_timestamper(), m_sessionID));
+  MessageStore *store = m_messageStoreFactory.create(m_timestamper(), m_sessionID);
+  auto storeGuard = sg::make_scope_guard([&]() { m_messageStoreFactory.destroy(store); });
+  m_state.store(store);
+
+  Log *log = nullptr;
+  auto logGuard = sg::make_scope_guard([&]() {
+    if (log) {
+      m_pLogFactory->destroy(log);
+    }
+  });
   if (m_pLogFactory) {
-    m_state.log(m_pLogFactory->create(m_sessionID));
+    log = m_pLogFactory->create(m_sessionID);
+    m_state.log(log);
   }
 
   if (!m_detached && !checkSessionTime(m_timestamper())) {
@@ -193,10 +204,19 @@ Session::Session(
   }
 
   if (!m_detached) {
-    addSession(*this);
+    const bool registered = addSession(*this);
+    auto registrationGuard = sg::make_scope_guard([&]() {
+      if (registered) {
+        removeSession(*this);
+      }
+    });
     m_application.onCreate(m_sessionID);
     m_state.onEvent("Created session");
+    registrationGuard.dismiss();
   }
+
+  logGuard.dismiss();
+  storeGuard.dismiss();
 }
 
 Session::~Session() {
@@ -1730,14 +1750,14 @@ size_t Session::numSessions() {
 
 bool Session::addSession(Session &s) {
   Locker locker(s_mutex);
-  Sessions::iterator it = s_sessions.find(s.m_sessionID);
-  if (it == s_sessions.end()) {
-    s_sessions[s.m_sessionID] = &s;
-    s_sessionIDs.insert(s.m_sessionID);
-    return true;
-  } else {
+  auto inserted = s_sessions.emplace(s.m_sessionID, &s);
+  if (!inserted.second) {
     return false;
   }
+  auto rollback = sg::make_scope_guard([&]() { s_sessions.erase(inserted.first); });
+  s_sessionIDs.insert(s.m_sessionID);
+  rollback.dismiss();
+  return true;
 }
 
 void Session::removeSession(Session &s) {

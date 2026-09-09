@@ -29,6 +29,7 @@
 #include <DataDictionary.h>
 #include <DataDictionaryProvider.h>
 #include <FileLog.h>
+#include <Initiator.h>
 #include <Message.h>
 #include <Responder.h>
 #include <Session.h>
@@ -58,6 +59,7 @@
 #include <fixt11/Logout.h>
 #include <fixt11/ResendRequest.h>
 #include <fixt11/SequenceReset.h>
+#include <scope_guard.hpp>
 
 #include "catch_amalgamated.hpp"
 
@@ -163,6 +165,12 @@ public:
   }
   static Message newMessage(Session &session, const MsgType &type) { return session.newMessage(type); }
   static Responder *responder(Session &session) { return session.m_pResponder; }
+  static void eraseSessionState(const SessionID &id) {
+    Locker locker(Session::s_mutex);
+    Session::s_sessions.erase(id);
+    Session::s_sessionIDs.erase(id);
+    Session::s_registered.erase(id);
+  }
   static std::unique_ptr<Session> detached(
       std::function<UtcTimeStamp()> timestamper,
       Application &application,
@@ -194,6 +202,253 @@ public:
 } // namespace FIX
 
 using namespace FIX;
+
+namespace {
+struct ConstructionStoreFactory : MessageStoreFactory {
+  ~ConstructionStoreFactory() override {
+    for (MessageStore *store : outstanding) {
+      delete store;
+    }
+  }
+
+  MessageStore *create(const UtcTimeStamp &now, const SessionID &) override {
+    ++createCalls;
+    if (createCalls == throwOnCreateCall) {
+      throw std::runtime_error("store create failure");
+    }
+    MessageStore *store = new MemoryStore(now);
+    outstanding.insert(store);
+    return store;
+  }
+
+  void destroy(MessageStore *store) override {
+    ++destroyCalls;
+    outstanding.erase(store);
+    delete store;
+  }
+
+  int createCalls = 0;
+  int destroyCalls = 0;
+  int throwOnCreateCall = 0;
+  std::set<MessageStore *> outstanding;
+};
+
+struct ConstructionLog : NullLog {
+  ConstructionLog(bool global, bool throwOnEvent)
+      : global(global),
+        throwOnEvent(throwOnEvent) {}
+
+  void onEvent(const std::string &) override {
+    if (throwOnEvent) {
+      throw std::runtime_error("initial log failure");
+    }
+  }
+
+  bool global;
+  bool throwOnEvent;
+};
+
+struct ConstructionLogFactory : LogFactory {
+  ~ConstructionLogFactory() override {
+    for (Log *log : outstanding) {
+      delete log;
+    }
+  }
+
+  Log *create() override {
+    ++globalCreateCalls;
+    Log *log = new ConstructionLog(true, false);
+    outstanding.insert(log);
+    return log;
+  }
+
+  Log *create(const SessionID &) override {
+    ++sessionCreateCalls;
+    if (sessionCreateCalls == throwOnSessionCreateCall) {
+      throw std::runtime_error("log create failure");
+    }
+    Log *log = new ConstructionLog(false, throwOnSessionEvent);
+    outstanding.insert(log);
+    return log;
+  }
+
+  void destroy(Log *log) override {
+    auto *countingLog = static_cast<ConstructionLog *>(log);
+    if (countingLog->global) {
+      ++globalDestroyCalls;
+    } else {
+      ++sessionDestroyCalls;
+    }
+    outstanding.erase(log);
+    delete log;
+  }
+
+  int globalCreateCalls = 0;
+  int sessionCreateCalls = 0;
+  int globalDestroyCalls = 0;
+  int sessionDestroyCalls = 0;
+  int throwOnSessionCreateCall = 0;
+  bool throwOnSessionEvent = false;
+  std::set<Log *> outstanding;
+};
+
+struct ConstructionApplication : NullApplication {
+  void onCreate(const SessionID &) override {
+    ++onCreateCalls;
+    if (throwOnCreate) {
+      throw std::runtime_error("application create failure");
+    }
+  }
+
+  int onCreateCalls = 0;
+  bool throwOnCreate = false;
+};
+
+class ConstructionAcceptor : public Acceptor {
+public:
+  using Acceptor::Acceptor;
+
+private:
+  void onStart() override {}
+  bool onPoll() override { return false; }
+  void onStop() override {}
+};
+
+class ConstructionInitiator : public Initiator {
+public:
+  using Initiator::Initiator;
+
+private:
+  void onStart() override {}
+  bool onPoll() override { return false; }
+  void onStop() override {}
+  void doConnect(const SessionID &, const Dictionary &) override {}
+};
+
+std::unique_ptr<Session> createConstructionSession(
+    Application &application,
+    MessageStoreFactory &stores,
+    LogFactory *logs,
+    const SessionID &id) {
+  DataDictionaryProvider dictionaries;
+  return std::make_unique<Session>(
+      []() { return UtcTimeStamp::now(); },
+      application,
+      stores,
+      id,
+      dictionaries,
+      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      0,
+      logs);
+}
+
+Dictionary constructionSettings(const std::string &connectionType) {
+  Dictionary settings;
+  settings.setString(CONNECTION_TYPE, connectionType);
+  settings.setBool(USE_DATA_DICTIONARY, false);
+  settings.setBool(NON_STOP_SESSION, true);
+  if (connectionType == "initiator") {
+    settings.setInt(HEARTBTINT, 30);
+  }
+  return settings;
+}
+} // namespace
+
+TEST_CASE("Session construction returns factory products and registration on failure", "[session][ownership]") {
+  const SessionID id("FIX.4.2", "CONSTRUCTION", "PEER");
+  const size_t sessionsBefore = Session::numSessions();
+  ConstructionApplication application;
+  ConstructionStoreFactory stores;
+  ConstructionLogFactory logs;
+  auto cleanup = sg::make_scope_guard([&]() { SessionTestAccess::eraseSessionState(id); });
+
+  SECTION("store succeeds and log creation throws") {
+    logs.throwOnSessionCreateCall = 1;
+    CHECK_THROWS_AS(createConstructionSession(application, stores, &logs, id), std::runtime_error);
+    CHECK(stores.createCalls == 1);
+    CHECK(stores.destroyCalls == 1);
+    CHECK(logs.sessionCreateCalls == 1);
+    CHECK(logs.sessionDestroyCalls == 0);
+  }
+
+  SECTION("application callback throws after products and registration succeed") {
+    application.throwOnCreate = true;
+    CHECK_THROWS_AS(createConstructionSession(application, stores, &logs, id), std::runtime_error);
+    CHECK(stores.destroyCalls == 1);
+    CHECK(logs.sessionDestroyCalls == 1);
+    CHECK(application.onCreateCalls == 1);
+  }
+
+  SECTION("initial log callback throws after products and registration succeed") {
+    logs.throwOnSessionEvent = true;
+    CHECK_THROWS_AS(createConstructionSession(application, stores, &logs, id), std::runtime_error);
+    CHECK(stores.destroyCalls == 1);
+    CHECK(logs.sessionDestroyCalls == 1);
+    CHECK(application.onCreateCalls == 1);
+  }
+
+  CHECK(Session::lookupSession(id) == nullptr);
+  CHECK(Session::numSessions() == sessionsBefore);
+}
+
+TEST_CASE("connector construction releases global log when settings are invalid", "[session][ownership]") {
+  ConstructionApplication application;
+  ConstructionStoreFactory stores;
+  ConstructionLogFactory logs;
+  SessionSettings settings;
+
+  SECTION("acceptor") {
+    CHECK_THROWS_AS(std::make_unique<ConstructionAcceptor>(application, stores, settings, logs), ConfigError);
+  }
+
+  SECTION("initiator") {
+    CHECK_THROWS_AS(std::make_unique<ConstructionInitiator>(application, stores, settings, logs), ConfigError);
+  }
+
+  CHECK(logs.globalCreateCalls == 1);
+  CHECK(logs.globalDestroyCalls == 1);
+}
+
+TEST_CASE("connector construction clears earlier sessions when a later factory fails", "[session][ownership]") {
+  const size_t sessionsBefore = Session::numSessions();
+  const SessionID first("FIX.4.2", "A-FIRST", "PEER");
+  const SessionID second("FIX.4.2", "B-SECOND", "PEER");
+  ConstructionApplication application;
+  ConstructionStoreFactory stores;
+  ConstructionLogFactory logs;
+  SessionSettings settings;
+  auto cleanup = sg::make_scope_guard([&]() {
+    if (Session *session = Session::lookupSession(first)) {
+      delete session;
+    }
+    SessionTestAccess::eraseSessionState(second);
+  });
+
+  SECTION("acceptor without a global log fails creating the later store") {
+    settings.set(first, constructionSettings("acceptor"));
+    settings.set(second, constructionSettings("acceptor"));
+    stores.throwOnCreateCall = 2;
+    CHECK_THROWS_AS(std::make_unique<ConstructionAcceptor>(application, stores, settings), std::runtime_error);
+    CHECK(stores.createCalls == 2);
+    CHECK(stores.destroyCalls == 1);
+  }
+
+  SECTION("initiator fails creating the later session log") {
+    settings.set(first, constructionSettings("initiator"));
+    settings.set(second, constructionSettings("initiator"));
+    logs.throwOnSessionCreateCall = 2;
+    CHECK_THROWS_AS(std::make_unique<ConstructionInitiator>(application, stores, settings, logs), std::runtime_error);
+    CHECK(stores.createCalls == 2);
+    CHECK(stores.destroyCalls == 2);
+    CHECK(logs.sessionCreateCalls == 2);
+    CHECK(logs.sessionDestroyCalls == 1);
+    CHECK(logs.globalDestroyCalls == 1);
+  }
+
+  CHECK(Session::lookupSession(first) == nullptr);
+  CHECK(Session::lookupSession(second) == nullptr);
+  CHECK(Session::numSessions() == sessionsBefore);
+}
 
 #if HAVE_SSL && !defined(_MSC_VER) && defined(QUICKFIX_TEST_PKI)
 TEST_CASE("TLS handshake timeout drops monitored socket before reconnect", "[tls][timeout]") {

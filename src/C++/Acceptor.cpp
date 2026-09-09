@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 
 namespace FIX {
 Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFactory, const SessionSettings &settings)
@@ -58,14 +59,24 @@ Acceptor::Acceptor(
       m_messageStoreFactory(messageStoreFactory),
       m_settings(settings),
       m_pLogFactory(&logFactory),
-      m_pLog(logFactory.create()),
+      m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
       m_stop(true) {
+  m_pLog = logFactory.create();
+  auto logGuard = sg::make_scope_guard([&]() { m_pLogFactory->destroy(m_pLog); });
   initialize();
+  logGuard.dismiss();
 }
 
 void Acceptor::initialize() EXCEPT(ConfigError) {
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (auto &session : m_sessions) {
+      delete session.second;
+    }
+    m_sessions.clear();
+    m_sessionIDs.clear();
+  });
   std::set<SessionID> sessions = m_settings.getSessions();
   std::set<SessionID>::iterator i;
 
@@ -77,14 +88,19 @@ void Acceptor::initialize() EXCEPT(ConfigError) {
 
   for (i = sessions.begin(); i != sessions.end(); ++i) {
     if (m_settings.get(*i).getString(CONNECTION_TYPE) == "acceptor") {
+      auto session = std::unique_ptr<Session>(factory.create(*i, m_settings.get(*i)));
+      auto inserted = m_sessions.emplace(*i, session.get());
+      if (inserted.second) {
+        session.release();
+      }
       m_sessionIDs.insert(*i);
-      m_sessions[*i] = factory.create(*i, m_settings.get(*i));
     }
   }
 
   if (!m_sessions.size()) {
     throw ConfigError("No sessions defined for acceptor");
   }
+  cleanup.dismiss();
 }
 
 Acceptor::~Acceptor() {

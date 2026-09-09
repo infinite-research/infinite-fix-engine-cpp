@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 
 namespace FIX {
 Initiator::Initiator(
@@ -60,14 +61,28 @@ Initiator::Initiator(
       m_messageStoreFactory(messageStoreFactory),
       m_settings(settings),
       m_pLogFactory(&logFactory),
-      m_pLog(logFactory.create()),
+      m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
       m_stop(true) {
+  m_pLog = logFactory.create();
+  auto logGuard = sg::make_scope_guard([&]() { m_pLogFactory->destroy(m_pLog); });
   initialize();
+  logGuard.dismiss();
 }
 
 void Initiator::initialize() EXCEPT(ConfigError) {
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (auto &session : m_sessions) {
+      delete session.second;
+    }
+    m_sessions.clear();
+    m_sessionIDs.clear();
+    m_pending.clear();
+    m_connected.clear();
+    m_disconnected.clear();
+    m_sessionState.clear();
+  });
   std::set<SessionID> sessions = m_settings.getSessions();
   std::set<SessionID>::iterator i;
 
@@ -79,8 +94,12 @@ void Initiator::initialize() EXCEPT(ConfigError) {
 
   for (i = sessions.begin(); i != sessions.end(); ++i) {
     if (m_settings.get(*i).getString("ConnectionType") == "initiator") {
+      auto session = std::unique_ptr<Session>(factory.create(*i, m_settings.get(*i)));
+      auto inserted = m_sessions.emplace(*i, session.get());
+      if (inserted.second) {
+        session.release();
+      }
       m_sessionIDs.insert(*i);
-      m_sessions[*i] = factory.create(*i, m_settings.get(*i));
       setDisconnected(*i);
     }
   }
@@ -88,6 +107,7 @@ void Initiator::initialize() EXCEPT(ConfigError) {
   if (!m_sessions.size()) {
     throw ConfigError("No sessions defined for initiator");
   }
+  cleanup.dismiss();
 }
 
 Initiator::~Initiator() {

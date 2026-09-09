@@ -30,6 +30,7 @@
 #include "TestHelper.h"
 #include <PostgreSQLLog.h>
 #include <PostgreSQLStore.h>
+#include <Session.h>
 
 #include <memory>
 
@@ -102,11 +103,19 @@ TEST_CASE_METHOD(
   REQUIRE(object->set(102, "old"));
 
   const Dictionary &settings = TestSettings::sessionSettings.get();
-  const SessionID otherSessionID(BeginString("FIX.4.2"), SenderCompID("SETGET-OTHER"), TargetCompID("TEST"));
+  const std::vector<std::pair<SessionID, std::string>> protectedRows{
+      {SessionID("FIX.4.1", "SETGET", "TEST"), "begin"},
+      {SessionID("FIX.4.2", "SETGET-OTHER", "TEST"), "sender"},
+      {SessionID("FIX.4.2", "SETGET", "TEST-OTHER"), "target"},
+      {SessionID("FIX.4.2", "SETGET", "TEST", "OTHER"), "qualifier"}};
   PostgreSQLStoreFactory otherFactory(settings);
-  std::unique_ptr<MessageStore> otherStore(otherFactory.create(UtcTimeStamp::now(), otherSessionID));
-  otherStore->reset(UtcTimeStamp::now());
-  REQUIRE(otherStore->set(102, "other"));
+  std::vector<std::unique_ptr<MessageStore>> protectedStores;
+  for (const auto &[id, value] : protectedRows) {
+    std::unique_ptr<MessageStore> store(otherFactory.create(UtcTimeStamp::now(), id));
+    store->reset(UtcTimeStamp::now());
+    REQUIRE(store->set(102, value));
+    protectedStores.push_back(std::move(store));
+  }
 
   REQUIRE(object->set(102, replacement));
 
@@ -116,13 +125,15 @@ TEST_CASE_METHOD(
   CHECK(messages[0] == "safe");
   CHECK(messages[1] == replacement);
 
-  std::vector<std::string> otherMessages;
-  otherStore->get(102, 102, otherMessages);
-  REQUIRE(otherMessages.size() == 1);
-  CHECK(otherMessages[0] == "other");
+  for (size_t index = 0; index != protectedRows.size(); ++index) {
+    std::vector<std::string> messages;
+    protectedStores[index]->get(102, 102, messages);
+    REQUIRE(messages.size() == 1);
+    CHECK(messages[0] == protectedRows[index].second);
+  }
 }
 
-static int postgresDatabaseConnectionCount() {
+static int postgresDatabaseConnectionCount(const std::string &database = "postgres") {
   const Dictionary &settings = TestSettings::sessionSettings.get();
   short port = PostgreSQLStoreFactory::DEFAULT_PORT;
   if (settings.has(POSTGRESQL_STORE_PORT)) {
@@ -134,10 +145,43 @@ static int postgresDatabaseConnectionCount() {
       settings.getString(POSTGRESQL_STORE_PASSWORD),
       settings.getString(POSTGRESQL_STORE_HOST),
       port);
-  PostgreSQLQuery query("SELECT COUNT(*) FROM pg_stat_activity WHERE datname='postgres' AND usename=current_user");
+  PostgreSQLQuery query(
+      "SELECT COUNT(*) FROM pg_stat_activity WHERE datname='" + database + "' AND usename=current_user");
   REQUIRE(connection.execute(query));
   REQUIRE(query.rows() == 1);
   return std::stoi(query.getValue(0, 0));
+}
+
+TEST_CASE("PostgreSQL log preserves supported special bytes", "[postgresql][database-log]") {
+  const Dictionary &settings = TestSettings::sessionSettings.get();
+  short port = PostgreSQLLogFactory::DEFAULT_PORT;
+  if (settings.has(POSTGRESQL_STORE_PORT)) {
+    port = static_cast<short>(settings.getInt(POSTGRESQL_STORE_PORT));
+  }
+  const SessionID sessionID("FIX.4.2", "LOG-BYTES", "TEST");
+  PostgreSQLLog log(
+      sessionID,
+      settings.getString(POSTGRESQL_STORE_DATABASE),
+      settings.getString(POSTGRESQL_STORE_USER),
+      settings.getString(POSTGRESQL_STORE_PASSWORD),
+      settings.getString(POSTGRESQL_STORE_HOST),
+      port);
+  log.clear();
+  const char valueBytes[] = {'a', '\'', '"', '\\', '\r', '\n', '\1', '\x7f', '\xc3', '\xa9'};
+  log.onEvent(std::string(valueBytes, sizeof(valueBytes)));
+
+  PostgreSQLConnection connection(
+      settings.getString(POSTGRESQL_STORE_DATABASE),
+      settings.getString(POSTGRESQL_STORE_USER),
+      settings.getString(POSTGRESQL_STORE_PASSWORD),
+      settings.getString(POSTGRESQL_STORE_HOST),
+      port);
+  PostgreSQLQuery query(
+      "SELECT encode(convert_to(text, 'UTF8'), 'hex') FROM event_log WHERE beginstring='FIX.4.2' "
+      "AND sendercompid='LOG-BYTES' AND targetcompid='TEST' ORDER BY id DESC LIMIT 1");
+  REQUIRE(connection.execute(query));
+  REQUIRE(query.rows() == 1);
+  CHECK(std::string(query.getValue(0, 0)) == "6127225c0d0a017fc3a9");
 }
 
 TEST_CASE("PostgreSQL database construction releases ownership on failure", "[postgresql][database-ownership]") {
@@ -190,6 +234,40 @@ TEST_CASE("PostgreSQL database construction releases ownership on failure", "[po
     PostgreSQLLogFactory logFactory(sessionSettings);
     CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create()), ConfigError);
     CHECK_THROWS_AS(std::unique_ptr<Log>(logFactory.create(sessionID)), ConfigError);
+  }
+
+  SECTION("session destroys valid store when log creation fails") {
+    const std::string database = settings.getString(POSTGRESQL_STORE_DATABASE);
+    const int before = postgresDatabaseConnectionCount(database);
+    PostgreSQLStoreFactory storeFactory(settings);
+
+    Dictionary logSettings;
+    logSettings.setString(POSTGRESQL_LOG_DATABASE, "quickfix_missing_raii_database");
+    logSettings.setString(POSTGRESQL_LOG_USER, user);
+    logSettings.setString(POSTGRESQL_LOG_PASSWORD, password);
+    logSettings.setString(POSTGRESQL_LOG_HOST, host);
+    logSettings.setInt(POSTGRESQL_LOG_PORT, port);
+    logSettings.setString(CONNECTION_TYPE, "initiator");
+    SessionSettings sessionSettings;
+    sessionSettings.set(sessionID, logSettings);
+    PostgreSQLLogFactory logFactory(sessionSettings);
+    TestApplication application;
+    DataDictionaryProvider dictionaries;
+
+    CHECK(Session::lookupSession(sessionID) == nullptr);
+    CHECK_THROWS_AS(
+        std::make_unique<Session>(
+            []() { return UtcTimeStamp::now(); },
+            application,
+            storeFactory,
+            sessionID,
+            dictionaries,
+            TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+            0,
+            &logFactory),
+        ConfigError);
+    CHECK(postgresDatabaseConnectionCount(database) == before);
+    CHECK(Session::lookupSession(sessionID) == nullptr);
   }
 }
 
