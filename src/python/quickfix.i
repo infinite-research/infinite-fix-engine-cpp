@@ -12,49 +12,92 @@
   }
 }
 
+%{
+static int quickfixPythonAppendOutput(PyObject **result, PyObject *value) {
+  if( !value ) {
+    Py_CLEAR(*result);
+    return -1;
+  }
+  if( !PyDict_Check(*result) ) {
+    PyObject *dictionary = PyDict_New();
+    if( !dictionary ) {
+      Py_DECREF(value);
+      Py_CLEAR(*result);
+      return -1;
+    }
+    Py_DECREF(*result);
+    *result = dictionary;
+  }
+  PyObject *key = PyLong_FromSsize_t(PyDict_Size(*result));
+  if( !key || PyDict_SetItem(*result, key, value) < 0 ) {
+    Py_XDECREF(key);
+    Py_DECREF(value);
+    Py_CLEAR(*result);
+    return -1;
+  }
+  Py_DECREF(key);
+  Py_DECREF(value);
+  return 0;
+}
+%}
+
 %typemap(in) std::string& (std::string temp) {
-  temp = std::string((char*)PyUnicode_AsUTF8($input));
+  const char *value = PyUnicode_AsUTF8($input);
+  if( !value )
+    SWIG_fail;
+  temp = value;
   $1 = &temp;
 }
 
 %typemap(argout) std::string& {
   if( std::string("$1_type") == "std::string &" )
   {
-    if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-    PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString($1->c_str()) );
+    if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString($1->c_str())) < 0 )
+      SWIG_fail;
   }
 }
 
 %typemap(in) int& (int temp) {
-  SWIG_AsVal_int($input, &temp);
+  int res = SWIG_AsVal_int($input, &temp);
+  if( !SWIG_IsOK(res) )
+    SWIG_exception_fail(SWIG_ArgError(res), "invalid int reference output placeholder");
   $1 = &temp;
 }
 
 %typemap(argout) int& {
   if( std::string("$1_type") == "int &" )
   {
-    if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-    PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyLong_FromLong(*$1) );    
+    if( quickfixPythonAppendOutput(&resultobj, PyLong_FromLong(*$1)) < 0 )
+      SWIG_fail;
   }
 }
 
-%typemap(in) FIX::DataDictionary const *& (FIX::DataDictionary* temp) {
-  $1 = new FIX::DataDictionary*[1];
-  *$1 = temp;
+%typemap(argout) int &delim {
+  if( result ) {
+    if( quickfixPythonAppendOutput(&resultobj, PyLong_FromLong(*$1)) < 0 )
+      SWIG_fail;
+  }
 }
 
-%typemap(free) FIX::DataDictionary const *& {
-  delete[] temp;
+%typemap(in) FIX::DataDictionary const *& (FIX::DataDictionary *temp = nullptr) {
+  $1 = &temp;
 }
 
 %typemap(argout) FIX::DataDictionary const *& {
-  void* argp;
-  FIX::DataDictionary* pDD = 0;
-  int res = SWIG_ConvertPtr($input, &argp, SWIGTYPE_p_FIX__DataDictionary, 0 );
-  pDD = reinterpret_cast<FIX::DataDictionary *>(argp);
-  *pDD = *(*$1);
+  if( result ) {
+    if( !*$1 ) {
+      Py_CLEAR(resultobj);
+      SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+    }
+    void *argp = nullptr;
+    int res = SWIG_ConvertPtr($input, &argp, SWIGTYPE_p_FIX__DataDictionary, 0);
+    if( !SWIG_IsOK(res) || !argp ) {
+      Py_CLEAR(resultobj);
+      SWIG_exception_fail(SWIG_TypeError, "expected a DataDictionary output argument");
+    }
+    FIX::DataDictionary *pDD = reinterpret_cast<FIX::DataDictionary *>(argp);
+    *pDD = **$1;
+  }
 }
 
 %extend FIX::UtcTimeStamp {
@@ -372,4 +415,3 @@ class SSLSocketAcceptor(SSLSocketAcceptorBase):
       sigaction( SIGINT, &new_action, &old_action );
 #endif
 %}
-

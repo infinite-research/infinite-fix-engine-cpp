@@ -3676,163 +3676,165 @@ namespace Swig {
 #define SWIGTYPE_p_FIX__FieldBase swig_types[27]
 #define SWIGTYPE_p_FIX__FieldConvertError swig_types[28]
 #define SWIGTYPE_p_FIX__FieldMap swig_types[29]
-#define SWIGTYPE_p_FIX__FieldNotFound swig_types[30]
-#define SWIGTYPE_p_FIX__FileLog swig_types[31]
-#define SWIGTYPE_p_FIX__FileLogFactory swig_types[32]
-#define SWIGTYPE_p_FIX__FileStore swig_types[33]
-#define SWIGTYPE_p_FIX__FileStoreFactory swig_types[34]
-#define SWIGTYPE_p_FIX__Group swig_types[35]
-#define SWIGTYPE_p_FIX__Header swig_types[36]
-#define SWIGTYPE_p_FIX__IOException swig_types[37]
-#define SWIGTYPE_p_FIX__IncorrectDataFormat swig_types[38]
-#define SWIGTYPE_p_FIX__IncorrectMessageStructure swig_types[39]
-#define SWIGTYPE_p_FIX__IncorrectTagValue swig_types[40]
-#define SWIGTYPE_p_FIX__Initiator swig_types[41]
-#define SWIGTYPE_p_FIX__Int64Field swig_types[42]
-#define SWIGTYPE_p_FIX__IntField swig_types[43]
-#define SWIGTYPE_p_FIX__InvalidMessage swig_types[44]
-#define SWIGTYPE_p_FIX__InvalidMessageType swig_types[45]
-#define SWIGTYPE_p_FIX__InvalidTagNumber swig_types[46]
-#define SWIGTYPE_p_FIX__LocalDate swig_types[47]
-#define SWIGTYPE_p_FIX__LocalTimeOnly swig_types[48]
-#define SWIGTYPE_p_FIX__LocalTimeStamp swig_types[49]
-#define SWIGTYPE_p_FIX__Log swig_types[50]
-#define SWIGTYPE_p_FIX__LogFactory swig_types[51]
-#define SWIGTYPE_p_FIX__MemoryStore swig_types[52]
-#define SWIGTYPE_p_FIX__MemoryStoreFactory swig_types[53]
-#define SWIGTYPE_p_FIX__Message swig_types[54]
-#define SWIGTYPE_p_FIX__MessageParseError swig_types[55]
-#define SWIGTYPE_p_FIX__MessageStore swig_types[56]
-#define SWIGTYPE_p_FIX__MessageStoreExceptionWrapper swig_types[57]
-#define SWIGTYPE_p_FIX__MessageStoreFactory swig_types[58]
-#define SWIGTYPE_p_FIX__MessageStoreFactoryExceptionWrapper swig_types[59]
-#define SWIGTYPE_p_FIX__MySQLConnection swig_types[60]
-#define SWIGTYPE_p_FIX__MySQLLog swig_types[61]
-#define SWIGTYPE_p_FIX__MySQLLogFactory swig_types[62]
-#define SWIGTYPE_p_FIX__MySQLQuery swig_types[63]
-#define SWIGTYPE_p_FIX__MySQLStore swig_types[64]
-#define SWIGTYPE_p_FIX__MySQLStoreFactory swig_types[65]
-#define SWIGTYPE_p_FIX__NoTagValue swig_types[66]
-#define SWIGTYPE_p_FIX__NullApplication swig_types[67]
-#define SWIGTYPE_p_FIX__NullLog swig_types[68]
-#define SWIGTYPE_p_FIX__NullStore swig_types[69]
-#define SWIGTYPE_p_FIX__NullStoreFactory swig_types[70]
-#define SWIGTYPE_p_FIX__PostgreSQLConnection swig_types[71]
-#define SWIGTYPE_p_FIX__PostgreSQLLog swig_types[72]
-#define SWIGTYPE_p_FIX__PostgreSQLLogFactory swig_types[73]
-#define SWIGTYPE_p_FIX__PostgreSQLQuery swig_types[74]
-#define SWIGTYPE_p_FIX__PostgreSQLStore swig_types[75]
-#define SWIGTYPE_p_FIX__PostgreSQLStoreFactory swig_types[76]
-#define SWIGTYPE_p_FIX__RejectLogon swig_types[77]
-#define SWIGTYPE_p_FIX__RepeatedTag swig_types[78]
-#define SWIGTYPE_p_FIX__RepeatingGroupCountMismatch swig_types[79]
-#define SWIGTYPE_p_FIX__RequiredTagMissing swig_types[80]
-#define SWIGTYPE_p_FIX__RuntimeError swig_types[81]
-#define SWIGTYPE_p_FIX__SSLSocketAcceptor swig_types[82]
-#define SWIGTYPE_p_FIX__SSLSocketInitiator swig_types[83]
-#define SWIGTYPE_p_FIX__ScreenLog swig_types[84]
-#define SWIGTYPE_p_FIX__ScreenLogFactory swig_types[85]
-#define SWIGTYPE_p_FIX__SenderCompID swig_types[86]
-#define SWIGTYPE_p_FIX__Session swig_types[87]
-#define SWIGTYPE_p_FIX__SessionID swig_types[88]
-#define SWIGTYPE_p_FIX__SessionNotFound swig_types[89]
-#define SWIGTYPE_p_FIX__SessionSettings swig_types[90]
-#define SWIGTYPE_p_FIX__SocketAcceptor swig_types[91]
-#define SWIGTYPE_p_FIX__SocketCloseFailed swig_types[92]
-#define SWIGTYPE_p_FIX__SocketException swig_types[93]
-#define SWIGTYPE_p_FIX__SocketInitiator swig_types[94]
-#define SWIGTYPE_p_FIX__SocketRecvFailed swig_types[95]
-#define SWIGTYPE_p_FIX__SocketSendFailed swig_types[96]
-#define SWIGTYPE_p_FIX__StringField swig_types[97]
-#define SWIGTYPE_p_FIX__SynchronizedApplication swig_types[98]
-#define SWIGTYPE_p_FIX__TYPE__Type swig_types[99]
-#define SWIGTYPE_p_FIX__TagNotDefinedForMessage swig_types[100]
-#define SWIGTYPE_p_FIX__TagOutOfOrder swig_types[101]
-#define SWIGTYPE_p_FIX__TargetCompID swig_types[102]
-#define SWIGTYPE_p_FIX__ThreadedSocketAcceptor swig_types[103]
-#define SWIGTYPE_p_FIX__ThreadedSocketInitiator swig_types[104]
-#define SWIGTYPE_p_FIX__Trailer swig_types[105]
-#define SWIGTYPE_p_FIX__UInt64Field swig_types[106]
-#define SWIGTYPE_p_FIX__UnsupportedMessageType swig_types[107]
-#define SWIGTYPE_p_FIX__UnsupportedVersion swig_types[108]
-#define SWIGTYPE_p_FIX__UtcDate swig_types[109]
-#define SWIGTYPE_p_FIX__UtcDateField swig_types[110]
-#define SWIGTYPE_p_FIX__UtcTimeOnly swig_types[111]
-#define SWIGTYPE_p_FIX__UtcTimeOnlyField swig_types[112]
-#define SWIGTYPE_p_FIX__UtcTimeStamp swig_types[113]
-#define SWIGTYPE_p_FIX__UtcTimeStampField swig_types[114]
-#define SWIGTYPE_p_Fields swig_types[115]
-#define SWIGTYPE_p_Group swig_types[116]
-#define SWIGTYPE_p_Groups swig_types[117]
-#define SWIGTYPE_p_IntArray swig_types[118]
-#define SWIGTYPE_p_IntField swig_types[119]
-#define SWIGTYPE_p_Log swig_types[120]
-#define SWIGTYPE_p_LogFactory swig_types[121]
-#define SWIGTYPE_p_MYSQL swig_types[122]
-#define SWIGTYPE_p_MessageStore swig_types[123]
-#define SWIGTYPE_p_MessageStoreFactory swig_types[124]
-#define SWIGTYPE_p_MsgType swig_types[125]
-#define SWIGTYPE_p_Mutex swig_types[126]
-#define SWIGTYPE_p_PGconn swig_types[127]
-#define SWIGTYPE_p_RSA swig_types[128]
-#define SWIGTYPE_p_Responder swig_types[129]
-#define SWIGTYPE_p_SessionID swig_types[130]
-#define SWIGTYPE_p_SessionToPort swig_types[131]
-#define SWIGTYPE_p_StringField swig_types[132]
-#define SWIGTYPE_p_TimeRange swig_types[133]
-#define SWIGTYPE_p_UtcDateField swig_types[134]
-#define SWIGTYPE_p_X509 swig_types[135]
-#define SWIGTYPE_p_allocator_type swig_types[136]
-#define SWIGTYPE_p_bool swig_types[137]
-#define SWIGTYPE_p_char swig_types[138]
-#define SWIGTYPE_p_const_iterator swig_types[139]
-#define SWIGTYPE_p_difference_type swig_types[140]
-#define SWIGTYPE_p_double swig_types[141]
-#define SWIGTYPE_p_g_const_iterator swig_types[142]
-#define SWIGTYPE_p_g_iterator swig_types[143]
-#define SWIGTYPE_p_g_value_type swig_types[144]
-#define SWIGTYPE_p_int swig_types[145]
-#define SWIGTYPE_p_iterator swig_types[146]
-#define SWIGTYPE_p_key_type swig_types[147]
-#define SWIGTYPE_p_long_long swig_types[148]
-#define SWIGTYPE_p_message_order swig_types[149]
-#define SWIGTYPE_p_p_FIX__DataDictionary swig_types[150]
-#define SWIGTYPE_p_p_PyObject swig_types[151]
-#define SWIGTYPE_p_short swig_types[152]
-#define SWIGTYPE_p_signed_char swig_types[153]
-#define SWIGTYPE_p_size_type swig_types[154]
-#define SWIGTYPE_p_ssize_t swig_types[155]
-#define SWIGTYPE_p_std__allocatorT_std__string_t swig_types[156]
-#define SWIGTYPE_p_std__functionT_FIX__UtcTimeStamp_fF_t swig_types[157]
-#define SWIGTYPE_p_std__invalid_argument swig_types[158]
-#define SWIGTYPE_p_std__istream swig_types[159]
-#define SWIGTYPE_p_std__lessT_FIX__SessionID_t swig_types[160]
-#define SWIGTYPE_p_std__logic_error swig_types[161]
-#define SWIGTYPE_p_std__mapT_FIX__SessionID_unsigned_short_t swig_types[162]
-#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t swig_types[163]
-#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t__const_iterator swig_types[164]
-#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t__iterator swig_types[165]
-#define SWIGTYPE_p_std__mapT_std__string_std__string_t__const_iterator swig_types[166]
-#define SWIGTYPE_p_std__ostream swig_types[167]
-#define SWIGTYPE_p_std__setT_FIX__SessionID_t swig_types[168]
-#define SWIGTYPE_p_std__setT_std__string_std__lessT_std__string_t_std__allocatorT_std__string_t_t swig_types[169]
-#define SWIGTYPE_p_std__string swig_types[170]
-#define SWIGTYPE_p_std__string__size_type swig_types[171]
-#define SWIGTYPE_p_std__unique_ptrT_FIX__DatabaseConnectionPoolT_FIX__MySQLConnection_t_t swig_types[172]
-#define SWIGTYPE_p_std__unique_ptrT_FIX__DatabaseConnectionPoolT_FIX__PostgreSQLConnection_t_t swig_types[173]
-#define SWIGTYPE_p_std__vectorT_FIX__FieldBase_ALLOCATORT_FIX__FieldBase_t_t__const_iterator swig_types[174]
-#define SWIGTYPE_p_std__vectorT_FIX__FieldBase_ALLOCATORT_FIX__FieldBase_t_t__iterator swig_types[175]
-#define SWIGTYPE_p_std__vectorT_std__string_t swig_types[176]
-#define SWIGTYPE_p_swig__SwigPyIterator swig_types[177]
-#define SWIGTYPE_p_time_t swig_types[178]
-#define SWIGTYPE_p_tm swig_types[179]
-#define SWIGTYPE_p_unsigned_char swig_types[180]
-#define SWIGTYPE_p_unsigned_int swig_types[181]
-#define SWIGTYPE_p_unsigned_long_long swig_types[182]
-#define SWIGTYPE_p_unsigned_short swig_types[183]
-#define SWIGTYPE_p_value_type swig_types[184]
-static swig_type_info *swig_types[186];
-static swig_module_info swig_module = {swig_types, 185, 0, 0, 0, 0};
+#define SWIGTYPE_p_FIX__FieldMap__LengthAndTotal swig_types[30]
+#define SWIGTYPE_p_FIX__FieldNotFound swig_types[31]
+#define SWIGTYPE_p_FIX__FileLog swig_types[32]
+#define SWIGTYPE_p_FIX__FileLogFactory swig_types[33]
+#define SWIGTYPE_p_FIX__FileStore swig_types[34]
+#define SWIGTYPE_p_FIX__FileStoreFactory swig_types[35]
+#define SWIGTYPE_p_FIX__Group swig_types[36]
+#define SWIGTYPE_p_FIX__Header swig_types[37]
+#define SWIGTYPE_p_FIX__IOException swig_types[38]
+#define SWIGTYPE_p_FIX__IncorrectDataFormat swig_types[39]
+#define SWIGTYPE_p_FIX__IncorrectMessageStructure swig_types[40]
+#define SWIGTYPE_p_FIX__IncorrectTagValue swig_types[41]
+#define SWIGTYPE_p_FIX__Initiator swig_types[42]
+#define SWIGTYPE_p_FIX__Int64Field swig_types[43]
+#define SWIGTYPE_p_FIX__IntField swig_types[44]
+#define SWIGTYPE_p_FIX__InvalidMessage swig_types[45]
+#define SWIGTYPE_p_FIX__InvalidMessageType swig_types[46]
+#define SWIGTYPE_p_FIX__InvalidTagNumber swig_types[47]
+#define SWIGTYPE_p_FIX__LocalDate swig_types[48]
+#define SWIGTYPE_p_FIX__LocalTimeOnly swig_types[49]
+#define SWIGTYPE_p_FIX__LocalTimeStamp swig_types[50]
+#define SWIGTYPE_p_FIX__Log swig_types[51]
+#define SWIGTYPE_p_FIX__LogFactory swig_types[52]
+#define SWIGTYPE_p_FIX__MemoryStore swig_types[53]
+#define SWIGTYPE_p_FIX__MemoryStoreFactory swig_types[54]
+#define SWIGTYPE_p_FIX__Message swig_types[55]
+#define SWIGTYPE_p_FIX__MessageParseError swig_types[56]
+#define SWIGTYPE_p_FIX__MessageStore swig_types[57]
+#define SWIGTYPE_p_FIX__MessageStoreExceptionWrapper swig_types[58]
+#define SWIGTYPE_p_FIX__MessageStoreFactory swig_types[59]
+#define SWIGTYPE_p_FIX__MessageStoreFactoryExceptionWrapper swig_types[60]
+#define SWIGTYPE_p_FIX__MySQLConnection swig_types[61]
+#define SWIGTYPE_p_FIX__MySQLLog swig_types[62]
+#define SWIGTYPE_p_FIX__MySQLLogFactory swig_types[63]
+#define SWIGTYPE_p_FIX__MySQLQuery swig_types[64]
+#define SWIGTYPE_p_FIX__MySQLStore swig_types[65]
+#define SWIGTYPE_p_FIX__MySQLStoreFactory swig_types[66]
+#define SWIGTYPE_p_FIX__NoTagValue swig_types[67]
+#define SWIGTYPE_p_FIX__NullApplication swig_types[68]
+#define SWIGTYPE_p_FIX__NullLog swig_types[69]
+#define SWIGTYPE_p_FIX__NullStore swig_types[70]
+#define SWIGTYPE_p_FIX__NullStoreFactory swig_types[71]
+#define SWIGTYPE_p_FIX__PostgreSQLConnection swig_types[72]
+#define SWIGTYPE_p_FIX__PostgreSQLLog swig_types[73]
+#define SWIGTYPE_p_FIX__PostgreSQLLogFactory swig_types[74]
+#define SWIGTYPE_p_FIX__PostgreSQLQuery swig_types[75]
+#define SWIGTYPE_p_FIX__PostgreSQLStore swig_types[76]
+#define SWIGTYPE_p_FIX__PostgreSQLStoreFactory swig_types[77]
+#define SWIGTYPE_p_FIX__RejectLogon swig_types[78]
+#define SWIGTYPE_p_FIX__RepeatedTag swig_types[79]
+#define SWIGTYPE_p_FIX__RepeatingGroupCountMismatch swig_types[80]
+#define SWIGTYPE_p_FIX__RequiredTagMissing swig_types[81]
+#define SWIGTYPE_p_FIX__RuntimeError swig_types[82]
+#define SWIGTYPE_p_FIX__SSLSocketAcceptor swig_types[83]
+#define SWIGTYPE_p_FIX__SSLSocketInitiator swig_types[84]
+#define SWIGTYPE_p_FIX__ScreenLog swig_types[85]
+#define SWIGTYPE_p_FIX__ScreenLogFactory swig_types[86]
+#define SWIGTYPE_p_FIX__SenderCompID swig_types[87]
+#define SWIGTYPE_p_FIX__Session swig_types[88]
+#define SWIGTYPE_p_FIX__SessionID swig_types[89]
+#define SWIGTYPE_p_FIX__SessionNotFound swig_types[90]
+#define SWIGTYPE_p_FIX__SessionSettings swig_types[91]
+#define SWIGTYPE_p_FIX__SocketAcceptor swig_types[92]
+#define SWIGTYPE_p_FIX__SocketCloseFailed swig_types[93]
+#define SWIGTYPE_p_FIX__SocketException swig_types[94]
+#define SWIGTYPE_p_FIX__SocketInitiator swig_types[95]
+#define SWIGTYPE_p_FIX__SocketRecvFailed swig_types[96]
+#define SWIGTYPE_p_FIX__SocketSendFailed swig_types[97]
+#define SWIGTYPE_p_FIX__StringField swig_types[98]
+#define SWIGTYPE_p_FIX__SynchronizedApplication swig_types[99]
+#define SWIGTYPE_p_FIX__TYPE__Type swig_types[100]
+#define SWIGTYPE_p_FIX__TagNotDefinedForMessage swig_types[101]
+#define SWIGTYPE_p_FIX__TagOutOfOrder swig_types[102]
+#define SWIGTYPE_p_FIX__TargetCompID swig_types[103]
+#define SWIGTYPE_p_FIX__ThreadedSocketAcceptor swig_types[104]
+#define SWIGTYPE_p_FIX__ThreadedSocketInitiator swig_types[105]
+#define SWIGTYPE_p_FIX__Trailer swig_types[106]
+#define SWIGTYPE_p_FIX__UInt64Field swig_types[107]
+#define SWIGTYPE_p_FIX__UnsupportedMessageType swig_types[108]
+#define SWIGTYPE_p_FIX__UnsupportedVersion swig_types[109]
+#define SWIGTYPE_p_FIX__UtcDate swig_types[110]
+#define SWIGTYPE_p_FIX__UtcDateField swig_types[111]
+#define SWIGTYPE_p_FIX__UtcTimeOnly swig_types[112]
+#define SWIGTYPE_p_FIX__UtcTimeOnlyField swig_types[113]
+#define SWIGTYPE_p_FIX__UtcTimeStamp swig_types[114]
+#define SWIGTYPE_p_FIX__UtcTimeStampField swig_types[115]
+#define SWIGTYPE_p_Fields swig_types[116]
+#define SWIGTYPE_p_Group swig_types[117]
+#define SWIGTYPE_p_Groups swig_types[118]
+#define SWIGTYPE_p_IntArray swig_types[119]
+#define SWIGTYPE_p_IntField swig_types[120]
+#define SWIGTYPE_p_Log swig_types[121]
+#define SWIGTYPE_p_LogFactory swig_types[122]
+#define SWIGTYPE_p_MYSQL swig_types[123]
+#define SWIGTYPE_p_MessageStore swig_types[124]
+#define SWIGTYPE_p_MessageStoreFactory swig_types[125]
+#define SWIGTYPE_p_MsgType swig_types[126]
+#define SWIGTYPE_p_Mutex swig_types[127]
+#define SWIGTYPE_p_PGconn swig_types[128]
+#define SWIGTYPE_p_RSA swig_types[129]
+#define SWIGTYPE_p_Responder swig_types[130]
+#define SWIGTYPE_p_SessionID swig_types[131]
+#define SWIGTYPE_p_SessionToPort swig_types[132]
+#define SWIGTYPE_p_StringField swig_types[133]
+#define SWIGTYPE_p_TimeRange swig_types[134]
+#define SWIGTYPE_p_UtcDateField swig_types[135]
+#define SWIGTYPE_p_X509 swig_types[136]
+#define SWIGTYPE_p_allocator_type swig_types[137]
+#define SWIGTYPE_p_bool swig_types[138]
+#define SWIGTYPE_p_char swig_types[139]
+#define SWIGTYPE_p_const_iterator swig_types[140]
+#define SWIGTYPE_p_difference_type swig_types[141]
+#define SWIGTYPE_p_double swig_types[142]
+#define SWIGTYPE_p_g_const_iterator swig_types[143]
+#define SWIGTYPE_p_g_iterator swig_types[144]
+#define SWIGTYPE_p_g_value_type swig_types[145]
+#define SWIGTYPE_p_int swig_types[146]
+#define SWIGTYPE_p_iterator swig_types[147]
+#define SWIGTYPE_p_key_type swig_types[148]
+#define SWIGTYPE_p_long_long swig_types[149]
+#define SWIGTYPE_p_message_order swig_types[150]
+#define SWIGTYPE_p_p_FIX__DataDictionary swig_types[151]
+#define SWIGTYPE_p_p_PyObject swig_types[152]
+#define SWIGTYPE_p_short swig_types[153]
+#define SWIGTYPE_p_signed_char swig_types[154]
+#define SWIGTYPE_p_size_type swig_types[155]
+#define SWIGTYPE_p_ssize_t swig_types[156]
+#define SWIGTYPE_p_std__allocatorT_std__string_t swig_types[157]
+#define SWIGTYPE_p_std__chrono__system_clock__time_point swig_types[158]
+#define SWIGTYPE_p_std__functionT_FIX__UtcTimeStamp_fF_t swig_types[159]
+#define SWIGTYPE_p_std__invalid_argument swig_types[160]
+#define SWIGTYPE_p_std__istream swig_types[161]
+#define SWIGTYPE_p_std__lessT_FIX__SessionID_t swig_types[162]
+#define SWIGTYPE_p_std__logic_error swig_types[163]
+#define SWIGTYPE_p_std__mapT_FIX__SessionID_unsigned_short_t swig_types[164]
+#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t swig_types[165]
+#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t__const_iterator swig_types[166]
+#define SWIGTYPE_p_std__mapT_int_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_std__lessT_int_t_ALLOCATORT_std__pairT_int_const_std__vectorT_FIX__FieldMap_p_std__allocatorT_FIX__FieldMap_p_t_t_t_t_t__iterator swig_types[167]
+#define SWIGTYPE_p_std__mapT_std__string_std__string_t__const_iterator swig_types[168]
+#define SWIGTYPE_p_std__ostream swig_types[169]
+#define SWIGTYPE_p_std__setT_FIX__SessionID_t swig_types[170]
+#define SWIGTYPE_p_std__setT_std__string_std__lessT_std__string_t_std__allocatorT_std__string_t_t swig_types[171]
+#define SWIGTYPE_p_std__string swig_types[172]
+#define SWIGTYPE_p_std__string__size_type swig_types[173]
+#define SWIGTYPE_p_std__unique_ptrT_FIX__DatabaseConnectionPoolT_FIX__MySQLConnection_t_t swig_types[174]
+#define SWIGTYPE_p_std__unique_ptrT_FIX__DatabaseConnectionPoolT_FIX__PostgreSQLConnection_t_t swig_types[175]
+#define SWIGTYPE_p_std__vectorT_FIX__FieldBase_ALLOCATORT_FIX__FieldBase_t_t__const_iterator swig_types[176]
+#define SWIGTYPE_p_std__vectorT_FIX__FieldBase_ALLOCATORT_FIX__FieldBase_t_t__iterator swig_types[177]
+#define SWIGTYPE_p_std__vectorT_std__string_t swig_types[178]
+#define SWIGTYPE_p_swig__SwigPyIterator swig_types[179]
+#define SWIGTYPE_p_time_t swig_types[180]
+#define SWIGTYPE_p_tm swig_types[181]
+#define SWIGTYPE_p_unsigned_char swig_types[182]
+#define SWIGTYPE_p_unsigned_int swig_types[183]
+#define SWIGTYPE_p_unsigned_long_long swig_types[184]
+#define SWIGTYPE_p_unsigned_short swig_types[185]
+#define SWIGTYPE_p_value_type swig_types[186]
+static swig_type_info *swig_types[188];
+static swig_module_info swig_module = {swig_types, 187, 0, 0, 0, 0};
 #define SWIG_TypeQuery(name) SWIG_TypeQueryModule(&swig_module, &swig_module, name)
 #define SWIG_MangledTypeQuery(name) SWIG_MangledTypeQueryModule(&swig_module, &swig_module, name)
 
@@ -3977,6 +3979,34 @@ namespace swig {
       return *this;      
     }
   };
+}
+
+
+static int quickfixPythonAppendOutput(PyObject **result, PyObject *value) {
+  if( !value ) {
+    Py_CLEAR(*result);
+    return -1;
+  }
+  if( !PyDict_Check(*result) ) {
+    PyObject *dictionary = PyDict_New();
+    if( !dictionary ) {
+      Py_DECREF(value);
+      Py_CLEAR(*result);
+      return -1;
+    }
+    Py_DECREF(*result);
+    *result = dictionary;
+  }
+  PyObject *key = PyLong_FromSsize_t(PyDict_Size(*result));
+  if( !key || PyDict_SetItem(*result, key, value) < 0 ) {
+    Py_XDECREF(key);
+    Py_DECREF(value);
+    Py_CLEAR(*result);
+    return -1;
+  }
+  Py_DECREF(key);
+  Py_DECREF(value);
+  return 0;
 }
 
 
@@ -9174,9 +9204,8 @@ SWIGINTERN PyObject *_wrap_VectorString___setitem____SWIG_2(PyObject *self, Py_s
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -9344,9 +9373,8 @@ SWIGINTERN PyObject *_wrap_VectorString_append(PyObject *self, PyObject *args) {
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -10126,9 +10154,8 @@ SWIGINTERN PyObject *_wrap_new_VectorString__SWIG_3(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -10241,9 +10268,8 @@ SWIGINTERN PyObject *_wrap_VectorString_push_back(PyObject *self, PyObject *args
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -10389,9 +10415,8 @@ SWIGINTERN PyObject *_wrap_VectorString_assign(PyObject *self, PyObject *args) {
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -10456,9 +10481,8 @@ SWIGINTERN PyObject *_wrap_VectorString_resize__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -10581,9 +10605,8 @@ SWIGINTERN PyObject *_wrap_VectorString_insert__SWIG_0(PyObject *self, Py_ssize_
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -10662,9 +10685,8 @@ SWIGINTERN PyObject *_wrap_VectorString_insert__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::vector< std::string >::value_type const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -12657,17 +12679,15 @@ SWIGINTERN PyObject *_wrap_new_FIXException(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -12754,9 +12774,8 @@ SWIGINTERN PyObject *_wrap_FIXException_type_set(PyObject *self, PyObject *args)
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -12831,9 +12850,8 @@ SWIGINTERN PyObject *_wrap_FIXException_detail_set(PyObject *self, PyObject *arg
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -12974,17 +12992,15 @@ SWIGINTERN PyObject *_wrap_new_DataDictionaryNotFound__SWIG_0(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -13036,9 +13052,8 @@ SWIGINTERN PyObject *_wrap_new_DataDictionaryNotFound__SWIG_1(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -13161,9 +13176,8 @@ SWIGINTERN PyObject *_wrap_DataDictionaryNotFound_version_set(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -13260,9 +13274,8 @@ SWIGINTERN PyObject *_wrap_new_FieldNotFound__SWIG_0(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -13535,9 +13548,8 @@ SWIGINTERN PyObject *_wrap_new_FieldConvertError__SWIG_0(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -13694,9 +13706,8 @@ SWIGINTERN PyObject *_wrap_new_MessageParseError__SWIG_0(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -13853,9 +13864,8 @@ SWIGINTERN PyObject *_wrap_new_InvalidMessage__SWIG_0(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -14012,9 +14022,8 @@ SWIGINTERN PyObject *_wrap_new_ConfigError__SWIG_0(PyObject *self, Py_ssize_t no
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -14171,9 +14180,8 @@ SWIGINTERN PyObject *_wrap_new_RuntimeError__SWIG_0(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -14338,9 +14346,8 @@ SWIGINTERN PyObject *_wrap_new_InvalidTagNumber__SWIG_0(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -14621,9 +14628,8 @@ SWIGINTERN PyObject *_wrap_new_RequiredTagMissing__SWIG_0(PyObject *self, Py_ssi
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -14904,9 +14910,8 @@ SWIGINTERN PyObject *_wrap_new_TagNotDefinedForMessage__SWIG_0(PyObject *self, P
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -15187,9 +15192,8 @@ SWIGINTERN PyObject *_wrap_new_NoTagValue__SWIG_0(PyObject *self, Py_ssize_t nob
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -15470,9 +15474,8 @@ SWIGINTERN PyObject *_wrap_new_IncorrectTagValue__SWIG_0(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -15753,9 +15756,8 @@ SWIGINTERN PyObject *_wrap_new_IncorrectDataFormat__SWIG_0(PyObject *self, Py_ss
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -16028,9 +16030,8 @@ SWIGINTERN PyObject *_wrap_new_IncorrectMessageStructure__SWIG_0(PyObject *self,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -16187,9 +16188,8 @@ SWIGINTERN PyObject *_wrap_new_DuplicateFieldNumber__SWIG_0(PyObject *self, Py_s
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -16346,9 +16346,8 @@ SWIGINTERN PyObject *_wrap_new_InvalidMessageType__SWIG_0(PyObject *self, Py_ssi
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -16505,9 +16504,8 @@ SWIGINTERN PyObject *_wrap_new_UnsupportedMessageType__SWIG_0(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -16664,9 +16662,8 @@ SWIGINTERN PyObject *_wrap_new_UnsupportedVersion__SWIG_0(PyObject *self, Py_ssi
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -16831,9 +16828,8 @@ SWIGINTERN PyObject *_wrap_new_TagOutOfOrder__SWIG_0(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -17114,9 +17110,8 @@ SWIGINTERN PyObject *_wrap_new_RepeatedTag__SWIG_0(PyObject *self, Py_ssize_t no
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -17397,9 +17392,8 @@ SWIGINTERN PyObject *_wrap_new_RepeatingGroupCountMismatch__SWIG_0(PyObject *sel
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -17672,9 +17666,8 @@ SWIGINTERN PyObject *_wrap_new_DoNotSend__SWIG_0(PyObject *self, Py_ssize_t nobj
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -17831,9 +17824,8 @@ SWIGINTERN PyObject *_wrap_new_RejectLogon__SWIG_0(PyObject *self, Py_ssize_t no
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -17990,9 +17982,8 @@ SWIGINTERN PyObject *_wrap_new_SessionNotFound__SWIG_0(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -18149,9 +18140,8 @@ SWIGINTERN PyObject *_wrap_new_IOException__SWIG_0(PyObject *self, Py_ssize_t no
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -18337,9 +18327,8 @@ SWIGINTERN PyObject *_wrap_new_SocketException__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -18525,9 +18514,8 @@ SWIGINTERN PyObject *_wrap_new_SocketSendFailed__SWIG_1(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -18700,9 +18688,8 @@ SWIGINTERN PyObject *_wrap_new_SocketRecvFailed__SWIG_1(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -18864,9 +18851,8 @@ SWIGINTERN PyObject *_wrap_new_SocketCloseFailed__SWIG_1(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -20067,6 +20053,45 @@ SWIGINTERN PyObject *_wrap_DateTime_getTimeT(PyObject *self, PyObject *args) {
     }
   }
   resultobj = SWIG_NewPointerObj((new time_t(result)), SWIGTYPE_p_time_t, SWIG_POINTER_OWN |  0 );
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_DateTime_getTimePoint(PyObject *self, PyObject *args) {
+  PyObject *resultobj = 0;
+  FIX::DateTime *arg1 = (FIX::DateTime *) 0 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  PyObject *swig_obj[1] ;
+  std::chrono::system_clock::time_point result;
+  
+  (void)self;
+  if (!args) SWIG_fail;
+  swig_obj[0] = args;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__DateTime, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "DateTime_getTimePoint" "', argument " "1"" of type '" "FIX::DateTime const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::DateTime * >(argp1);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = ((FIX::DateTime const *)arg1)->getTimePoint();
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_NewPointerObj((new std::chrono::system_clock::time_point(result)), SWIGTYPE_p_std__chrono__system_clock__time_point, SWIG_POINTER_OWN |  0 );
   return resultobj;
 fail:
   return NULL;
@@ -27214,9 +27239,8 @@ SWIGINTERN PyObject *_wrap_new_FieldBase__SWIG_0(PyObject *self, Py_ssize_t nobj
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -27530,9 +27554,8 @@ SWIGINTERN PyObject *_wrap_FieldBase_setString(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -28035,9 +28058,8 @@ SWIGINTERN PyObject *_wrap_new_StringField__SWIG_0(PyObject *self, Py_ssize_t no
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -28174,9 +28196,8 @@ SWIGINTERN PyObject *_wrap_StringField_setValue(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29272,9 +29293,8 @@ SWIGINTERN PyObject *_wrap___lt____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29340,9 +29360,8 @@ SWIGINTERN PyObject *_wrap___lt____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -29408,9 +29427,8 @@ SWIGINTERN PyObject *_wrap___gt____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29476,9 +29494,8 @@ SWIGINTERN PyObject *_wrap___gt____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -29619,9 +29636,8 @@ SWIGINTERN PyObject *_wrap___eq____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29687,9 +29703,8 @@ SWIGINTERN PyObject *_wrap___eq____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -29755,9 +29770,8 @@ SWIGINTERN PyObject *_wrap___ne____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29823,9 +29837,8 @@ SWIGINTERN PyObject *_wrap___ne____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -29891,9 +29904,8 @@ SWIGINTERN PyObject *_wrap___le____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -29959,9 +29971,8 @@ SWIGINTERN PyObject *_wrap___le____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -30102,9 +30113,8 @@ SWIGINTERN PyObject *_wrap___ge____SWIG_3(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -30170,9 +30180,8 @@ SWIGINTERN PyObject *_wrap___ge____SWIG_4(PyObject *self, Py_ssize_t nobjs, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -34342,9 +34351,8 @@ SWIGINTERN PyObject *_wrap_FieldMap_setField__SWIG_2(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -36004,7 +36012,10 @@ SWIGINTERN PyObject *_wrap_FieldMap_calculateString(PyObject *self, PyObject *ar
   }
   arg1 = reinterpret_cast< FIX::FieldMap * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   {
@@ -36027,9 +36038,8 @@ SWIGINTERN PyObject *_wrap_FieldMap_calculateString(PyObject *self, PyObject *ar
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -36446,6 +36456,294 @@ fail:
     "  Possible C/C++ prototypes are:\n"
     "    FIX::FieldMap::calculateTotal(int) const\n"
     "    FIX::FieldMap::calculateTotal() const\n");
+  return 0;
+}
+
+
+SWIGINTERN PyObject *_wrap_FieldMap_calculateLengthAndTotal__SWIG_0(PyObject *self, Py_ssize_t nobjs, PyObject **swig_obj) {
+  PyObject *resultobj = 0;
+  FIX::FieldMap *arg1 = (FIX::FieldMap *) 0 ;
+  int arg2 ;
+  int arg3 ;
+  int arg4 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  int val2 ;
+  int ecode2 = 0 ;
+  int val3 ;
+  int ecode3 = 0 ;
+  int val4 ;
+  int ecode4 = 0 ;
+  FIX::FieldMap::LengthAndTotal result;
+  
+  (void)self;
+  if ((nobjs < 4) || (nobjs > 4)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__FieldMap, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "1"" of type '" "FIX::FieldMap const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::FieldMap * >(argp1);
+  ecode2 = SWIG_AsVal_int(swig_obj[1], &val2);
+  if (!SWIG_IsOK(ecode2)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode2), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "2"" of type '" "int""'");
+  } 
+  arg2 = static_cast< int >(val2);
+  ecode3 = SWIG_AsVal_int(swig_obj[2], &val3);
+  if (!SWIG_IsOK(ecode3)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode3), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "3"" of type '" "int""'");
+  } 
+  arg3 = static_cast< int >(val3);
+  ecode4 = SWIG_AsVal_int(swig_obj[3], &val4);
+  if (!SWIG_IsOK(ecode4)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode4), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "4"" of type '" "int""'");
+  } 
+  arg4 = static_cast< int >(val4);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = ((FIX::FieldMap const *)arg1)->calculateLengthAndTotal(arg2,arg3,arg4);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_NewPointerObj((new FIX::FieldMap::LengthAndTotal(result)), SWIGTYPE_p_FIX__FieldMap__LengthAndTotal, SWIG_POINTER_OWN |  0 );
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_FieldMap_calculateLengthAndTotal__SWIG_1(PyObject *self, Py_ssize_t nobjs, PyObject **swig_obj) {
+  PyObject *resultobj = 0;
+  FIX::FieldMap *arg1 = (FIX::FieldMap *) 0 ;
+  int arg2 ;
+  int arg3 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  int val2 ;
+  int ecode2 = 0 ;
+  int val3 ;
+  int ecode3 = 0 ;
+  FIX::FieldMap::LengthAndTotal result;
+  
+  (void)self;
+  if ((nobjs < 3) || (nobjs > 3)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__FieldMap, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "1"" of type '" "FIX::FieldMap const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::FieldMap * >(argp1);
+  ecode2 = SWIG_AsVal_int(swig_obj[1], &val2);
+  if (!SWIG_IsOK(ecode2)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode2), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "2"" of type '" "int""'");
+  } 
+  arg2 = static_cast< int >(val2);
+  ecode3 = SWIG_AsVal_int(swig_obj[2], &val3);
+  if (!SWIG_IsOK(ecode3)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode3), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "3"" of type '" "int""'");
+  } 
+  arg3 = static_cast< int >(val3);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = ((FIX::FieldMap const *)arg1)->calculateLengthAndTotal(arg2,arg3);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_NewPointerObj((new FIX::FieldMap::LengthAndTotal(result)), SWIGTYPE_p_FIX__FieldMap__LengthAndTotal, SWIG_POINTER_OWN |  0 );
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_FieldMap_calculateLengthAndTotal__SWIG_2(PyObject *self, Py_ssize_t nobjs, PyObject **swig_obj) {
+  PyObject *resultobj = 0;
+  FIX::FieldMap *arg1 = (FIX::FieldMap *) 0 ;
+  int arg2 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  int val2 ;
+  int ecode2 = 0 ;
+  FIX::FieldMap::LengthAndTotal result;
+  
+  (void)self;
+  if ((nobjs < 2) || (nobjs > 2)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__FieldMap, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "1"" of type '" "FIX::FieldMap const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::FieldMap * >(argp1);
+  ecode2 = SWIG_AsVal_int(swig_obj[1], &val2);
+  if (!SWIG_IsOK(ecode2)) {
+    SWIG_exception_fail(SWIG_ArgError(ecode2), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "2"" of type '" "int""'");
+  } 
+  arg2 = static_cast< int >(val2);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = ((FIX::FieldMap const *)arg1)->calculateLengthAndTotal(arg2);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_NewPointerObj((new FIX::FieldMap::LengthAndTotal(result)), SWIGTYPE_p_FIX__FieldMap__LengthAndTotal, SWIG_POINTER_OWN |  0 );
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_FieldMap_calculateLengthAndTotal__SWIG_3(PyObject *self, Py_ssize_t nobjs, PyObject **swig_obj) {
+  PyObject *resultobj = 0;
+  FIX::FieldMap *arg1 = (FIX::FieldMap *) 0 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  FIX::FieldMap::LengthAndTotal result;
+  
+  (void)self;
+  if ((nobjs < 1) || (nobjs > 1)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__FieldMap, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "FieldMap_calculateLengthAndTotal" "', argument " "1"" of type '" "FIX::FieldMap const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::FieldMap * >(argp1);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = ((FIX::FieldMap const *)arg1)->calculateLengthAndTotal();
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_NewPointerObj((new FIX::FieldMap::LengthAndTotal(result)), SWIGTYPE_p_FIX__FieldMap__LengthAndTotal, SWIG_POINTER_OWN |  0 );
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_FieldMap_calculateLengthAndTotal(PyObject *self, PyObject *args) {
+  Py_ssize_t argc;
+  PyObject *argv[5] = {
+    0
+  };
+  
+  if (!(argc = SWIG_Python_UnpackTuple(args, "FieldMap_calculateLengthAndTotal", 0, 4, argv))) SWIG_fail;
+  --argc;
+  if (argc == 1) {
+    int _v = 0;
+    void *vptr = 0;
+    int res = SWIG_ConvertPtr(argv[0], &vptr, SWIGTYPE_p_FIX__FieldMap, 0);
+    _v = SWIG_CheckState(res);
+    if (_v) {
+      return _wrap_FieldMap_calculateLengthAndTotal__SWIG_3(self, argc, argv);
+    }
+  }
+  if (argc == 2) {
+    int _v = 0;
+    void *vptr = 0;
+    int res = SWIG_ConvertPtr(argv[0], &vptr, SWIGTYPE_p_FIX__FieldMap, 0);
+    _v = SWIG_CheckState(res);
+    if (_v) {
+      {
+        int res = SWIG_AsVal_int(argv[1], NULL);
+        _v = SWIG_CheckState(res);
+      }
+      if (_v) {
+        return _wrap_FieldMap_calculateLengthAndTotal__SWIG_2(self, argc, argv);
+      }
+    }
+  }
+  if (argc == 3) {
+    int _v = 0;
+    void *vptr = 0;
+    int res = SWIG_ConvertPtr(argv[0], &vptr, SWIGTYPE_p_FIX__FieldMap, 0);
+    _v = SWIG_CheckState(res);
+    if (_v) {
+      {
+        int res = SWIG_AsVal_int(argv[1], NULL);
+        _v = SWIG_CheckState(res);
+      }
+      if (_v) {
+        {
+          int res = SWIG_AsVal_int(argv[2], NULL);
+          _v = SWIG_CheckState(res);
+        }
+        if (_v) {
+          return _wrap_FieldMap_calculateLengthAndTotal__SWIG_1(self, argc, argv);
+        }
+      }
+    }
+  }
+  if (argc == 4) {
+    int _v = 0;
+    void *vptr = 0;
+    int res = SWIG_ConvertPtr(argv[0], &vptr, SWIGTYPE_p_FIX__FieldMap, 0);
+    _v = SWIG_CheckState(res);
+    if (_v) {
+      {
+        int res = SWIG_AsVal_int(argv[1], NULL);
+        _v = SWIG_CheckState(res);
+      }
+      if (_v) {
+        {
+          int res = SWIG_AsVal_int(argv[2], NULL);
+          _v = SWIG_CheckState(res);
+        }
+        if (_v) {
+          {
+            int res = SWIG_AsVal_int(argv[3], NULL);
+            _v = SWIG_CheckState(res);
+          }
+          if (_v) {
+            return _wrap_FieldMap_calculateLengthAndTotal__SWIG_0(self, argc, argv);
+          }
+        }
+      }
+    }
+  }
+  
+fail:
+  SWIG_Python_RaiseOrModifyTypeError("Wrong number or type of arguments for overloaded function 'FieldMap_calculateLengthAndTotal'.\n"
+    "  Possible C/C++ prototypes are:\n"
+    "    FIX::FieldMap::calculateLengthAndTotal(int,int,int) const\n"
+    "    FIX::FieldMap::calculateLengthAndTotal(int,int) const\n"
+    "    FIX::FieldMap::calculateLengthAndTotal(int) const\n"
+    "    FIX::FieldMap::calculateLengthAndTotal() const\n");
   return 0;
 }
 
@@ -38267,9 +38565,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_2(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38319,9 +38616,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_3(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38390,9 +38686,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_4(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38453,9 +38748,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_5(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38535,9 +38829,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_6(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38609,9 +38902,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_7(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -38713,9 +39005,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_8(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -38809,9 +39100,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_9(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -38924,9 +39214,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_10(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -39031,9 +39320,8 @@ SWIGINTERN PyObject *_wrap_new_Message__SWIG_11(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -39481,9 +39769,8 @@ SWIGINTERN PyObject *_wrap_Message_InitializeXML(PyObject *self, PyObject *args)
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -40183,7 +40470,10 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_4(PyObject *self, Py_ssize_t n
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   ecode3 = SWIG_AsVal_int(swig_obj[2], &val3);
@@ -40221,9 +40511,8 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_4(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -40255,7 +40544,10 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_5(PyObject *self, Py_ssize_t n
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   ecode3 = SWIG_AsVal_int(swig_obj[2], &val3);
@@ -40288,9 +40580,8 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_5(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -40319,7 +40610,10 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_6(PyObject *self, Py_ssize_t n
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   ecode3 = SWIG_AsVal_int(swig_obj[2], &val3);
@@ -40347,9 +40641,8 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_6(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -40375,7 +40668,10 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_7(PyObject *self, Py_ssize_t n
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   {
@@ -40398,9 +40694,8 @@ SWIGINTERN PyObject *_wrap_Message_toString__SWIG_7(PyObject *self, Py_ssize_t n
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -40651,7 +40946,10 @@ SWIGINTERN PyObject *_wrap_Message_toXML__SWIG_1(PyObject *self, Py_ssize_t nobj
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   {
@@ -40674,9 +40972,8 @@ SWIGINTERN PyObject *_wrap_Message_toXML__SWIG_1(PyObject *self, Py_ssize_t nobj
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -40820,9 +41117,8 @@ SWIGINTERN PyObject *_wrap_Message_setString__SWIG_0(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -40887,9 +41183,8 @@ SWIGINTERN PyObject *_wrap_Message_setString__SWIG_1(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -40962,9 +41257,8 @@ SWIGINTERN PyObject *_wrap_Message_setString__SWIG_2(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -41045,9 +41339,8 @@ SWIGINTERN PyObject *_wrap_Message_setString__SWIG_3(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -41267,17 +41560,15 @@ SWIGINTERN PyObject *_wrap_Message_setGroup(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -41338,9 +41629,8 @@ SWIGINTERN PyObject *_wrap_Message_setStringHeader(PyObject *self, PyObject *arg
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -41589,7 +41879,9 @@ SWIGINTERN PyObject *_wrap_Message_hasValidStructure(PyObject *self, PyObject *a
   }
   arg1 = reinterpret_cast< FIX::Message * >(argp1);
   {
-    SWIG_AsVal_int(swig_obj[1], &temp2);
+    int res = SWIG_AsVal_int(swig_obj[1], &temp2);
+    if( !SWIG_IsOK(res) )
+    SWIG_exception_fail(SWIG_ArgError(res), "invalid int reference output placeholder");
     arg2 = &temp2;
   }
   {
@@ -41612,9 +41904,8 @@ SWIGINTERN PyObject *_wrap_Message_hasValidStructure(PyObject *self, PyObject *a
   {
     if( std::string("int &") == "int &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyLong_FromLong(*arg2) );    
+      if( quickfixPythonAppendOutput(&resultobj, PyLong_FromLong(*arg2)) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -42835,9 +43126,8 @@ SWIGINTERN PyObject *_wrap_Message_getSessionID__SWIG_0(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -43120,9 +43410,8 @@ SWIGINTERN PyObject *_wrap_identifyType(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -44074,9 +44363,8 @@ SWIGINTERN PyObject *_wrap_new_BeginString__SWIG_1(PyObject *self, Py_ssize_t no
   {
     if( std::string("FIX::STRING const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -44233,9 +44521,8 @@ SWIGINTERN PyObject *_wrap_new_SenderCompID__SWIG_1(PyObject *self, Py_ssize_t n
   {
     if( std::string("FIX::STRING const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -44392,9 +44679,8 @@ SWIGINTERN PyObject *_wrap_new_TargetCompID__SWIG_1(PyObject *self, Py_ssize_t n
   {
     if( std::string("FIX::STRING const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -125944,33 +126230,29 @@ SWIGINTERN PyObject *_wrap_new_SessionID__SWIG_1(PyObject *self, Py_ssize_t nobj
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -126052,25 +126334,22 @@ SWIGINTERN PyObject *_wrap_new_SessionID__SWIG_2(PyObject *self, Py_ssize_t nobj
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -126461,9 +126740,8 @@ SWIGINTERN PyObject *_wrap_SessionID_fromString(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -126491,7 +126769,10 @@ SWIGINTERN PyObject *_wrap_SessionID_toString__SWIG_1(PyObject *self, Py_ssize_t
   }
   arg1 = reinterpret_cast< FIX::SessionID * >(argp1);
   {
-    temp2 = std::string((char*)PyUnicode_AsUTF8(swig_obj[1]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[1]);
+    if( !value )
+    SWIG_fail;
+    temp2 = value;
     arg2 = &temp2;
   }
   {
@@ -126514,9 +126795,8 @@ SWIGINTERN PyObject *_wrap_SessionID_toString__SWIG_1(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -127012,9 +127292,8 @@ SWIGINTERN PyObject *_wrap_new_Dictionary__SWIG_0(PyObject *self, Py_ssize_t nob
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -127254,9 +127533,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getString__SWIG_0(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127314,9 +127592,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getString__SWIG_1(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127425,9 +127702,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getInt(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127486,9 +127762,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getDouble(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127547,9 +127822,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getBool(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127608,9 +127882,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_getDay(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127681,17 +127954,15 @@ SWIGINTERN PyObject *_wrap_Dictionary_setString(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127759,9 +128030,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_setInt(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127827,9 +128097,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_setDouble(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127895,9 +128164,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_setBool(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -127963,9 +128231,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_setDay(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -128024,9 +128291,8 @@ SWIGINTERN PyObject *_wrap_Dictionary_has(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -129658,6 +129924,20 @@ SWIGINTERN PyObject *Swig_var_CERTIFICATE_AUTHORITIES_DIRECTORY_get(void) {
 }
 
 
+SWIGINTERN int Swig_var_CERTIFICATE_ACCEPTED_PEER_NAME_set(PyObject *) {
+  SWIG_Error(SWIG_AttributeError,"Variable CERTIFICATE_ACCEPTED_PEER_NAME is read-only.");
+  return 1;
+}
+
+
+SWIGINTERN PyObject *Swig_var_CERTIFICATE_ACCEPTED_PEER_NAME_get(void) {
+  PyObject *pyobj = 0;
+  
+  pyobj = SWIG_FromCharPtr(FIX::CERTIFICATE_ACCEPTED_PEER_NAME);
+  return pyobj;
+}
+
+
 SWIGINTERN int Swig_var_CERTIFICATE_REVOCATION_LIST_FILE_set(PyObject *) {
   SWIG_Error(SWIG_AttributeError,"Variable CERTIFICATE_REVOCATION_LIST_FILE is read-only.");
   return 1;
@@ -129920,9 +130200,8 @@ SWIGINTERN PyObject *_wrap_new_SessionSettings__SWIG_3(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -129972,9 +130251,8 @@ SWIGINTERN PyObject *_wrap_new_SessionSettings__SWIG_4(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -130734,9 +131012,8 @@ SWIGINTERN PyObject *_wrap_SessionSettings_setFromString(PyObject *self, PyObjec
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -131035,9 +131312,8 @@ SWIGINTERN PyObject *_wrap_Session_logout__SWIG_0(PyObject *self, Py_ssize_t nob
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -131661,9 +131937,8 @@ SWIGINTERN PyObject *_wrap_Session_sendToTarget__SWIG_0(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -131837,9 +132112,8 @@ SWIGINTERN PyObject *_wrap_Session_sendToTarget__SWIG_3(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res4)) delete arg4;
@@ -131988,25 +132262,22 @@ SWIGINTERN PyObject *_wrap_Session_sendToTarget__SWIG_5(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -132084,17 +132355,15 @@ SWIGINTERN PyObject *_wrap_Session_sendToTarget__SWIG_6(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -132399,9 +132668,8 @@ SWIGINTERN PyObject *_wrap_Session_lookupSession__SWIG_1(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -132451,9 +132719,8 @@ SWIGINTERN PyObject *_wrap_Session_lookupSession__SWIG_2(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -133016,9 +133283,8 @@ SWIGINTERN PyObject *_wrap_Session_setSenderDefaultApplVerID(PyObject *self, PyO
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -133115,9 +133381,8 @@ SWIGINTERN PyObject *_wrap_Session_setTargetDefaultApplVerID(PyObject *self, PyO
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -134216,9 +134481,8 @@ SWIGINTERN PyObject *_wrap_Session_supportsSubSecondTimestamps(PyObject *self, P
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -134604,6 +134868,104 @@ fail:
 }
 
 
+SWIGINTERN PyObject *_wrap_Session_getCertificateAcceptedPeerName(PyObject *self, PyObject *args) {
+  PyObject *resultobj = 0;
+  FIX::Session *arg1 = (FIX::Session *) 0 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  PyObject *swig_obj[1] ;
+  std::string *result = 0 ;
+  
+  (void)self;
+  if (!args) SWIG_fail;
+  swig_obj[0] = args;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__Session, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "Session_getCertificateAcceptedPeerName" "', argument " "1"" of type '" "FIX::Session const *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::Session * >(argp1);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = (std::string *) &((FIX::Session const *)arg1)->getCertificateAcceptedPeerName();
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_From_std_string(static_cast< std::string >(*result));
+  return resultobj;
+fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_Session_setCertificateAcceptedPeerName(PyObject *self, PyObject *args) {
+  PyObject *resultobj = 0;
+  FIX::Session *arg1 = (FIX::Session *) 0 ;
+  std::string *arg2 = 0 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  int res2 = SWIG_OLDOBJ ;
+  PyObject *swig_obj[2] ;
+  
+  (void)self;
+  if (!SWIG_Python_UnpackTuple(args, "Session_setCertificateAcceptedPeerName", 2, 2, swig_obj)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__Session, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "Session_setCertificateAcceptedPeerName" "', argument " "1"" of type '" "FIX::Session *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::Session * >(argp1);
+  {
+    std::string *ptr = (std::string *)0;
+    res2 = SWIG_AsPtr_std_string(swig_obj[1], &ptr);
+    if (!SWIG_IsOK(res2)) {
+      SWIG_exception_fail(SWIG_ArgError(res2), "in method '" "Session_setCertificateAcceptedPeerName" "', argument " "2"" of type '" "std::string const &""'"); 
+    }
+    if (!ptr) {
+      SWIG_exception_fail(SWIG_ValueError, "invalid null reference " "in method '" "Session_setCertificateAcceptedPeerName" "', argument " "2"" of type '" "std::string const &""'"); 
+    }
+    arg2 = ptr;
+  }
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            (arg1)->setCertificateAcceptedPeerName((std::string const &)*arg2);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_Py_Void();
+  {
+    if( std::string("std::string const &") == "std::string &" )
+    {
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
+    }
+  }
+  if (SWIG_IsNewObj(res2)) delete arg2;
+  return resultobj;
+fail:
+  if (SWIG_IsNewObj(res2)) delete arg2;
+  return NULL;
+}
+
+
 SWIGINTERN PyObject *_wrap_Session_setAllowedRemoteAddresses(PyObject *self, PyObject *args) {
   PyObject *resultobj = 0;
   FIX::Session *arg1 = (FIX::Session *) 0 ;
@@ -134700,9 +135062,8 @@ SWIGINTERN PyObject *_wrap_Session_inAllowedRemoteAddresses(PyObject *self, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -134803,6 +135164,77 @@ SWIGINTERN PyObject *_wrap_Session_send(PyObject *self, PyObject *args) {
   resultobj = SWIG_From_bool(static_cast< bool >(result));
   return resultobj;
 fail:
+  return NULL;
+}
+
+
+SWIGINTERN PyObject *_wrap_Session_acceptLogon(PyObject *self, PyObject *args) {
+  PyObject *resultobj = 0;
+  FIX::Session *arg1 = (FIX::Session *) 0 ;
+  std::string *arg2 = 0 ;
+  Responder *arg3 = 0 ;
+  void *argp1 = 0 ;
+  int res1 = 0 ;
+  int res2 = SWIG_OLDOBJ ;
+  void *argp3 = 0 ;
+  int res3 = 0 ;
+  PyObject *swig_obj[3] ;
+  bool result;
+  
+  (void)self;
+  if (!SWIG_Python_UnpackTuple(args, "Session_acceptLogon", 3, 3, swig_obj)) SWIG_fail;
+  res1 = SWIG_ConvertPtr(swig_obj[0], &argp1,SWIGTYPE_p_FIX__Session, 0 |  0 );
+  if (!SWIG_IsOK(res1)) {
+    SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "Session_acceptLogon" "', argument " "1"" of type '" "FIX::Session *""'"); 
+  }
+  arg1 = reinterpret_cast< FIX::Session * >(argp1);
+  {
+    std::string *ptr = (std::string *)0;
+    res2 = SWIG_AsPtr_std_string(swig_obj[1], &ptr);
+    if (!SWIG_IsOK(res2)) {
+      SWIG_exception_fail(SWIG_ArgError(res2), "in method '" "Session_acceptLogon" "', argument " "2"" of type '" "std::string const &""'"); 
+    }
+    if (!ptr) {
+      SWIG_exception_fail(SWIG_ValueError, "invalid null reference " "in method '" "Session_acceptLogon" "', argument " "2"" of type '" "std::string const &""'"); 
+    }
+    arg2 = ptr;
+  }
+  res3 = SWIG_ConvertPtr(swig_obj[2], &argp3, SWIGTYPE_p_Responder,  0 );
+  if (!SWIG_IsOK(res3)) {
+    SWIG_exception_fail(SWIG_ArgError(res3), "in method '" "Session_acceptLogon" "', argument " "3"" of type '" "Responder &""'"); 
+  }
+  if (!argp3) {
+    SWIG_exception_fail(SWIG_ValueError, "invalid null reference " "in method '" "Session_acceptLogon" "', argument " "3"" of type '" "Responder &""'"); 
+  }
+  arg3 = reinterpret_cast< Responder * >(argp3);
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = (bool)(arg1)->acceptLogon((std::string const &)*arg2,*arg3);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_From_bool(static_cast< bool >(result));
+  {
+    if( std::string("std::string const &") == "std::string &" )
+    {
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
+    }
+  }
+  if (SWIG_IsNewObj(res2)) delete arg2;
+  return resultobj;
+fail:
+  if (SWIG_IsNewObj(res2)) delete arg2;
   return NULL;
 }
 
@@ -134919,9 +135351,8 @@ SWIGINTERN PyObject *_wrap_Session_next__SWIG_1(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -134989,9 +135420,8 @@ SWIGINTERN PyObject *_wrap_Session_next__SWIG_2(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -135444,6 +135874,59 @@ SWIGINTERN PyObject *Session_swigregister(PyObject *SWIGUNUSEDPARM(self), PyObje
 SWIGINTERN PyObject *Session_swiginit(PyObject *SWIGUNUSEDPARM(self), PyObject *args) {
   return SWIG_Python_InitShadowInstance(args);
 }
+
+SWIGINTERN PyObject *_wrap_redactLogonCredentials(PyObject *self, PyObject *args) {
+  PyObject *resultobj = 0;
+  std::string *arg1 = 0 ;
+  int res1 = SWIG_OLDOBJ ;
+  PyObject *swig_obj[1] ;
+  std::string result;
+  
+  (void)self;
+  if (!args) SWIG_fail;
+  swig_obj[0] = args;
+  {
+    std::string *ptr = (std::string *)0;
+    res1 = SWIG_AsPtr_std_string(swig_obj[0], &ptr);
+    if (!SWIG_IsOK(res1)) {
+      SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "redactLogonCredentials" "', argument " "1"" of type '" "std::string const &""'"); 
+    }
+    if (!ptr) {
+      SWIG_exception_fail(SWIG_ValueError, "invalid null reference " "in method '" "redactLogonCredentials" "', argument " "1"" of type '" "std::string const &""'"); 
+    }
+    arg1 = ptr;
+  }
+  {
+    if(!tryPythonException([&]() mutable 
+        {
+      {
+        SWIG_PYTHON_THREAD_BEGIN_ALLOW;
+            result = FIX::redactLogonCredentials((std::string const &)*arg1);
+            SWIG_PYTHON_THREAD_END_ALLOW;
+          }
+          return true;
+        fail:
+          return false;
+        })) 
+    {
+      SWIG_fail;
+    }
+  }
+  resultobj = SWIG_From_std_string(static_cast< std::string >(result));
+  {
+    if( std::string("std::string const &") == "std::string &" )
+    {
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
+    }
+  }
+  if (SWIG_IsNewObj(res1)) delete arg1;
+  return resultobj;
+fail:
+  if (SWIG_IsNewObj(res1)) delete arg1;
+  return NULL;
+}
+
 
 SWIGINTERN PyObject *_wrap_delete_LogFactory(PyObject *self, PyObject *args) {
   PyObject *resultobj = 0;
@@ -136315,9 +136798,8 @@ SWIGINTERN PyObject *_wrap_Log_onIncoming(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -136383,9 +136865,8 @@ SWIGINTERN PyObject *_wrap_Log_onOutgoing(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -136451,9 +136932,8 @@ SWIGINTERN PyObject *_wrap_Log_onEvent(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -136669,9 +137149,8 @@ SWIGINTERN PyObject *_wrap_NullLog_onIncoming(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -136729,9 +137208,8 @@ SWIGINTERN PyObject *_wrap_NullLog_onOutgoing(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -136789,9 +137267,8 @@ SWIGINTERN PyObject *_wrap_NullLog_onEvent(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -137186,9 +137663,8 @@ SWIGINTERN PyObject *_wrap_ScreenLog_onIncoming(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -137246,9 +137722,8 @@ SWIGINTERN PyObject *_wrap_ScreenLog_onOutgoing(PyObject *self, PyObject *args) 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -137306,9 +137781,8 @@ SWIGINTERN PyObject *_wrap_ScreenLog_onEvent(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -137447,9 +137921,8 @@ SWIGINTERN PyObject *_wrap_new_FileLogFactory__SWIG_1(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -137512,17 +137985,15 @@ SWIGINTERN PyObject *_wrap_new_FileLogFactory__SWIG_2(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -137854,9 +138325,8 @@ SWIGINTERN PyObject *_wrap_new_FileLog__SWIG_0(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -137919,17 +138389,15 @@ SWIGINTERN PyObject *_wrap_new_FileLog__SWIG_1(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -137992,9 +138460,8 @@ SWIGINTERN PyObject *_wrap_new_FileLog__SWIG_2(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -138068,17 +138535,15 @@ SWIGINTERN PyObject *_wrap_new_FileLog__SWIG_3(PyObject *self, Py_ssize_t nobjs,
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -138320,9 +138785,8 @@ SWIGINTERN PyObject *_wrap_FileLog_onIncoming(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -138380,9 +138844,8 @@ SWIGINTERN PyObject *_wrap_FileLog_onOutgoing(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -138440,9 +138903,8 @@ SWIGINTERN PyObject *_wrap_FileLog_onEvent(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -138891,9 +139353,8 @@ SWIGINTERN PyObject *_wrap_MessageStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -139442,9 +139903,8 @@ SWIGINTERN PyObject *_wrap_MemoryStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -140355,9 +140815,8 @@ SWIGINTERN PyObject *_wrap_MessageStoreExceptionWrapper_set(PyObject *self, PyOb
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -141105,9 +141564,8 @@ SWIGINTERN PyObject *_wrap_new_FileStoreFactory__SWIG_1(PyObject *self, Py_ssize
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -141462,9 +141920,8 @@ SWIGINTERN PyObject *_wrap_FileStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -144657,9 +145114,8 @@ SWIGINTERN PyObject *_wrap_Acceptor_getSession__SWIG_0(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -145521,9 +145977,8 @@ SWIGINTERN PyObject *_wrap_new_DataDictionary__SWIG_4(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -145573,9 +146028,8 @@ SWIGINTERN PyObject *_wrap_new_DataDictionary__SWIG_5(PyObject *self, Py_ssize_t
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -145750,9 +146204,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_readFromURL(PyObject *self, PyObject *
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146024,9 +146477,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getMessageOrderedFields(PyObject *self
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146084,9 +146536,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_setVersion(PyObject *self, PyObject *a
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146236,9 +146687,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addFieldName(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -146275,7 +146725,10 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getFieldName(PyObject *self, PyObject 
   } 
   arg2 = static_cast< int >(val2);
   {
-    temp3 = std::string((char*)PyUnicode_AsUTF8(swig_obj[2]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[2]);
+    if( !value )
+    SWIG_fail;
+    temp3 = value;
     arg3 = &temp3;
   }
   {
@@ -146298,9 +146751,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getFieldName(PyObject *self, PyObject 
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   return resultobj;
@@ -146340,7 +146792,9 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getFieldTag(PyObject *self, PyObject *
     arg2 = ptr;
   }
   {
-    SWIG_AsVal_int(swig_obj[2], &temp3);
+    int res = SWIG_AsVal_int(swig_obj[2], &temp3);
+    if( !SWIG_IsOK(res) )
+    SWIG_exception_fail(SWIG_ArgError(res), "invalid int reference output placeholder");
     arg3 = &temp3;
   }
   {
@@ -146363,17 +146817,15 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getFieldTag(PyObject *self, PyObject *
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("int &") == "int &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyLong_FromLong(*arg3) );    
+      if( quickfixPythonAppendOutput(&resultobj, PyLong_FromLong(*arg3)) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146452,17 +146904,15 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addValueName(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -146514,7 +146964,10 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getValueName(PyObject *self, PyObject 
     arg3 = ptr;
   }
   {
-    temp4 = std::string((char*)PyUnicode_AsUTF8(swig_obj[3]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[3]);
+    if( !value )
+    SWIG_fail;
+    temp4 = value;
     arg4 = &temp4;
   }
   {
@@ -146537,17 +146990,15 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getValueName(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -146597,7 +147048,10 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getNameValue(PyObject *self, PyObject 
     arg3 = ptr;
   }
   {
-    temp4 = std::string((char*)PyUnicode_AsUTF8(swig_obj[3]));
+    const char *value = PyUnicode_AsUTF8(swig_obj[3]);
+    if( !value )
+    SWIG_fail;
+    temp4 = value;
     arg4 = &temp4;
   }
   {
@@ -146620,17 +147074,15 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getNameValue(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -146734,9 +147186,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addMsgType(PyObject *self, PyObject *a
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146795,9 +147246,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_isMsgType(PyObject *self, PyObject *ar
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146863,9 +147313,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addMsgField(PyObject *self, PyObject *
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -146932,9 +147381,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_isMsgField(PyObject *self, PyObject *a
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -147308,9 +147756,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addRequiredField(PyObject *self, PyObj
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -147377,9 +147824,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_isRequiredField(PyObject *self, PyObje
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -147445,9 +147891,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addFieldValue(PyObject *self, PyObject
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -147560,9 +148005,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_isFieldValue(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -147647,9 +148091,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_addGroup(PyObject *self, PyObject *arg
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -147716,9 +148159,8 @@ SWIGINTERN PyObject *_wrap_DataDictionary_isGroup(PyObject *self, PyObject *args
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -147742,7 +148184,7 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getGroup(PyObject *self, PyObject *arg
   int val3 ;
   int ecode3 = 0 ;
   int temp4 ;
-  FIX::DataDictionary *temp5 ;
+  FIX::DataDictionary *temp5 = nullptr ;
   PyObject *swig_obj[5] ;
   bool result;
   
@@ -147770,12 +148212,13 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getGroup(PyObject *self, PyObject *arg
   } 
   arg3 = static_cast< int >(val3);
   {
-    SWIG_AsVal_int(swig_obj[3], &temp4);
+    int res = SWIG_AsVal_int(swig_obj[3], &temp4);
+    if( !SWIG_IsOK(res) )
+    SWIG_exception_fail(SWIG_ArgError(res), "invalid int reference output placeholder");
     arg4 = &temp4;
   }
   {
-    arg5 = new FIX::DataDictionary*[1];
-    *arg5 = temp5;
+    arg5 = &temp5;
   }
   {
     if(!tryPythonException([&]() mutable 
@@ -147797,25 +148240,31 @@ SWIGINTERN PyObject *_wrap_DataDictionary_getGroup(PyObject *self, PyObject *arg
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
-    if( std::string("int &") == "int &" )
-    {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyLong_FromLong(*arg4) );    
+    if( result ) {
+      if( quickfixPythonAppendOutput(&resultobj, PyLong_FromLong(*arg4)) < 0 )
+      SWIG_fail;
     }
   }
   {
-    void* argp;
-    FIX::DataDictionary* pDD = 0;
-    int res = SWIG_ConvertPtr(swig_obj[4], &argp, SWIGTYPE_p_FIX__DataDictionary, 0 );
-    pDD = reinterpret_cast<FIX::DataDictionary *>(argp);
-    *pDD = *(*arg5);
+    if( result ) {
+      if( !*arg5 ) {
+        Py_CLEAR(resultobj);
+        SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+      }
+      void *argp = nullptr;
+      int res = SWIG_ConvertPtr(swig_obj[4], &argp, SWIGTYPE_p_FIX__DataDictionary, 0);
+      if( !SWIG_IsOK(res) || !argp ) {
+        Py_CLEAR(resultobj);
+        SWIG_exception_fail(SWIG_TypeError, "expected a DataDictionary output argument");
+      }
+      FIX::DataDictionary *pDD = reinterpret_cast<FIX::DataDictionary *>(argp);
+      *pDD = **arg5;
+    }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
   return resultobj;
@@ -148697,9 +149146,8 @@ SWIGINTERN PyObject *_wrap_SSLSocketAcceptorBase_setPassword(PyObject *self, PyO
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -149128,9 +149576,8 @@ SWIGINTERN PyObject *_wrap_SSLSocketInitiatorBase_setPassword(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -149420,33 +149867,29 @@ SWIGINTERN PyObject *_wrap_new_DatabaseConnectionID(PyObject *self, PyObject *ar
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -150213,9 +150656,8 @@ SWIGINTERN PyObject *_wrap_new_MySQLQuery(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -150656,33 +151098,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLConnection__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -151202,33 +151640,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLStoreFactory__SWIG_2(PyObject *self, Py_ssiz
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -151671,33 +152105,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLStore__SWIG_1(PyObject *self, Py_ssize_t nob
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg5->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg5->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg6->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg6->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -151881,9 +152311,8 @@ SWIGINTERN PyObject *_wrap_MySQLStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -152542,33 +152971,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLLog__SWIG_2(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg5->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg5->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -152671,33 +153096,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLLog__SWIG_3(PyObject *self, Py_ssize_t nobjs
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -152981,9 +153402,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_setIncomingTable(PyObject *self, PyObject *a
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153041,9 +153461,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_setOutgoingTable(PyObject *self, PyObject *a
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153101,9 +153520,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_setEventTable(PyObject *self, PyObject *args
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153161,9 +153579,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_onIncoming(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153221,9 +153638,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_onOutgoing(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153281,9 +153697,8 @@ SWIGINTERN PyObject *_wrap_MySQLLog_onEvent(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -153501,33 +153916,29 @@ SWIGINTERN PyObject *_wrap_new_MySQLLogFactory__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -153903,9 +154314,8 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLQuery(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -154346,33 +154756,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLConnection__SWIG_1(PyObject *self, Py_s
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -154892,33 +155298,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLStoreFactory__SWIG_2(PyObject *self, Py
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -155361,33 +155763,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLStore__SWIG_1(PyObject *self, Py_ssize_
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg5->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg5->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg6->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg6->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -155571,9 +155969,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -156232,33 +156629,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLLog__SWIG_2(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg5->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg5->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156361,33 +156754,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLLog__SWIG_3(PyObject *self, Py_ssize_t 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -156671,9 +157060,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_setIncomingTable(PyObject *self, PyObje
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156731,9 +157119,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_setOutgoingTable(PyObject *self, PyObje
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156791,9 +157178,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_setEventTable(PyObject *self, PyObject 
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156851,9 +157237,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_onIncoming(PyObject *self, PyObject *ar
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156911,9 +157296,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_onOutgoing(PyObject *self, PyObject *ar
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -156971,9 +157355,8 @@ SWIGINTERN PyObject *_wrap_PostgreSQLLog_onEvent(PyObject *self, PyObject *args)
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res2)) delete arg2;
@@ -157191,33 +157574,29 @@ SWIGINTERN PyObject *_wrap_new_PostgreSQLLogFactory__SWIG_1(PyObject *self, Py_s
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg1->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg1->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg2->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg2->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg4->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg4->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res1)) delete arg1;
@@ -158319,9 +158698,8 @@ SWIGINTERN PyObject *_wrap_NullStore_set(PyObject *self, PyObject *args) {
   {
     if( std::string("std::string const &") == "std::string &" )
     {
-      if( !PyDict_Check(resultobj) )
-      resultobj = PyDict_New();
-      PyDict_SetItem( resultobj, PyLong_FromLong(PyDict_Size(resultobj)), PyUnicode_FromString(arg3->c_str()) );
+      if( quickfixPythonAppendOutput(&resultobj, PyUnicode_FromString(arg3->c_str())) < 0 )
+      SWIG_fail;
     }
   }
   if (SWIG_IsNewObj(res3)) delete arg3;
@@ -159120,6 +159498,7 @@ static PyMethodDef SwigMethods[] = {
 	 { "DateTime_getFraction", _wrap_DateTime_getFraction, METH_VARARGS, NULL},
 	 { "DateTime_getWeekDay", _wrap_DateTime_getWeekDay, METH_O, NULL},
 	 { "DateTime_getTimeT", _wrap_DateTime_getTimeT, METH_O, NULL},
+	 { "DateTime_getTimePoint", _wrap_DateTime_getTimePoint, METH_O, NULL},
 	 { "DateTime_getTmUtc", _wrap_DateTime_getTmUtc, METH_O, NULL},
 	 { "DateTime_setYMD", _wrap_DateTime_setYMD, METH_VARARGS, NULL},
 	 { "DateTime_setHMS", _wrap_DateTime_setHMS, METH_VARARGS, NULL},
@@ -159304,6 +159683,7 @@ static PyMethodDef SwigMethods[] = {
 	 { "FieldMap_calculateString", _wrap_FieldMap_calculateString, METH_VARARGS, NULL},
 	 { "FieldMap_calculateLength", _wrap_FieldMap_calculateLength, METH_VARARGS, NULL},
 	 { "FieldMap_calculateTotal", _wrap_FieldMap_calculateTotal, METH_VARARGS, NULL},
+	 { "FieldMap_calculateLengthAndTotal", _wrap_FieldMap_calculateLengthAndTotal, METH_VARARGS, NULL},
 	 { "FieldMap_begin", _wrap_FieldMap_begin, METH_VARARGS, NULL},
 	 { "FieldMap_end", _wrap_FieldMap_end, METH_VARARGS, NULL},
 	 { "FieldMap_g_begin", _wrap_FieldMap_g_begin, METH_VARARGS, NULL},
@@ -159500,10 +159880,13 @@ static PyMethodDef SwigMethods[] = {
 	 { "Session_getIsNonStopSession", _wrap_Session_getIsNonStopSession, METH_O, NULL},
 	 { "Session_setIsNonStopSession", _wrap_Session_setIsNonStopSession, METH_VARARGS, NULL},
 	 { "Session_getAllowedRemoteAddresses", _wrap_Session_getAllowedRemoteAddresses, METH_O, NULL},
+	 { "Session_getCertificateAcceptedPeerName", _wrap_Session_getCertificateAcceptedPeerName, METH_O, NULL},
+	 { "Session_setCertificateAcceptedPeerName", _wrap_Session_setCertificateAcceptedPeerName, METH_VARARGS, NULL},
 	 { "Session_setAllowedRemoteAddresses", _wrap_Session_setAllowedRemoteAddresses, METH_VARARGS, NULL},
 	 { "Session_inAllowedRemoteAddresses", _wrap_Session_inAllowedRemoteAddresses, METH_VARARGS, NULL},
 	 { "Session_setResponder", _wrap_Session_setResponder, METH_VARARGS, NULL},
 	 { "Session_send", _wrap_Session_send, METH_VARARGS, NULL},
+	 { "Session_acceptLogon", _wrap_Session_acceptLogon, METH_VARARGS, NULL},
 	 { "Session_next", _wrap_Session_next, METH_VARARGS, NULL},
 	 { "Session_disconnect", _wrap_Session_disconnect, METH_O, NULL},
 	 { "Session_getExpectedSenderNum", _wrap_Session_getExpectedSenderNum, METH_O, NULL},
@@ -159512,6 +159895,7 @@ static PyMethodDef SwigMethods[] = {
 	 { "Session_getStore", _wrap_Session_getStore, METH_O, NULL},
 	 { "Session_swigregister", Session_swigregister, METH_O, NULL},
 	 { "Session_swiginit", Session_swiginit, METH_VARARGS, NULL},
+	 { "redactLogonCredentials", _wrap_redactLogonCredentials, METH_O, NULL},
 	 { "delete_LogFactory", _wrap_delete_LogFactory, METH_O, NULL},
 	 { "LogFactory_create", _wrap_LogFactory_create, METH_VARARGS, NULL},
 	 { "LogFactory_destroy", _wrap_LogFactory_destroy, METH_VARARGS, NULL},
@@ -160326,6 +160710,7 @@ static swig_type_info _swigt__p_FIX__Exception = {"_p_FIX__Exception", "FIX::Exc
 static swig_type_info _swigt__p_FIX__FieldBase = {"_p_FIX__FieldBase", "FIX::FieldBase *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_FIX__FieldConvertError = {"_p_FIX__FieldConvertError", "FIX::FieldConvertError *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_FIX__FieldMap = {"_p_FIX__FieldMap", "FIX::FieldMap *", 0, 0, (void*)0, 0};
+static swig_type_info _swigt__p_FIX__FieldMap__LengthAndTotal = {"_p_FIX__FieldMap__LengthAndTotal", "FIX::FieldMap::LengthAndTotal *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_FIX__FieldNotFound = {"_p_FIX__FieldNotFound", "FIX::FieldNotFound *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_FIX__FileLog = {"_p_FIX__FileLog", "FIX::FileLog *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_FIX__FileLogFactory = {"_p_FIX__FileLogFactory", "FIX::FileLogFactory *", 0, 0, (void*)0, 0};
@@ -160453,6 +160838,7 @@ static swig_type_info _swigt__p_signed_char = {"_p_signed_char", "int8_t *|int_f
 static swig_type_info _swigt__p_size_type = {"_p_size_type", "size_type *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_ssize_t = {"_p_ssize_t", "ssize_t *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_std__allocatorT_std__string_t = {"_p_std__allocatorT_std__string_t", "std::vector< std::string >::allocator_type *|std::allocator< std::string > *", 0, 0, (void*)0, 0};
+static swig_type_info _swigt__p_std__chrono__system_clock__time_point = {"_p_std__chrono__system_clock__time_point", "std::chrono::system_clock::time_point *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_std__functionT_FIX__UtcTimeStamp_fF_t = {"_p_std__functionT_FIX__UtcTimeStamp_fF_t", "std::function< FIX::UtcTimeStamp () > *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_std__invalid_argument = {"_p_std__invalid_argument", "std::invalid_argument *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_std__istream = {"_p_std__istream", "std::istream *", 0, 0, (void*)0, 0};
@@ -160513,6 +160899,7 @@ static swig_type_info *swig_type_initial[] = {
   &_swigt__p_FIX__FieldBase,
   &_swigt__p_FIX__FieldConvertError,
   &_swigt__p_FIX__FieldMap,
+  &_swigt__p_FIX__FieldMap__LengthAndTotal,
   &_swigt__p_FIX__FieldNotFound,
   &_swigt__p_FIX__FileLog,
   &_swigt__p_FIX__FileLogFactory,
@@ -160640,6 +161027,7 @@ static swig_type_info *swig_type_initial[] = {
   &_swigt__p_size_type,
   &_swigt__p_ssize_t,
   &_swigt__p_std__allocatorT_std__string_t,
+  &_swigt__p_std__chrono__system_clock__time_point,
   &_swigt__p_std__functionT_FIX__UtcTimeStamp_fF_t,
   &_swigt__p_std__invalid_argument,
   &_swigt__p_std__istream,
@@ -160700,6 +161088,7 @@ static swig_cast_info _swigc__p_FIX__Exception[] = {  {&_swigt__p_FIX__Exception
 static swig_cast_info _swigc__p_FIX__FieldBase[] = {  {&_swigt__p_FIX__FieldBase, 0, 0, 0},  {&_swigt__p_FIX__BeginString, _p_FIX__BeginStringTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__BoolField, _p_FIX__BoolFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__CharField, _p_FIX__CharFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__CheckSumField, _p_FIX__CheckSumFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__DoubleField, _p_FIX__DoubleFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__Int64Field, _p_FIX__Int64FieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__IntField, _p_FIX__IntFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__SenderCompID, _p_FIX__SenderCompIDTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__StringField, _p_FIX__StringFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__TargetCompID, _p_FIX__TargetCompIDTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__UInt64Field, _p_FIX__UInt64FieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__UtcDateField, _p_FIX__UtcDateFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__UtcTimeOnlyField, _p_FIX__UtcTimeOnlyFieldTo_p_FIX__FieldBase, 0, 0},  {&_swigt__p_FIX__UtcTimeStampField, _p_FIX__UtcTimeStampFieldTo_p_FIX__FieldBase, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_FIX__FieldConvertError[] = {  {&_swigt__p_FIX__FieldConvertError, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_FIX__FieldMap[] = {  {&_swigt__p_FIX__FieldMap, 0, 0, 0},  {&_swigt__p_FIX__Group, _p_FIX__GroupTo_p_FIX__FieldMap, 0, 0},  {&_swigt__p_FIX__Header, _p_FIX__HeaderTo_p_FIX__FieldMap, 0, 0},  {&_swigt__p_FIX__Message, _p_FIX__MessageTo_p_FIX__FieldMap, 0, 0},  {&_swigt__p_FIX__Trailer, _p_FIX__TrailerTo_p_FIX__FieldMap, 0, 0},{0, 0, 0, 0}};
+static swig_cast_info _swigc__p_FIX__FieldMap__LengthAndTotal[] = {  {&_swigt__p_FIX__FieldMap__LengthAndTotal, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_FIX__FieldNotFound[] = {  {&_swigt__p_FIX__FieldNotFound, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_FIX__FileLog[] = {  {&_swigt__p_FIX__FileLog, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_FIX__FileLogFactory[] = {  {&_swigt__p_FIX__FileLogFactory, 0, 0, 0},{0, 0, 0, 0}};
@@ -160827,6 +161216,7 @@ static swig_cast_info _swigc__p_signed_char[] = {  {&_swigt__p_signed_char, 0, 0
 static swig_cast_info _swigc__p_size_type[] = {  {&_swigt__p_size_type, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_ssize_t[] = {  {&_swigt__p_ssize_t, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_std__allocatorT_std__string_t[] = {  {&_swigt__p_std__allocatorT_std__string_t, 0, 0, 0},{0, 0, 0, 0}};
+static swig_cast_info _swigc__p_std__chrono__system_clock__time_point[] = {  {&_swigt__p_std__chrono__system_clock__time_point, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_std__functionT_FIX__UtcTimeStamp_fF_t[] = {  {&_swigt__p_std__functionT_FIX__UtcTimeStamp_fF_t, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_std__invalid_argument[] = {  {&_swigt__p_std__invalid_argument, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_std__istream[] = {  {&_swigt__p_std__istream, 0, 0, 0},{0, 0, 0, 0}};
@@ -160887,6 +161277,7 @@ static swig_cast_info *swig_cast_initial[] = {
   _swigc__p_FIX__FieldBase,
   _swigc__p_FIX__FieldConvertError,
   _swigc__p_FIX__FieldMap,
+  _swigc__p_FIX__FieldMap__LengthAndTotal,
   _swigc__p_FIX__FieldNotFound,
   _swigc__p_FIX__FileLog,
   _swigc__p_FIX__FileLogFactory,
@@ -161014,6 +161405,7 @@ static swig_cast_info *swig_cast_initial[] = {
   _swigc__p_size_type,
   _swigc__p_ssize_t,
   _swigc__p_std__allocatorT_std__string_t,
+  _swigc__p_std__chrono__system_clock__time_point,
   _swigc__p_std__functionT_FIX__UtcTimeStamp_fF_t,
   _swigc__p_std__invalid_argument,
   _swigc__p_std__istream,
@@ -167484,6 +167876,7 @@ SWIG_init(void) {
   SWIG_addvarlink(globals, "CLIENT_CERTIFICATE_KEY_FILE", Swig_var_CLIENT_CERTIFICATE_KEY_FILE_get, Swig_var_CLIENT_CERTIFICATE_KEY_FILE_set);
   SWIG_addvarlink(globals, "CERTIFICATE_AUTHORITIES_FILE", Swig_var_CERTIFICATE_AUTHORITIES_FILE_get, Swig_var_CERTIFICATE_AUTHORITIES_FILE_set);
   SWIG_addvarlink(globals, "CERTIFICATE_AUTHORITIES_DIRECTORY", Swig_var_CERTIFICATE_AUTHORITIES_DIRECTORY_get, Swig_var_CERTIFICATE_AUTHORITIES_DIRECTORY_set);
+  SWIG_addvarlink(globals, "CERTIFICATE_ACCEPTED_PEER_NAME", Swig_var_CERTIFICATE_ACCEPTED_PEER_NAME_get, Swig_var_CERTIFICATE_ACCEPTED_PEER_NAME_set);
   SWIG_addvarlink(globals, "CERTIFICATE_REVOCATION_LIST_FILE", Swig_var_CERTIFICATE_REVOCATION_LIST_FILE_get, Swig_var_CERTIFICATE_REVOCATION_LIST_FILE_set);
   SWIG_addvarlink(globals, "CERTIFICATE_REVOCATION_LIST_DIRECTORY", Swig_var_CERTIFICATE_REVOCATION_LIST_DIRECTORY_get, Swig_var_CERTIFICATE_REVOCATION_LIST_DIRECTORY_set);
   SWIG_addvarlink(globals, "CERTIFICATE_VERIFY_LEVEL", Swig_var_CERTIFICATE_VERIFY_LEVEL_get, Swig_var_CERTIFICATE_VERIFY_LEVEL_set);

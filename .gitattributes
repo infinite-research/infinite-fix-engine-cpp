@@ -6,3 +6,5 @@ spec/infinite-rfq-1.0.0/provenance.v1.json -text
 spec/infinite-rfq-1.0.0/license-inventory.v1.json -text
 spec/infinite-rfq-1.0.0/licenses/FIXTradingCommunity-orchestrations-Apache-2.0.txt -text
 licenses/*.txt -text
+src/python/QuickfixPython.cpp whitespace=-trailing-space
+src/ruby/QuickfixRuby.cpp whitespace=-trailing-space
