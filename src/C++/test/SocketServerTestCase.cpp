@@ -47,13 +47,11 @@ struct TestSocket {
   socket_handle value;
 };
 
-std::string boundAddress(socket_handle socket) {
+unsigned long boundAddress(socket_handle socket) {
   sockaddr_in address{};
   socklen_t size = sizeof(address);
   REQUIRE(getsockname(socket, reinterpret_cast<sockaddr *>(&address), &size) == 0);
-  char value[INET_ADDRSTRLEN]{};
-  REQUIRE(inet_ntop(AF_INET, &address.sin_addr, value, sizeof(value)) != nullptr);
-  return value;
+  return address.sin_addr.s_addr;
 }
 
 #ifdef __linux__
@@ -103,17 +101,21 @@ TEST_CASE("SocketServerTests") {
   SECTION("listener address") {
     TestSocket wildcard(socket_createAcceptor(0, true));
     REQUIRE(wildcard.value != INVALID_SOCKET_HANDLE);
-    CHECK(boundAddress(wildcard.value) == "0.0.0.0");
+    CHECK(boundAddress(wildcard.value) == INADDR_ANY);
 
     TestSocket loopback(socket_createAcceptor("127.0.0.1", 0, true));
     REQUIRE(loopback.value != INVALID_SOCKET_HANDLE);
-    CHECK(boundAddress(loopback.value) == "127.0.0.1");
+    CHECK(boundAddress(loopback.value) == inet_addr("127.0.0.1"));
 
     TestSocket invalid(socket_createAcceptor("localhost", 0, true));
     CHECK(invalid.value == INVALID_SOCKET_HANDLE);
   }
 
   SECTION("listener reuse requires the same address") {
+    SocketServer wildcardObject(0);
+    const socket_handle wildcardListener = wildcardObject.add(0, true);
+    CHECK(wildcardObject.add("0.0.0.0", 0, true) == wildcardListener);
+
     TestSocket reserved(socket_createAcceptor("127.0.0.1", 0, true));
     REQUIRE(reserved.value != INVALID_SOCKET_HANDLE);
     const int port = socket_hostport(reserved.value);
@@ -124,7 +126,6 @@ TEST_CASE("SocketServerTests") {
     const socket_handle listener = object.add("127.0.0.1", port, true);
     CHECK(object.add("127.0.0.1", port, true) == listener);
     CHECK_THROWS_AS(object.add("0.0.0.0", port, true), SocketException);
-    object.close();
   }
 
 #ifdef __linux__

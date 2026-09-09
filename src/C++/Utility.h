@@ -150,6 +150,7 @@ void socket_term();
 std::string socket_error();
 int socket_bind(socket_handle socket, const char *hostname, int port);
 socket_handle socket_createAcceptor(int port, bool reuse = false);
+socket_handle socket_createAcceptor(const std::string &address, int port, bool reuse = false);
 socket_handle socket_createConnector();
 int socket_connect(socket_handle s, const char *address, int port);
 socket_handle socket_accept(socket_handle s);

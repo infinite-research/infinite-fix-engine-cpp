@@ -26,6 +26,7 @@
 #include "Exceptions.h"
 #include "SocketServer.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #ifndef _MSC_VER
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -79,14 +80,39 @@ SocketServer::SocketServer(int timeout)
 
 socket_handle SocketServer::add(int port, bool reuse, bool noDelay, int sendBufSize, int rcvBufSize)
     EXCEPT(SocketException &) {
-  if (m_portToInfo.find(port) != m_portToInfo.end()) {
-    return m_portToInfo[port].m_socket;
+  return add("", port, reuse, noDelay, sendBufSize, rcvBufSize);
+}
+
+socket_handle SocketServer::add(
+    const std::string &value,
+    int port,
+    bool reuse,
+    bool noDelay,
+    int sendBufSize,
+    int rcvBufSize) EXCEPT(SocketException &) {
+  const unsigned long requested = value.empty() ? INADDR_ANY : inet_addr(value.c_str());
+  if (requested == INADDR_NONE) {
+    throw SocketException("Invalid numeric IPv4 accept address: " + value);
   }
 
-  socket_handle socket = socket_createAcceptor(port, reuse);
+  const auto found = m_portToInfo.find(port);
+  if (found != m_portToInfo.end()) {
+    sockaddr_in bound{};
+    socklen_t size = sizeof(bound);
+    if (getsockname(found->second.m_socket, reinterpret_cast<sockaddr *>(&bound), &size) != 0) {
+      throw SocketException();
+    }
+    if (bound.sin_addr.s_addr != requested) {
+      throw SocketException("Sessions sharing a port must use the same accept address");
+    }
+    return found->second.m_socket;
+  }
+
+  socket_handle socket = socket_createAcceptor(value, port, reuse);
   if (socket == INVALID_SOCKET_HANDLE) {
     throw SocketException();
   }
+  auto cleanup = sg::make_scope_guard([&]() { socket_close(socket); });
   if (noDelay) {
     socket_setsockopt(socket, TCP_NODELAY);
   }
@@ -97,6 +123,7 @@ socket_handle SocketServer::add(int port, bool reuse, bool noDelay, int sendBufS
     socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
   }
   m_monitor.addRead(socket);
+  cleanup.dismiss();
 
   SocketInfo info(socket, port, noDelay, sendBufSize, rcvBufSize);
   m_socketToInfo[socket] = info;

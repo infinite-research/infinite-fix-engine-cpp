@@ -29,6 +29,8 @@
 #include "SocketAcceptor.h"
 #include "Utility.h"
 
+#include <memory>
+
 namespace FIX {
 SocketAcceptor::SocketAcceptor(Application &application, MessageStoreFactory &factory, const SessionSettings &settings)
     EXCEPT(ConfigError)
@@ -51,9 +53,20 @@ SocketAcceptor::~SocketAcceptor() {
 }
 
 void SocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   for (const SessionID &sessionID : sessionSettings.getSessions()) {
     const Dictionary &settings = sessionSettings.get(sessionID);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -67,11 +80,14 @@ void SocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT
   uint16_t port = 0;
 
   try {
-    m_pServer = new SocketServer(1);
+    std::unique_ptr<SocketServer> server(new SocketServer(1));
+    PortToSessions portToSessions;
+    SessionToPort sessionToPort;
 
     for (const SessionID &sessionID : sessionSettings.getSessions()) {
       const Dictionary &settings = sessionSettings.get(sessionID);
       port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+      const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
       const bool reuseAddress = settings.has(SOCKET_REUSE_ADDRESS) ? settings.getBool(SOCKET_REUSE_ADDRESS) : true;
 
@@ -81,13 +97,15 @@ void SocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT
 
       const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-      socket_handle acceptSocket = m_pServer->add(port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
-      m_portToSessions[socket_hostport(acceptSocket)].insert(sessionID);
-      m_sessionToPort[sessionID] = socket_hostport(acceptSocket);
+      socket_handle acceptSocket = server->add(address, port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
+      portToSessions[socket_hostport(acceptSocket)].insert(sessionID);
+      sessionToPort[sessionID] = socket_hostport(acceptSocket);
     }
+
+    m_portToSessions.swap(portToSessions);
+    m_sessionToPort.swap(sessionToPort);
+    m_pServer = server.release();
   } catch (SocketException &e) {
-    delete m_pServer;
-    m_pServer = 0;
     throw RuntimeError(
         "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
         + ")");

@@ -871,6 +871,20 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         </tr>
 
         <tr align="left" valign="middle">
+          <td><b>SocketAcceptAddress</b></td>
+
+          <td>Optional local IPv4 address on which an acceptor listens. Empty or
+          0.0.0.0 preserves the legacy all-interface bind. Sessions sharing one
+          SocketAcceptPort must use the same effective address. The binding limits
+          interface exposure but does not authenticate peers; remote plaintext use
+          requires TLS or trusted host-side TLS termination.</td>
+
+          <td>empty, 0.0.0.0, or a numeric IPv4 address. Hostnames and IPv6 are not supported.</td>
+
+          <td>empty (all interfaces)</td>
+        </tr>
+
+        <tr align="left" valign="middle">
           <td><b>SocketReuseAddress</b></td>
 
           <td>Indicates a socket should be created with

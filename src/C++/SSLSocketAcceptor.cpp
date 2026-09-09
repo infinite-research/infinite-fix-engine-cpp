@@ -127,6 +127,8 @@
 #include "Utility.h"
 #include "scope_guard.hpp"
 
+#include <memory>
+
 namespace FIX {
 
 int SSLSocketAcceptor::passPhraseHandleCB(char *buf, int bufsize, int verify, void *instance) {
@@ -169,10 +171,21 @@ SSLSocketAcceptor::~SSLSocketAcceptor() {
 }
 
 void SSLSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   std::set<SessionID> sessions = sessionSettings.getSessions();
   for (const SessionID &sessionID : sessions) {
     const Dictionary &settings = sessionSettings.get(sessionID);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -219,12 +232,14 @@ void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXC
   short port = 0;
 
   try {
-    m_pServer = new SocketServer(1);
+    std::unique_ptr<SocketServer> server(new SocketServer(1));
+    PortToSessions portToSessions;
 
     std::set<SessionID> sessions = sessionSettings.getSessions();
     for (const SessionID &sessionID : sessions) {
       const Dictionary &settings = sessionSettings.get(sessionID);
       port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+      const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
       const bool reuseAddress = settings.has(SOCKET_REUSE_ADDRESS) ? settings.getBool(SOCKET_REUSE_ADDRESS) : true;
 
@@ -234,9 +249,12 @@ void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXC
 
       const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-      m_portToSessions[port].insert(sessionID);
-      m_pServer->add(port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
+      portToSessions[port].insert(sessionID);
+      server->add(address, port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
     }
+
+    m_portToSessions.swap(portToSessions);
+    m_pServer = server.release();
   } catch (SocketException &e) {
     throw RuntimeError(
         "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()

@@ -26,13 +26,162 @@
 
 #include "TestHelper.h"
 #include <SocketAcceptor.h>
+#include <ThreadedSocketAcceptor.h>
 #include <Utility.h>
 #include <fix42/Logon.h>
+#if HAVE_SSL && !defined(_MSC_VER)
+#include <SSLSocketAcceptor.h>
+#include <ThreadedSSLSocketAcceptor.h>
+#endif
+#include <memory>
 #include <sstream>
+#include <vector>
 
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
+
+namespace {
+struct ListenerSocket {
+  explicit ListenerSocket(socket_handle value)
+      : value(value) {}
+  ~ListenerSocket() { socket_close(value); }
+
+  socket_handle value;
+};
+
+int listenerPort(socket_handle socket) {
+  sockaddr_in address{};
+  socklen_t size = sizeof(address);
+  REQUIRE(getsockname(socket, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+  return ntohs(address.sin_port);
+}
+
+int availablePort() {
+  ListenerSocket listener(socket_createAcceptor("127.0.0.1", 0, true));
+  REQUIRE(listener.value != INVALID_SOCKET_HANDLE);
+  return listenerPort(listener.value);
+}
+
+SessionSettings listenerSettings(const std::vector<std::pair<int, std::string>> &listeners) {
+  Dictionary defaults;
+  defaults.setString(CONNECTION_TYPE, "acceptor");
+  defaults.setBool(NON_STOP_SESSION, true);
+  defaults.setBool(USE_DATA_DICTIONARY, false);
+  defaults.setBool(SOCKET_REUSE_ADDRESS, true);
+#if HAVE_SSL && !defined(_MSC_VER)
+  defaults.setString(SERVER_CERTIFICATE_FILE, std::string(QUICKFIX_TEST_PKI) + "/server.crt");
+  defaults.setString(SERVER_CERTIFICATE_KEY_FILE, std::string(QUICKFIX_TEST_PKI) + "/server.key");
+#endif
+
+  static int serial = 0;
+  const std::string prefix = "TASK13-" + std::to_string(++serial) + "-";
+  SessionSettings settings;
+  settings.set(defaults);
+  for (size_t index = 0; index < listeners.size(); ++index) {
+    Dictionary session;
+    session.setInt(SOCKET_ACCEPT_PORT, listeners[index].first);
+    session.setString(SOCKET_ACCEPT_ADDRESS, listeners[index].second);
+    settings.set(SessionID("FIX.4.2", prefix + static_cast<char>('A' + index), "PEER"), session);
+  }
+  return settings;
+}
+
+std::unique_ptr<Acceptor> listenerAcceptor(
+    bool threaded,
+    bool tls,
+    TestApplication &application,
+    MemoryStoreFactory &stores,
+    const SessionSettings &settings) {
+#if HAVE_SSL && !defined(_MSC_VER)
+  if (tls) {
+    if (threaded) {
+      return std::make_unique<ThreadedSSLSocketAcceptor>(application, stores, settings);
+    }
+    return std::make_unique<SSLSocketAcceptor>(application, stores, settings);
+  }
+#else
+  (void)tls;
+#endif
+  if (threaded) {
+    return std::make_unique<ThreadedSocketAcceptor>(application, stores, settings);
+  }
+  return std::make_unique<SocketAcceptor>(application, stores, settings);
+}
+} // namespace
+
+TEST_CASE("SocketAcceptor bind settings") {
+  const bool threaded = GENERATE(false, true);
+#if HAVE_SSL && !defined(_MSC_VER)
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  CAPTURE(threaded, tls);
+  TestApplication application;
+  MemoryStoreFactory stores;
+
+  SECTION("configured address is forwarded") {
+    const int port = availablePort();
+    auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
+    if (threaded) {
+      acceptor->block();
+    } else {
+      acceptor->start();
+    }
+    ListenerSocket sibling(socket_createAcceptor("127.0.0.2", port, true));
+    CHECK(sibling.value != INVALID_SOCKET_HANDLE);
+    acceptor->stop(true);
+  }
+
+  SECTION("invalid address is rejected before listening") {
+    const int port = availablePort();
+    auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "localhost"}}));
+    CHECK_THROWS_AS(acceptor->start(), ConfigError);
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+    acceptor->stop(true);
+  }
+
+  SECTION("sessions sharing a port reject different addresses") {
+    const int port = availablePort();
+    auto acceptor
+        = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, ""}, {port, "127.0.0.1"}}));
+    CHECK_THROWS_AS(acceptor->start(), ConfigError);
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+    acceptor->stop(true);
+  }
+
+  SECTION("empty and explicit wildcard addresses share a listener") {
+    const int port = availablePort();
+    auto acceptor
+        = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, ""}, {port, "0.0.0.0"}}));
+    if (threaded) {
+      CHECK_NOTHROW(acceptor->block());
+    } else {
+      CHECK_NOTHROW(acceptor->start());
+    }
+    acceptor->stop(true);
+  }
+
+  SECTION("failed initialization publishes no listener") {
+    const int firstPort = availablePort();
+    ListenerSocket occupied(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(occupied.value != INVALID_SOCKET_HANDLE);
+    const int occupiedPort = listenerPort(occupied.value);
+    auto acceptor = listenerAcceptor(
+        threaded,
+        tls,
+        application,
+        stores,
+        listenerSettings({{firstPort, "127.0.0.1"}, {occupiedPort, "127.0.0.1"}}));
+    CHECK_THROWS_AS(acceptor->start(), RuntimeError);
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", firstPort, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+    acceptor->stop(true);
+  }
+}
 
 TEST_CASE("SocketAcceptorTests") {
   TestApplication application;

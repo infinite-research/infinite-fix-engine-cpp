@@ -19,6 +19,14 @@ Trust and identity
 TLS settings belong in [DEFAULT], except CertificateAcceptedPeerName,
 which may also be specified separately in each [SESSION].
 
+Acceptors may set SocketAcceptAddress to an empty value, 0.0.0.0, or a
+numeric IPv4 address. Empty and 0.0.0.0 preserve the legacy all-interface
+bind; sessions sharing a SocketAcceptPort must use the same effective
+address. Hostnames and IPv6 listener addresses are not supported. The shipped
+examples bind acceptors to 127.0.0.1 for local demonstration. Exposing a FIX
+listener beyond a trusted host requires TLS here or trusted host-side TLS
+termination; network binding is not an authentication control.
+
 Initiators always verify the server certificate chain and the selected
 SocketConnectHost, including a host selected during failover. DNS hosts
 match certificate subject alternative names (SANs); numeric IPv4/IPv6
@@ -99,6 +107,9 @@ issue certificates matching SocketConnectHost. Peers restricted to TLS
 1.0/1.1 must upgrade. Adding the optional name string extends Session's
 class size; rebuild consumers against the matching library and headers.
 Existing public method signatures remain available.
+
+Existing acceptors that omit SocketAcceptAddress continue to bind all local
+interfaces. Set an explicit numeric IPv4 address when narrowing a deployment.
 
 The SSL unit build generates short-lived, test-only PKI in its ignored
 test-runtime/certs directory using test/generate-test-pki.sh. To generate

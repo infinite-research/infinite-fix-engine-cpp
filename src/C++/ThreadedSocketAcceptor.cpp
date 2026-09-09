@@ -26,6 +26,7 @@
 #include "Settings.h"
 #include "ThreadedSocketAcceptor.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 ThreadedSocketAcceptor::ThreadedSocketAcceptor(
@@ -48,9 +49,20 @@ ThreadedSocketAcceptor::ThreadedSocketAcceptor(
 ThreadedSocketAcceptor::~ThreadedSocketAcceptor() { socket_term(); }
 
 void ThreadedSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   for (const SessionID &sessionID : sessionSettings.getSessions()) {
     const Dictionary &settings = sessionSettings.get(sessionID);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -63,12 +75,21 @@ void ThreadedSocketAcceptor::onConfigure(const SessionSettings &sessionSettings)
 void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT(RuntimeError) {
   short port = 0;
   std::set<int> ports;
+  Sockets sockets;
+  PortToSessions portToSessions;
+  SocketToPort socketToPort;
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (const socket_handle socket : sockets) {
+      socket_close(socket);
+    }
+  });
 
   for (const SessionID &sessionID : sessionSettings.getSessions()) {
     const Dictionary &settings = sessionSettings.get(sessionID);
     port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
-    m_portToSessions[port].insert(sessionID);
+    portToSessions[port].insert(sessionID);
 
     if (ports.find(port) != ports.end()) {
       continue;
@@ -83,14 +104,14 @@ void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings
 
     const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-    socket_handle socket = socket_createAcceptor(port, reuseAddress);
+    socket_handle socket = socket_createAcceptor(address, port, reuseAddress);
     if (socket == INVALID_SOCKET_HANDLE) {
       SocketException e;
-      socket_close(socket);
       throw RuntimeError(
           "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
           + ")");
     }
+    auto socketCleanup = sg::make_scope_guard([&]() { socket_close(socket); });
     if (noDelay) {
       socket_setsockopt(socket, TCP_NODELAY);
     }
@@ -101,9 +122,15 @@ void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings
       socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
     }
 
-    m_socketToPort[socket] = port;
-    m_sockets.insert(socket);
+    socketToPort[socket] = port;
+    sockets.insert(socket);
+    socketCleanup.dismiss();
   }
+
+  m_portToSessions.swap(portToSessions);
+  m_socketToPort.swap(socketToPort);
+  m_sockets.swap(sockets);
+  cleanup.dismiss();
 }
 
 void ThreadedSocketAcceptor::onStart() {

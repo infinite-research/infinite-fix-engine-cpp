@@ -61,6 +61,8 @@ const char CHECK_LATENCY[] = "CheckLatency";
 const char MAX_LATENCY[] = "MaxLatency";
 const char HEARTBTINT[] = "HeartBtInt";
 const char SOCKET_ACCEPT_PORT[] = "SocketAcceptPort";
+/// Optional numeric IPv4 address used by acceptors; empty or 0.0.0.0 binds all interfaces.
+const char SOCKET_ACCEPT_ADDRESS[] = "SocketAcceptAddress";
 const char SOCKET_REUSE_ADDRESS[] = "SocketReuseAddress";
 const char SOCKET_CONNECT_HOST[] = "SocketConnectHost";
 const char SOCKET_CONNECT_PORT[] = "SocketConnectPort";
