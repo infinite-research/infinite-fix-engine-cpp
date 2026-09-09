@@ -26,13 +26,43 @@
 
 #include "TestHelper.h"
 #include <SocketServer.h>
+#include <Utility.h>
 #ifdef _MSC_VER
 #include <stdlib.h>
+#endif
+#ifdef __linux__
+#include <filesystem>
 #endif
 
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
+
+namespace {
+struct TestSocket {
+  explicit TestSocket(socket_handle value)
+      : value(value) {}
+  ~TestSocket() { socket_close(value); }
+
+  socket_handle value;
+};
+
+std::string boundAddress(socket_handle socket) {
+  sockaddr_in address{};
+  socklen_t size = sizeof(address);
+  REQUIRE(getsockname(socket, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+  char value[INET_ADDRSTRLEN]{};
+  REQUIRE(inet_ntop(AF_INET, &address.sin_addr, value, sizeof(value)) != nullptr);
+  return value;
+}
+
+#ifdef __linux__
+size_t openDescriptors() {
+  return static_cast<size_t>(
+      std::distance(std::filesystem::directory_iterator("/proc/self/fd"), std::filesystem::directory_iterator{}));
+}
+#endif
+} // namespace
 
 struct SocketServerTestStrategy : public SocketServer::Strategy {
   void onConnect(SocketServer &, socket_handle accept, socket_handle socket) {
@@ -69,6 +99,49 @@ struct SocketServerTestStrategy : public SocketServer::Strategy {
 
 TEST_CASE("SocketServerTests") {
   SocketServerTestStrategy strategy;
+
+  SECTION("listener address") {
+    TestSocket wildcard(socket_createAcceptor(0, true));
+    REQUIRE(wildcard.value != INVALID_SOCKET_HANDLE);
+    CHECK(boundAddress(wildcard.value) == "0.0.0.0");
+
+    TestSocket loopback(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(loopback.value != INVALID_SOCKET_HANDLE);
+    CHECK(boundAddress(loopback.value) == "127.0.0.1");
+
+    TestSocket invalid(socket_createAcceptor("localhost", 0, true));
+    CHECK(invalid.value == INVALID_SOCKET_HANDLE);
+  }
+
+  SECTION("listener reuse requires the same address") {
+    TestSocket reserved(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(reserved.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(reserved.value);
+    socket_close(reserved.value);
+    reserved.value = INVALID_SOCKET_HANDLE;
+
+    SocketServer object(0);
+    const socket_handle listener = object.add("127.0.0.1", port, true);
+    CHECK(object.add("127.0.0.1", port, true) == listener);
+    CHECK_THROWS_AS(object.add("0.0.0.0", port, true), SocketException);
+    object.close();
+  }
+
+#ifdef __linux__
+  SECTION("failed bind does not leak descriptors or replace the socket error") {
+    TestSocket occupied(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(occupied.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(occupied.value);
+    const size_t descriptors = openDescriptors();
+
+    for (int attempt = 0; attempt < 10000; ++attempt) {
+      errno = 0;
+      CHECK(socket_createAcceptor("127.0.0.1", port, true) == INVALID_SOCKET_HANDLE);
+      CHECK(errno == EADDRINUSE);
+    }
+    CHECK(openDescriptors() == descriptors);
+  }
+#endif
 
   SECTION("accept") {
     SocketServer object(0);
