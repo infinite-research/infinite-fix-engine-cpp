@@ -13,6 +13,13 @@ serialize writes, clear, and backup operations per log instance.
 POSIX mutex recursion now uses the native recursive mutex type without racy
 manual owner bookkeeping.
 
+MySQL and PostgreSQL store and log factories now require explicit users and
+password settings; users must be non-empty, while an explicitly empty password
+remains available for external authentication. Duplicate-message updates reuse
+the backend-escaped value used for inserts. Obsolete Ubuntu 12 and bundled
+database-user provisioning scripts have been removed; database roles and
+least-privilege grants are now operator-managed.
+
 Session synchronisation at initiation using tag NextExpectedMsgSeqNum (789)
 
 MillisecondsInTimeStamp=N config correctly disabled milliseconds

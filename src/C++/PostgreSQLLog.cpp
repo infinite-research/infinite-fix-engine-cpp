@@ -35,7 +35,7 @@
 namespace FIX {
 
 const std::string PostgreSQLLogFactory::DEFAULT_DATABASE = "quickfix";
-const std::string PostgreSQLLogFactory::DEFAULT_USER = "postgres";
+const std::string PostgreSQLLogFactory::DEFAULT_USER = "";
 const std::string PostgreSQLLogFactory::DEFAULT_PASSWORD = "";
 const std::string PostgreSQLLogFactory::DEFAULT_HOST = "localhost";
 const short PostgreSQLLogFactory::DEFAULT_PORT = 0;
@@ -145,13 +145,8 @@ void PostgreSQLLogFactory::init(
       database = settings.getString(POSTGRESQL_LOG_DATABASE);
     } catch (ConfigError &) {}
 
-    try {
-      user = settings.getString(POSTGRESQL_LOG_USER);
-    } catch (ConfigError &) {}
-
-    try {
-      password = settings.getString(POSTGRESQL_LOG_PASSWORD);
-    } catch (ConfigError &) {}
+    user = settings.getString(POSTGRESQL_LOG_USER);
+    password = settings.getString(POSTGRESQL_LOG_PASSWORD);
 
     try {
       host = settings.getString(POSTGRESQL_LOG_HOST);
@@ -166,6 +161,10 @@ void PostgreSQLLogFactory::init(
     password = m_password;
     host = m_host;
     port = m_port;
+  }
+
+  if (user.empty()) {
+    throw ConfigError(std::string(POSTGRESQL_LOG_USER) + " must not be empty");
   }
 }
 

@@ -35,7 +35,7 @@
 namespace FIX {
 
 const std::string MySQLLogFactory::DEFAULT_DATABASE = "quickfix";
-const std::string MySQLLogFactory::DEFAULT_USER = "root";
+const std::string MySQLLogFactory::DEFAULT_USER = "";
 const std::string MySQLLogFactory::DEFAULT_PASSWORD = "";
 const std::string MySQLLogFactory::DEFAULT_HOST = "localhost";
 const short MySQLLogFactory::DEFAULT_PORT = 0;
@@ -144,13 +144,8 @@ void MySQLLogFactory::init(
       database = settings.getString(MYSQL_LOG_DATABASE);
     } catch (ConfigError &) {}
 
-    try {
-      user = settings.getString(MYSQL_LOG_USER);
-    } catch (ConfigError &) {}
-
-    try {
-      password = settings.getString(MYSQL_LOG_PASSWORD);
-    } catch (ConfigError &) {}
+    user = settings.getString(MYSQL_LOG_USER);
+    password = settings.getString(MYSQL_LOG_PASSWORD);
 
     try {
       host = settings.getString(MYSQL_LOG_HOST);
@@ -165,6 +160,10 @@ void MySQLLogFactory::init(
     password = m_password;
     host = m_host;
     port = m_port;
+  }
+
+  if (user.empty()) {
+    throw ConfigError(std::string(MYSQL_LOG_USER) + " must not be empty");
   }
 }
 

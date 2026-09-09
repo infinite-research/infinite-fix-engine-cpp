@@ -974,6 +974,20 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         </tr>
 
         <tr align="center" valign="middle">
+          <td colspan="4">Provision database roles outside QuickFIX. Grant the
+          store role only SELECT, INSERT, and UPDATE on
+          <code>sessions</code>, and SELECT, INSERT, UPDATE, and DELETE on
+          <code>messages</code>; do not use a database-wide or all-tables
+          grant. Supply each non-empty User and explicit Password setting at
+          runtime from secret management. Existing environment substitution
+          can be enabled with <code>SessionSettings(path, true)</code>, for
+          example <code>MySQLStorePassword=${QUICKFIX_DB_PASSWORD}</code>. An
+          empty Password value is valid only when the database is configured
+          for external or peer authentication. Never embed credentials in
+          source or images.</td>
+        </tr>
+
+        <tr align="center" valign="middle">
           <td colspan="4" bgcolor="#BBBBBB"><h3>MYSQL</h3></td>
         </tr>
 
@@ -992,22 +1006,23 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         <tr align="left" valign="middle">
           <td><b>MySQLStoreUser</b></td>
 
-          <td>User name logging in to MySQL database.</td>
+          <td>Required non-empty user name for the MySQL store role.</td>
 
           <td>valid user with read/write access to appropriate
           tables in database</td>
 
-          <td>root</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
           <td><b>MySQLStorePassword</b></td>
 
-          <td>Users password.</td>
+          <td>Required password setting. The value may be empty when
+          external authentication is configured.</td>
 
-          <td>correct MySQL password for user</td>
+          <td>runtime-injected secret or explicit empty value</td>
 
-          <td>empty password</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
@@ -1063,22 +1078,23 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         <tr align="left" valign="middle">
           <td><b>PostgreSQLStoreUser</b></td>
 
-          <td>User name logging in to PostgreSQL database.</td>
+          <td>Required non-empty user name for the PostgreSQL store role.</td>
 
           <td>valid user with read/write access to appropriate
           tables in database</td>
 
-          <td>postgres</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
           <td><b>PostgreSQLStorePassword</b></td>
 
-          <td>Users password.</td>
+          <td>Required password setting. The value may be empty when
+          external or peer authentication is configured.</td>
 
-          <td>correct PostgreSQL password for user</td>
+          <td>runtime-injected secret or explicit empty value</td>
 
-          <td>empty password</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
@@ -1236,6 +1252,14 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         </tr>
 
         <tr align="center" valign="middle">
+          <td colspan="4">Grant a separate log role only INSERT and DELETE on
+          the configured message and event log tables. PostgreSQL log roles
+          also need USAGE on the sequences used by those tables. Add SELECT
+          only when operational tooling requires it; do not grant access to
+          unrelated application tables.</td>
+        </tr>
+
+        <tr align="center" valign="middle">
           <td colspan="4" bgcolor="#BBBBBB"><h3>MYSQL</h3></td>
         </tr>
 
@@ -1253,22 +1277,23 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         <tr align="left" valign="middle">
           <td><b>MySQLLogUser</b></td>
 
-          <td>User name logging in to MySQL database.</td>
+          <td>Required non-empty user name for the MySQL log role.</td>
 
           <td>valid user with read/write access to appropriate
           tables in database</td>
 
-          <td>root</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
           <td><b>MySQLLogPassword</b></td>
 
-          <td>Users password.</td>
+          <td>Required password setting. The value may be empty when
+          external authentication is configured.</td>
 
-          <td>correct MySQL password for user</td>
+          <td>runtime-injected secret or explicit empty value</td>
 
-          <td>empty password</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
@@ -1355,22 +1380,23 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         <tr align="left" valign="middle">
           <td><b>PostgreSQLLogUser</b></td>
 
-          <td>User name logging in to PostgreSQL database.</td>
+          <td>Required non-empty user name for the PostgreSQL log role.</td>
 
           <td>valid user with read/write access to appropriate
           tables in database</td>
 
-          <td>postgres</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">
           <td><b>PostgreSQLLogPassword</b></td>
 
-          <td>Users password.</td>
+          <td>Required password setting. The value may be empty when
+          external or peer authentication is configured.</td>
 
-          <td>correct PostgreSQL password for user</td>
+          <td>runtime-injected secret or explicit empty value</td>
 
-          <td>empty password</td>
+          <td>none (required)</td>
         </tr>
 
         <tr align="left" valign="middle">

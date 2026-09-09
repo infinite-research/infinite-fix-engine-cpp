@@ -133,6 +133,9 @@ MessageStore *MySQLStoreFactory::create(const UtcTimeStamp &now, const SessionID
   } else if (m_useDictionary) {
     return create(now, sessionID, m_dictionary);
   } else {
+    if (m_user.empty()) {
+      throw ConfigError(std::string(MYSQL_STORE_USER) + " must not be empty");
+    }
     DatabaseConnectionID id(m_database, m_user, m_password, m_host, m_port);
     return new MySQLStore(now, sessionID, id, m_connectionPoolPtr.get());
   }
@@ -152,13 +155,12 @@ MessageStore *MySQLStoreFactory::create(
     database = settings.getString(MYSQL_STORE_DATABASE);
   } catch (ConfigError &) {}
 
-  try {
-    user = settings.getString(MYSQL_STORE_USER);
-  } catch (ConfigError &) {}
+  user = settings.getString(MYSQL_STORE_USER);
+  password = settings.getString(MYSQL_STORE_PASSWORD);
 
-  try {
-    password = settings.getString(MYSQL_STORE_PASSWORD);
-  } catch (ConfigError &) {}
+  if (user.empty()) {
+    throw ConfigError(std::string(MYSQL_STORE_USER) + " must not be empty");
+  }
 
   try {
     host = settings.getString(MYSQL_STORE_HOST);
@@ -175,8 +177,8 @@ MessageStore *MySQLStoreFactory::create(
 void MySQLStoreFactory::destroy(MessageStore *pStore) { delete pStore; }
 
 bool MySQLStore::set(SEQNUM msgSeqNum, const std::string &msg) EXCEPT(IOException) {
-  char *msgCopy = new char[(msg.size() * 2) + 1];
-  mysql_escape_string(msgCopy, msg.c_str(), msg.size());
+  std::string msgCopy((msg.size() * 2) + 1, '\0');
+  msgCopy.resize(mysql_escape_string(msgCopy.data(), msg.data(), msg.size()));
 
   std::stringstream queryString;
   queryString << "INSERT INTO messages "
@@ -188,12 +190,10 @@ bool MySQLStore::set(SEQNUM msgSeqNum, const std::string &msg) EXCEPT(IOExceptio
               << "\"" << m_sessionID.getSessionQualifier() << "\"," << msgSeqNum << ","
               << "\"" << msgCopy << "\")";
 
-  delete[] msgCopy;
-
   MySQLQuery query(queryString.str());
   if (!m_pConnection->execute(query)) {
     std::stringstream queryString2;
-    queryString2 << "UPDATE messages SET message=\"" << msg << "\" WHERE "
+    queryString2 << "UPDATE messages SET message=\"" << msgCopy << "\" WHERE "
                  << "beginstring=" << "\"" << m_sessionID.getBeginString().getValue() << "\" and "
                  << "sendercompid=" << "\"" << m_sessionID.getSenderCompID().getValue() << "\" and "
                  << "targetcompid=" << "\"" << m_sessionID.getTargetCompID().getValue() << "\" and "
