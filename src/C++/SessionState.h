@@ -220,21 +220,21 @@ public:
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onIncoming(string);
+    m_pLog->onIncoming(redactLogonCredentials(string));
   }
   void onOutgoing(const std::string &string) {
     if (!m_pLog) {
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onOutgoing(string);
+    m_pLog->onOutgoing(redactLogonCredentials(string));
   }
   void onEvent(const std::string &string) {
     if (!m_pLog) {
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onEvent(string);
+    m_pLog->onEvent(redactLogonCredentials(string));
   }
 
 private:

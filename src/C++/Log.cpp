@@ -28,6 +28,35 @@
 namespace FIX {
 Mutex ScreenLog::s_mutex;
 
+std::string redactLogonCredentials(const std::string &value) {
+  std::string result;
+  std::string::size_type copied = 0;
+  std::string::size_type position = 0;
+  while (position < value.size()) {
+    const bool fieldBoundary = position == 0 || value[position - 1] == '\001';
+    const bool credential
+        = fieldBoundary && (value.compare(position, 4, "553=") == 0 || value.compare(position, 4, "554=") == 0);
+    if (!credential) {
+      ++position;
+      continue;
+    }
+
+    const std::string::size_type valueStart = position + 4;
+    result.append(value, copied, valueStart - copied);
+    result += "<redacted>";
+    const std::string::size_type fieldEnd = value.find('\001', valueStart);
+    if (fieldEnd == std::string::npos) {
+      return result;
+    }
+
+    result += '\001';
+    position = copied = fieldEnd + 1;
+  }
+
+  result.append(value, copied, std::string::npos);
+  return result;
+}
+
 Log *ScreenLogFactory::create() {
   bool incoming, outgoing, event;
   init(m_settings.get(), incoming, outgoing, event);

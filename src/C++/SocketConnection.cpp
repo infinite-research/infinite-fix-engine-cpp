@@ -189,7 +189,7 @@ bool SocketConnection::read(SocketAcceptor &acceptor, SocketServer &server) {
   } catch (MessageParseError &e) {
     Log *log = m_pSession ? m_pSession->getLog() : acceptor.getLog();
     if (log) {
-      log->onEvent(e.what());
+      log->onEvent(redactLogonCredentials(e.what()));
     }
     server.getMonitor().drop(m_socket);
   } catch (SocketRecvFailed &e) {

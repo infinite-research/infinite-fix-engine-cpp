@@ -7,6 +7,12 @@ rejected. Use in-process Session methods behind a host-owned authenticated
 management boundary. Physical removal of the HTTP compatibility types is
 deferred to the next ABI-major release.
 
+Engine-generated logs redact FIX Username (553) and Password (554) values.
+FileLog records now escape backslash, carriage return, and line feed bytes and
+serialize writes, clear, and backup operations per log instance.
+POSIX mutex recursion now uses the native recursive mutex type without racy
+manual owner bookkeeping.
+
 Session synchronisation at initiation using tag NextExpectedMsgSeqNum (789)
 
 MillisecondsInTimeStamp=N config correctly disabled milliseconds

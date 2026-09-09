@@ -281,7 +281,7 @@ bool ThreadedSSLSocketConnection::read() {
   } catch (MessageParseError &e) {
     Log *log = m_pSession ? m_pSession->getLog() : m_pLog;
     if (log) {
-      log->onEvent(e.what());
+      log->onEvent(redactLogonCredentials(e.what()));
     }
     if (m_pSession) {
       m_pSession->disconnect();
