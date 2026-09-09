@@ -950,7 +950,22 @@ AppDataDictionary.FIX.4.4=FIX44.xml
           <td><b>FileStorePath</b></td>
 
           <td>Directory to store sequence number and message
-          files.</td>
+          files. FileStore validates the complete header, message-body ranges,
+          positive sequence numbers, and session timestamp before restoring
+          cached state. Invalid, incomplete, or duplicate header records,
+          corrupt metadata, and partial sets of store files cause startup or
+          refresh to fail without resetting or rewriting the artifacts. A
+          failed refresh retains the previously validated cache. A new store
+          (or an empty body file with all metadata absent) can initialize;
+          a non-empty orphan body is rejected. Legacy 32-bit and current
+          sequence-number formats remain readable without conversion during
+          open or refresh. Message reads preserve embedded NUL bytes and the
+          historical Windows CRT text translation; incomplete reads fail.
+          Metadata is read in binary mode so CTRL+Z cannot hide trailing data,
+          and opening artifacts does not remove a trailing CTRL+Z.
+          These checks do not provide encryption or authenticate stored data. Operators remain
+          responsible for access controls, backups, retention, consistent
+          restore procedures, and secure destruction.</td>
 
           <td>valid directory for storing files, must have write
           access</td>

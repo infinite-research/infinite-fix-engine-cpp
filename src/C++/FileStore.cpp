@@ -27,10 +27,18 @@
 #include "Parser.h"
 #include "SessionID.h"
 #include "Utility.h"
+#include <array>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <inttypes.h>
+#include <memory>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #ifdef _MSC_VER
 #define FILE_SEEK _fseeki64
@@ -46,7 +54,6 @@ auto const seqNumFileFormat = "%" + std::to_string(std::numeric_limits<uint64_t>
 
 auto const seqNumPairFileFormat = (seqNumFileFormat + " : " + seqNumFileFormat);
 
-auto constexpr sizeOf64BitSeqNumFile = 43;
 } // namespace
 namespace FIX {
 FileStore::FileStore(const UtcTimeStamp &now, std::string path, const SessionID &sessionID)
@@ -100,131 +107,216 @@ FileStore::~FileStore() {
 }
 
 void FileStore::open(bool deleteFile) {
-  if (m_msgFile) {
-    fclose(m_msgFile);
-  }
-  if (m_headerFile) {
-    fclose(m_headerFile);
-  }
-  if (m_seqNumsFile) {
-    fclose(m_seqNumsFile);
-  }
-  if (m_sessionFile) {
-    fclose(m_sessionFile);
-  }
-
-  m_msgFile = 0;
-  m_headerFile = 0;
-  m_seqNumsFile = 0;
-  m_sessionFile = 0;
-
+  const std::array<FILE **, 4> handles{{&m_msgFile, &m_headerFile, &m_seqNumsFile, &m_sessionFile}};
+  const std::array<std::string, 4> names{{m_msgFileName, m_headerFileName, m_seqNumsFileName, m_sessionFileName}};
   if (deleteFile) {
-    file_unlink(m_msgFileName.c_str());
-    file_unlink(m_headerFileName.c_str());
-    file_unlink(m_seqNumsFileName.c_str());
-    file_unlink(m_sessionFileName.c_str());
+    for (std::size_t i = 0; i < handles.size(); ++i) {
+      if (*handles[i]) {
+        fclose(*handles[i]);
+        *handles[i] = nullptr;
+      }
+      file_unlink(names[i].c_str());
+    }
   }
 
-  populateCache();
-  m_msgFile = file_fopen(m_msgFileName.c_str(), "r+");
-  if (!m_msgFile) {
-    m_msgFile = file_fopen(m_msgFileName.c_str(), "w+");
+  using File = std::unique_ptr<FILE, int (*)(FILE *)>;
+  std::array<File, 4> files{
+      {File(nullptr, fclose), File(nullptr, fclose), File(nullptr, fclose), File(nullptr, fclose)}};
+  std::array<FILE *, 4> previous{};
+  for (std::size_t i = 0; i < files.size(); ++i) {
+    previous[i] = *handles[i];
+#ifdef _MSC_VER
+    // Preserve the existing deny-write share mode during refresh.
+    if (previous[i]) {
+      const int descriptor = _dup(_fileno(previous[i]));
+      if (descriptor == -1) {
+        throw IOException("Could not duplicate file: " + names[i]);
+      }
+      if (_setmode(descriptor, _O_BINARY) == -1) {
+        _close(descriptor);
+        throw IOException("Could not set binary mode for duplicate file: " + names[i]);
+      }
+      files[i].reset(_fdopen(descriptor, "r+b"));
+      if (!files[i]) {
+        _close(descriptor);
+        throw IOException("Could not open duplicate file: " + names[i]);
+      }
+      if (FILE_SEEK(files[i].get(), 0, SEEK_SET)) {
+        throw IOException("Could not rewind file: " + names[i]);
+      }
+    } else
+#endif
+    {
+      files[i].reset(file_fopen(names[i].c_str(), "r+b"));
+      if (!files[i] && errno != ENOENT) {
+        throw IOException("Could not open file: " + names[i] + " " + error_strerror());
+      }
+    }
   }
-  if (!m_msgFile) {
-    throw ConfigError("Could not open body file: " + m_msgFileName + " " + error_strerror());
+  const bool newStore = !files[1] && !files[2] && !files[3] && !previous[0];
+  if (!newStore && (!files[0] || !files[1] || !files[2] || !files[3])) {
+    throw IOException("Incomplete file store artifacts");
   }
-
-  m_headerFile = file_fopen(m_headerFileName.c_str(), "r+");
-  if (!m_headerFile) {
-    m_headerFile = file_fopen(m_headerFileName.c_str(), "w+");
+#ifdef _WIN32
+  // Opening in text mode can truncate a trailing CTRL+Z. Translate only after opening the body safely.
+  if (files[0] && _setmode(_fileno(files[0].get()), _O_TEXT) == -1) {
+    throw IOException("Could not set message body text mode");
   }
-  if (!m_headerFile) {
-    throw ConfigError("Could not open header file: " + m_headerFileName + " " + error_strerror());
+#endif
+  for (std::size_t i = 0; i < files.size(); ++i) {
+    *handles[i] = files[i].get();
   }
-
-  m_seqNumsFile = file_fopen(m_seqNumsFileName.c_str(), "r+");
-  if (!m_seqNumsFile) {
-    m_seqNumsFile = file_fopen(m_seqNumsFileName.c_str(), "w+");
+  const bool newSeqNums = !m_seqNumsFile;
+  const bool newSession = !m_sessionFile;
+  try {
+    populateCache();
+    for (std::size_t i = 0; i < files.size(); ++i) {
+      if (!files[i]) {
+        files[i].reset(file_fopen(names[i].c_str(), "w+bx"));
+        if (!files[i]) {
+          throw IOException("Could not create file: " + names[i] + " " + error_strerror());
+        }
+#ifdef _WIN32
+        if (i == 0 && _setmode(_fileno(files[i].get()), _O_TEXT) == -1) {
+          throw IOException("Could not set message body text mode");
+        }
+#endif
+        *handles[i] = files[i].get();
+      }
+    }
+    if (newSeqNums) {
+      setSeqNum();
+    }
+    if (newSession) {
+      setSession();
+    }
+  } catch (...) {
+    for (std::size_t i = 0; i < handles.size(); ++i) {
+      *handles[i] = previous[i];
+    }
+    throw;
   }
-  if (!m_seqNumsFile) {
-    throw ConfigError("Could not open seqnums file: " + m_seqNumsFileName + " " + error_strerror());
+  for (std::size_t i = 0; i < files.size(); ++i) {
+    if (previous[i]) {
+      fclose(previous[i]);
+    }
+    files[i].release();
   }
-
-  bool setCreationTime = false;
-  m_sessionFile = file_fopen(m_sessionFileName.c_str(), "r");
-  if (!m_sessionFile) {
-    setCreationTime = true;
-  } else {
-    fclose(m_sessionFile);
-  }
-
-  m_sessionFile = file_fopen(m_sessionFileName.c_str(), "r+");
-  if (!m_sessionFile) {
-    m_sessionFile = file_fopen(m_sessionFileName.c_str(), "w+");
-  }
-  if (!m_sessionFile) {
-    throw ConfigError("Could not open session file " + error_strerror());
-  }
-  if (setCreationTime) {
-    setSession();
-  }
-
-  setNextSenderMsgSeqNum(getNextSenderMsgSeqNum());
-  setNextTargetMsgSeqNum(getNextTargetMsgSeqNum());
 }
 
 void FileStore::populateCache() {
-  FILE *headerFile = file_fopen(m_headerFileName.c_str(), "r+");
-  if (headerFile) {
-    SEQNUM msgSeqNum;
-    int64_t offset;
-    std::size_t size;
-
-    while (FILE_FSCANF(headerFile, "%" SCNu64 ",%" SCNi64 ",%zu ", &msgSeqNum, &offset, &size) == 3) {
-      std::pair<NumToOffset::iterator, bool> it
-          = m_offsets.insert(NumToOffset::value_type(msgSeqNum, std::make_pair(offset, size)));
-
-      if (it.second == false) {
-        it.first->second = std::make_pair(offset, size);
-      }
-    }
-    fclose(headerFile);
-  }
-
-  struct stat seqNumsFileStat;
-  FILE *seqNumsFile = file_fopen(m_seqNumsFileName.c_str(), "r+");
-
-  if (seqNumsFile && stat(m_seqNumsFileName.c_str(), &seqNumsFileStat) == 0) {
-    if (seqNumsFileStat.st_size == sizeOf64BitSeqNumFile) {
-      SEQNUM sender, target;
-      if (FILE_FSCANF(seqNumsFile, "%" SCNu64 " : %" SCNu64, &sender, &target) == 2) {
-        m_cache.setNextSenderMsgSeqNum(sender);
-        m_cache.setNextTargetMsgSeqNum(target);
-      }
-    } else // try old int seq num file format
-    {
-      int sender, target;
-      if (FILE_FSCANF(seqNumsFile, "%d : %d", &sender, &target) == 2) {
-        m_cache.setNextSenderMsgSeqNum(sender);
-        m_cache.setNextTargetMsgSeqNum(target);
-      }
-    }
-    fclose(seqNumsFile);
-  }
-
-  FILE *sessionFile = file_fopen(m_sessionFileName.c_str(), "r+");
-  if (sessionFile) {
-    char time[22];
-#ifdef HAVE_FSCANF_S
-    int result = FILE_FSCANF(sessionFile, "%s", time, 22);
+  NumToOffset offsets;
+  MemoryStore cache(m_cache.getCreationTime());
+  uint64_t bodySize = 0;
+  if (m_msgFile) {
+#ifdef _MSC_VER
+    struct _stat64 bodyStat;
+    const int result = _fstat64(_fileno(m_msgFile), &bodyStat);
 #else
-    int result = FILE_FSCANF(sessionFile, "%s", time);
+    struct stat bodyStat;
+    const int result = fstat(fileno(m_msgFile), &bodyStat);
 #endif
-    if (result == 1) {
-      m_cache.setCreationTime(UtcTimeStampConvertor::convert(time));
+    if (result != 0 || bodyStat.st_size < 0) {
+      throw IOException("Unable to stat message body");
     }
-    fclose(sessionFile);
+    bodySize = static_cast<uint64_t>(bodyStat.st_size);
   }
+  if (!m_headerFile && bodySize != 0) {
+    throw IOException("Message body has no header file");
+  }
+
+  const auto skipSpace = [](FILE *file, int &c) {
+    while (c != EOF && std::isspace(static_cast<unsigned char>(c))) {
+      c = fgetc(file);
+    }
+  };
+  const auto readNumber = [](FILE *file, int &c) {
+    std::string digits;
+    while (c >= '0' && c <= '9' && digits.size() < 20) {
+      digits += static_cast<char>(c);
+      c = fgetc(file);
+    }
+    uint64_t value;
+    if (!UInt64Convertor::convert(digits, value)) {
+      throw IOException("Invalid file store number");
+    }
+    return value;
+  };
+
+  if (m_headerFile) {
+    int c = fgetc(m_headerFile);
+    skipSpace(m_headerFile, c);
+    while (c != EOF) {
+      const auto sequence = readNumber(m_headerFile, c);
+      if (c != ',') {
+        throw IOException("Invalid message header row");
+      }
+      c = fgetc(m_headerFile);
+      const auto offset = readNumber(m_headerFile, c);
+      if (c != ',') {
+        throw IOException("Invalid message header row");
+      }
+      c = fgetc(m_headerFile);
+      const auto size = readNumber(m_headerFile, c);
+      if ((c != EOF && !std::isspace(static_cast<unsigned char>(c))) || sequence == 0
+          || offset > static_cast<uint64_t>(INT64_MAX) || size > SIZE_MAX || offset > bodySize
+          || size > bodySize - offset
+          || !offsets.emplace(sequence, OffsetSize(static_cast<int64_t>(offset), static_cast<std::size_t>(size)))
+                  .second) {
+        throw IOException("Invalid message header range or duplicate sequence");
+      }
+      skipSpace(m_headerFile, c);
+    }
+    if (ferror(m_headerFile)) {
+      throw IOException("Unable to read message headers");
+    }
+  }
+
+  if (m_seqNumsFile) {
+    int c = fgetc(m_seqNumsFile);
+    skipSpace(m_seqNumsFile, c);
+    const auto sender = readNumber(m_seqNumsFile, c);
+    skipSpace(m_seqNumsFile, c);
+    if (c != ':') {
+      throw IOException("Invalid sequence number pair");
+    }
+    c = fgetc(m_seqNumsFile);
+    skipSpace(m_seqNumsFile, c);
+    const auto target = readNumber(m_seqNumsFile, c);
+    skipSpace(m_seqNumsFile, c);
+    if (sender == 0 || target == 0 || c != EOF || ferror(m_seqNumsFile)) {
+      throw IOException("Invalid sequence number pair");
+    }
+    cache.setNextSenderMsgSeqNum(sender);
+    cache.setNextTargetMsgSeqNum(target);
+  }
+
+  if (m_sessionFile) {
+    char time[22];
+    int length = 0;
+    int c = fgetc(m_sessionFile);
+    skipSpace(m_sessionFile, c);
+    if (c == EOF || ungetc(c, m_sessionFile) == EOF) {
+      throw IOException("Invalid session timestamp");
+    }
+#ifdef HAVE_FSCANF_S
+    int result = FILE_FSCANF(m_sessionFile, "%21s%n", time, 22, &length);
+#else
+    int result = FILE_FSCANF(m_sessionFile, "%21s%n", time, &length);
+#endif
+    c = fgetc(m_sessionFile);
+    skipSpace(m_sessionFile, c);
+    if (result != 1 || c != EOF || ferror(m_sessionFile)) {
+      throw IOException("Invalid session timestamp");
+    }
+    try {
+      cache.setCreationTime(UtcTimeStampConvertor::convert(std::string(time, length)));
+    } catch (const FieldConvertError &) {
+      throw IOException("Invalid session timestamp");
+    }
+  }
+  m_cache = cache;
+  m_offsets.swap(offsets);
 }
 
 MessageStore *FileStoreFactory::create(const UtcTimeStamp &now, const SessionID &sessionID) {
@@ -324,8 +416,6 @@ void FileStore::reset(const UtcTimeStamp &now) EXCEPT(IOException) {
 
 void FileStore::refresh() EXCEPT(IOException) {
   try {
-    m_cache.reset(UtcTimeStamp::now());
-    m_offsets.clear();
     open(false);
   } catch (std::exception &e) {
     throw IOException(e.what());
@@ -363,15 +453,12 @@ bool FileStore::get(SEQNUM msgSeqNum, std::string &msg) const EXCEPT(IOException
   if (FILE_SEEK(m_msgFile, offset.first, SEEK_SET)) {
     throw IOException("Unable to seek in file " + m_msgFileName);
   }
-  char *buffer = new char[offset.second + 1];
-  size_t result = fread(buffer, sizeof(char), offset.second, m_msgFile);
-  if (ferror(m_msgFile) || result != (size_t)offset.second) {
-    delete[] buffer;
-    throw IOException("Unable to read from file " + m_msgFileName);
+  std::string value(offset.second, '\0');
+  const std::size_t count = fread(value.data(), 1, value.size(), m_msgFile);
+  if (ferror(m_msgFile) || count != value.size()) {
+    throw IOException("Unable to read complete message body");
   }
-  buffer[offset.second] = 0;
-  msg = buffer;
-  delete[] buffer;
+  msg = std::move(value);
   return true;
 }
 
