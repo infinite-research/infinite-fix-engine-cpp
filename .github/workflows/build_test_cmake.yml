@@ -1,8 +1,6 @@
 name: Build with CMake
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -61,7 +59,7 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          cmake --build . --config $Configuration
+          cmake --build . --config $Configuration --parallel 4
         env:
           Configuration: ${{ matrix.configuration }}
       - name: Set tests paths windows

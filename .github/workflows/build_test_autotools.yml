@@ -1,8 +1,6 @@
 name: Build with Autotools
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -58,7 +56,7 @@ jobs:
 
       - name: Make
         shell: bash
-        run:  make
+        run:  make -j4
 
       - name: Make check
         shell: bash

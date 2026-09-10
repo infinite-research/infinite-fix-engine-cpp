@@ -176,8 +176,7 @@ The engine exposes containment through existing session calls:
 
 ## 7. Verification
 
-`.github/workflows/build-security.yml` runs on pushes to master and on manual
-dispatch:
+`.github/workflows/build-security.yml` runs on manual dispatch:
 default and TLS Release unit suites, ASan+UBSan registered tests, a focused
 TSan run for `FileLogTests`, a secret scan limited to generated-PKI
 exclusions, CodeQL analysis without upload, SPDX SBOM generation for source
