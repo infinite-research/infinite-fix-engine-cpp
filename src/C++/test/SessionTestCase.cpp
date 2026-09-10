@@ -1360,55 +1360,34 @@ private:
 };
 
 struct sessionFixture : public TestCallback {
-  sessionFixture() { object = 0; }
+  sessionFixture() = default;
 
-  sessionFixture(int heartBtInt) {
-    object = 0;
-    createSession(heartBtInt);
-  }
-
-  ~sessionFixture() {
-    if (object) {
-      delete object;
-    }
-  }
+  sessionFixture(int heartBtInt) { createSession(heartBtInt); }
 
   virtual void createSession(int heartBtInt, int startDay = -1, int endDay = -1) {
-    if (object) {
-      delete object;
-    }
+    object.reset();
 
     SessionID sessionID(BeginString("FIX.4.2"), SenderCompID("TW"), TargetCompID("ISLD"));
     TimeRange sessionTime(startTime, endTime, startDay, endDay);
 
     DataDictionaryProvider provider;
     provider.addTransportDataDictionary(sessionID.getBeginString(), FIX::TestSettings::pathForSpec("FIX42"));
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, 0);
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, nullptr);
     object->setResponder(this);
   }
 
-  Session *object;
   MemoryStoreFactory factory;
+  std::unique_ptr<Session> object;
 };
 
 struct sessionT11Fixture : public TestCallback {
-  sessionT11Fixture() { object = 0; }
+  sessionT11Fixture() = default;
 
-  sessionT11Fixture(int heartBtInt) {
-    object = 0;
-    createSession(heartBtInt);
-  }
-
-  ~sessionT11Fixture() {
-    if (object) {
-      delete object;
-    }
-  }
+  sessionT11Fixture(int heartBtInt) { createSession(heartBtInt); }
 
   virtual void createSession(int heartBtInt, int startDay = -1, int endDay = -1) {
-    if (object) {
-      delete object;
-    }
+    object.reset();
 
     SessionID sessionID(BeginString("FIXT.1.1"), SenderCompID("TW"), TargetCompID("ISLD"));
     TimeRange sessionTime(startTime, endTime, startDay, endDay);
@@ -1419,33 +1398,23 @@ struct sessionT11Fixture : public TestCallback {
     provider.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX42), FIX::TestSettings::pathForSpec("FIX42"));
     provider.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX40), FIX::TestSettings::pathForSpec("FIX40"));
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, 0);
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, nullptr);
     object->setSenderDefaultApplVerID(FIX::Message::toApplVerID(BeginString("FIX.5.0")));
     object->setResponder(this);
   }
 
-  Session *object;
   MemoryStoreFactory factory;
+  std::unique_ptr<Session> object;
 };
 
 struct sessionFIX40Fixture : public TestCallback {
-  sessionFIX40Fixture() { object = 0; }
+  sessionFIX40Fixture() = default;
 
-  sessionFIX40Fixture(int heartBtInt) {
-    object = 0;
-    createSession(heartBtInt);
-  }
-
-  ~sessionFIX40Fixture() {
-    if (object) {
-      delete object;
-    }
-  }
+  sessionFIX40Fixture(int heartBtInt) { createSession(heartBtInt); }
 
   virtual void createSession(int heartBtInt, int startDay = -1, int endDay = -1) {
-    if (object) {
-      delete object;
-    }
+    object.reset();
 
     SessionID sessionID(BeginString("FIX.4.0"), SenderCompID("TW"), TargetCompID("ISLD"));
     TimeRange sessionTime(startTime, endTime, startDay, endDay);
@@ -1453,12 +1422,13 @@ struct sessionFIX40Fixture : public TestCallback {
     DataDictionaryProvider provider;
     provider.addTransportDataDictionary(sessionID.getBeginString(), FIX::TestSettings::pathForSpec("FIX40"));
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, 0);
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, heartBtInt, nullptr);
     object->setResponder(this);
   }
 
-  Session *object;
   MemoryStoreFactory factory;
+  std::unique_ptr<Session> object;
 };
 
 struct initiatorFIX40Fixture : public sessionFIX40Fixture {
@@ -2736,7 +2706,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
 
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
 
     FIX::Message sentLogon = createLogon("TW", "ISLD", 1);
     object->send(sentLogon);
@@ -2772,7 +2744,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
     provider.addApplicationDataDictionary(ApplVerID("20"), pDataDictionary);
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
     object->setSenderDefaultApplVerID(ApplVerID("20"));
     object->setTargetDefaultApplVerID(ApplVerID("20"));
 
@@ -2844,7 +2818,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     provider.addApplicationDataDictionary(ApplVerID("20"), pDataDictionary);
     provider.addApplicationDataDictionary(ApplVerID(ApplVerID_FIX42), TestSettings::pathForSpec("FIX42"));
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
     object->setSenderDefaultApplVerID(ApplVerID("20"));
     object->setTargetDefaultApplVerID(ApplVerID("20"));
 
@@ -2897,7 +2873,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
     provider.addApplicationDataDictionary(ApplVerID("20"), pDataDictionary);
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
     object->setSenderDefaultApplVerID(ApplVerID("20"));
     object->setTargetDefaultApplVerID(ApplVerID("20"));
 
@@ -2986,7 +2964,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     pDataDictionary->addMsgField(FIX::MsgType_Reject, 115);
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
 
     FIX::Message sentLogon = createLogon("TW", "ISLD", 1);
     object->send(sentLogon);
@@ -3115,7 +3095,9 @@ TEST_CASE_METHOD(initiatorFixture, "InitiatorSessionTestCase") {
     provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
     provider.addApplicationDataDictionary(ApplVerID("20"), pDataDictionary);
 
-    object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+    object.reset();
+    object = std::make_unique<
+        Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
     object->setSenderDefaultApplVerID(ApplVerID("20"));
     object->setTargetDefaultApplVerID(ApplVerID("20"));
 
@@ -4157,7 +4139,9 @@ TEST_CASE_METHOD(initiatorFIX40Fixture, "customFIX40_UnsupportedMessageType_ERRe
 
   provider.addTransportDataDictionary(sessionID.getBeginString(), pDataDictionary);
 
-  object = new Session([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, 0);
+  object.reset();
+  object = std::make_unique<
+      Session>([this]() { return now; }, *this, factory, sessionID, provider, sessionTime, 1, nullptr);
   object->setResponder(this);
 
   FIX::Message sentLogon = createFIX40Logon("TW", "ISLD", 1);
