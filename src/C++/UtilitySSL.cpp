@@ -1491,7 +1491,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bo
   };
   int rc;
   int result = -1;
-  char *subjName = 0;
+  std::unique_ptr<X509, decltype(&X509_free)> peer(nullptr, X509_free);
   time_t timeout = time(0) + 10;
 #ifdef __TOS_AIX__
   int retries = 0;
@@ -1644,8 +1644,6 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bo
       process_sleep(0.01);
     }
 
-    X509 *xs = 0;
-
     /*
      * Check for failed client authentication
      */
@@ -1657,23 +1655,17 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bo
       closeSocket();
       return result;
     } else {
-      if ((xs = SSL_get_peer_certificate(ssl)) != 0) {
-        subjName = X509_NAME_oneline(X509_get_subject_name(xs), 0, 0);
-      }
+      peer.reset(SSL_get_peer_certificate(ssl));
     }
   }
 
-  if ((verify == SSL_CLIENT_VERIFY_REQUIRE) && subjName == 0) {
+  if ((verify == SSL_CLIENT_VERIFY_REQUIRE) && !peer) {
     if (log) {
       log->onEvent("No acceptable peer certificate available");
     }
     SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
     closeSocket();
     result = 2;
-  }
-
-  if (subjName) {
-    free(subjName);
   }
 
   return result;
@@ -1772,19 +1764,18 @@ bool ssl_peer_matches(SSL *ssl, const std::string &name) {
 #ifndef X509_CHECK_FLAG_NEVER_CHECK_SUBJECT
   return false; // Exact SAN-only binding requires native OpenSSL support.
 #else
-  X509 *peer = SSL_get_peer_certificate(ssl);
+  std::unique_ptr<X509, decltype(&X509_free)> peer(SSL_get_peer_certificate(ssl), X509_free);
   if (!peer) {
     return false;
   }
   const std::string address = name.front() == '[' ? name.substr(1, name.size() - 2) : name;
-  const int result = is_ip_address(name) ? X509_check_ip_asc(peer, address.c_str(), 0)
+  const int result = is_ip_address(name) ? X509_check_ip_asc(peer.get(), address.c_str(), 0)
                                          : X509_check_host(
-                                               peer,
+                                               peer.get(),
                                                name.c_str(),
                                                name.size(),
                                                X509_CHECK_FLAG_NO_WILDCARDS | X509_CHECK_FLAG_NEVER_CHECK_SUBJECT,
                                                nullptr);
-  X509_free(peer);
   return result == 1;
 #endif
 }
