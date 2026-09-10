@@ -135,7 +135,9 @@ ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(socket_handle socket, S
       m_pSession(0),
       m_disconnect(false) {
   FD_ZERO(&m_fds);
-  FD_SET(m_socket, &m_fds);
+  if (socket_isValid(m_socket)) {
+    FD_SET(m_socket, &m_fds);
+  }
 }
 
 ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(
@@ -153,7 +155,9 @@ ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(
       m_pSession(Session::lookupSession(sessionID)),
       m_disconnect(false) {
   FD_ZERO(&m_fds);
-  FD_SET(m_socket, &m_fds);
+  if (socket_isValid(m_socket)) {
+    FD_SET(m_socket, &m_fds);
+  }
 }
 
 ThreadedSSLSocketConnection::~ThreadedSSLSocketConnection() {

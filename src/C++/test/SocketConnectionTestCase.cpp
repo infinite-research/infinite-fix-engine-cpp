@@ -50,6 +50,24 @@
 
 using namespace FIX;
 
+#if HAVE_SSL
+TEST_CASE("threaded TLS constructors tolerate invalid sockets", "[socket][ssl]") {
+  SECTION("incoming") {
+    ThreadedSSLSocketConnection connection(INVALID_SOCKET_HANDLE, nullptr, {}, nullptr);
+    CHECK(connection.getSocket() == INVALID_SOCKET_HANDLE);
+    CHECK(connection.getSession() == nullptr);
+  }
+
+  SECTION("outgoing") {
+    const SessionID id("FIX.4.2", "INVALID_SOCKET", "PEER");
+    REQUIRE(Session::lookupSession(id) == nullptr);
+    ThreadedSSLSocketConnection connection(id, INVALID_SOCKET_HANDLE, nullptr, "", 0, nullptr);
+    CHECK(connection.getSocket() == INVALID_SOCKET_HANDLE);
+    CHECK(connection.getSession() == nullptr);
+  }
+}
+#endif
+
 TEST_CASE("connection admission preserves rejected session state", "[admission]") {
   const bool threaded = GENERATE(false, true);
 #if HAVE_SSL
