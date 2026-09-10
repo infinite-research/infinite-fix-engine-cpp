@@ -169,6 +169,31 @@ TEST_CASE("Acceptor asynchronous start cleanup contains exceptions") {
   CHECK_NOTHROW(acceptor.stop(true));
 }
 
+TEST_CASE("Acceptor rollback restores processing after stop failure") {
+  struct ThrowingStopAcceptor : Acceptor {
+    using Acceptor::Acceptor;
+    int stops = 0;
+    void onStart() override {}
+    bool onPoll() override { return false; }
+    void onStop() override {
+      if (stops++ == 0) {
+        throw RuntimeError("rollback cleanup failure");
+      }
+    }
+  };
+  TestApplication application;
+  MemoryStoreFactory stores;
+  auto settings = listenerSettings({{0, "127.0.0.1"}});
+  Dictionary defaults = settings.get();
+  defaults.setInt(HTTP_ACCEPT_PORT, 0);
+  settings.set(defaults);
+  ThrowingStopAcceptor acceptor(application, stores, settings);
+  CHECK_THROWS_AS(acceptor.start(), RuntimeError);
+  CHECK(acceptor.isStopped());
+  CHECK(acceptor.stops == 1);
+  CHECK_NOTHROW(acceptor.stop(true));
+}
+
 TEST_CASE("SocketAcceptor callback stop defers dispatch teardown") {
   const std::string mode = GENERATE("start", "block", "poll");
 #if HAVE_SSL && !defined(_MSC_VER)

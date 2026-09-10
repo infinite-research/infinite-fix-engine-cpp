@@ -186,12 +186,14 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     m_stop = true;
     Acceptor *previous = activeAcceptor;
     activeAcceptor = this;
-    auto guard = sg::make_scope_guard([previous]() { activeAcceptor = previous; });
+    auto guard = sg::make_scope_guard([this, previous]() {
+      m_processing = false;
+      activeAcceptor = previous;
+    });
     if (initialized) {
       onStop();
     }
     HttpServer::stopGlobal();
-    m_processing = false;
     throw;
   }
 }
