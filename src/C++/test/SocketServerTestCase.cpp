@@ -219,4 +219,20 @@ TEST_CASE("SocketServerTests") {
     object.close();
     object.block(strategy);
   }
+
+  SECTION("close and destruction preserve a replacement listener") {
+    TestSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    auto server = std::make_unique<SocketServer>(0);
+    const socket_handle listener = server->add(0, true);
+    const int port = socket_hostport(listener);
+    server->add("127.0.0.1", socket_hostport(reservation.value), true);
+    CHECK(server->numConnections() == 0U);
+    server->close();
+    CHECK(server->numConnections() == 0U);
+    TestSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    REQUIRE(replacement.value != INVALID_SOCKET_HANDLE);
+    server.reset();
+    CHECK(boundAddress(replacement.value) == inet_addr("127.0.0.1"));
+  }
 }

@@ -35,6 +35,9 @@
 #include <memory>
 
 namespace FIX {
+namespace {
+thread_local Acceptor *activeAcceptor = nullptr;
+}
 Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFactory, const SessionSettings &settings)
     EXCEPT(ConfigError)
     : m_threadid(0),
@@ -167,19 +170,25 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
   m_processing = true;
   m_stop = false;
 
+  bool initialized = false;
   try {
     onConfigure(m_settings);
     onInitialize(m_settings);
+    initialized = true;
 
     HttpServer::startGlobal(m_settings);
+
+    if (!thread_spawn(&startThread, this, m_threadid)) {
+      throw RuntimeError("Unable to spawn thread");
+    }
   } catch (...) {
+    m_stop = true;
+    if (initialized) {
+      onStop();
+    }
+    HttpServer::stopGlobal();
     m_processing = false;
     throw;
-  }
-
-  if (!thread_spawn(&startThread, this, m_threadid)) {
-    m_processing = false;
-    throw RuntimeError("Unable to spawn thread");
   }
 }
 
@@ -218,6 +227,7 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
 
 void Acceptor::stop(bool force) {
   if (isStopped()) {
+    joinStartThread();
     return;
   }
 
@@ -244,10 +254,7 @@ void Acceptor::stop(bool force) {
 
   m_stop = true;
   onStop();
-  if (m_threadid) {
-    thread_join(m_threadid);
-  }
-  m_threadid = 0;
+  joinStartThread();
 
   for (Session *session : enabledSessions) {
     session->logon();
@@ -264,10 +271,34 @@ bool Acceptor::isLoggedOn() const {
   return false;
 }
 
+void Acceptor::joinStartThread() {
+  if (activeAcceptor != this && m_threadid) {
+    thread_join(m_threadid);
+    m_threadid = 0;
+  }
+}
+
 THREAD_PROC Acceptor::startThread(void *p) {
   Acceptor *pAcceptor = static_cast<Acceptor *>(p);
-  auto guard = sg::make_scope_guard([pAcceptor]() { pAcceptor->m_processing = false; });
-  pAcceptor->onStart();
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = pAcceptor;
+  auto guard = sg::make_scope_guard([pAcceptor, previous]() {
+    pAcceptor->m_processing = false;
+    activeAcceptor = previous;
+  });
+  try {
+    pAcceptor->onStart();
+  } catch (const std::exception &e) {
+    pAcceptor->m_stop = true;
+    pAcceptor->onStop();
+    HttpServer::stopGlobal();
+    pAcceptor->getLog()->onEvent(e.what());
+  } catch (...) {
+    pAcceptor->m_stop = true;
+    pAcceptor->onStop();
+    HttpServer::stopGlobal();
+    pAcceptor->getLog()->onEvent("Unknown exception in acceptor start thread");
+  }
   return 0;
 }
 } // namespace FIX

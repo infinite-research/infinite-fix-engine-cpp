@@ -63,8 +63,10 @@ public:
 
   SocketServer(int timeout = 0);
 
+  /// Add a listener on all local IPv4 interfaces.
   socket_handle add(int port, bool reuse = false, bool noDelay = false, int sendBufSize = 0, int rcvBufSize = 0)
       EXCEPT(SocketException &);
+  /// Add a listener on a numeric local IPv4 address; an empty address binds all interfaces.
   socket_handle add(
       const std::string &address,
       int port,
@@ -73,10 +75,11 @@ public:
       int sendBufSize = 0,
       int rcvBufSize = 0) EXCEPT(SocketException &);
   socket_handle accept(socket_handle socket);
+  /// Close all listeners. Must not run concurrently with block().
   void close();
   bool block(Strategy &strategy, bool poll = 0, double timeout = 0.0);
 
-  size_t numConnections() { return m_monitor.numSockets() - 1; }
+  size_t numConnections() { return m_monitor.numSockets() - m_socketToInfo.size(); }
   SocketMonitor &getMonitor() { return m_monitor; }
 
   int socketToPort(socket_handle socket);

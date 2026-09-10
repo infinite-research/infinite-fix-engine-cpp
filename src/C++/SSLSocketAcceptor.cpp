@@ -140,7 +140,7 @@ SSLSocketAcceptor::SSLSocketAcceptor(
     MessageStoreFactory &factory,
     const SessionSettings &settings) EXCEPT(ConfigError)
     : Acceptor(application, factory, settings),
-      m_pServer(0),
+      m_pServer(nullptr),
       m_sslInit(false),
       m_verify(SSL_CLIENT_VERIFY_NOTSET),
       m_ctx(0),
@@ -152,7 +152,7 @@ SSLSocketAcceptor::SSLSocketAcceptor(
     const SessionSettings &settings,
     LogFactory &logFactory) EXCEPT(ConfigError)
     : Acceptor(application, factory, settings, logFactory),
-      m_pServer(0),
+      m_pServer(nullptr),
       m_sslInit(false),
       m_verify(SSL_CLIENT_VERIFY_NOTSET),
       m_ctx(0),
@@ -254,7 +254,7 @@ void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXC
     }
 
     m_portToSessions.swap(portToSessions);
-    m_pServer = server.release();
+    m_pServer = std::move(server);
   } catch (SocketException &e) {
     throw RuntimeError(
         "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
@@ -280,9 +280,7 @@ void SSLSocketAcceptor::onStart() {
     }
   }
 
-  m_pServer->close();
-  delete m_pServer;
-  m_pServer = 0;
+  m_pServer.reset();
 }
 
 bool SSLSocketAcceptor::onPoll() {
@@ -311,7 +309,10 @@ bool SSLSocketAcceptor::onPoll() {
   return true;
 }
 
-void SSLSocketAcceptor::onStop() {}
+void SSLSocketAcceptor::onStop() {
+  joinStartThread();
+  m_pServer.reset();
+}
 
 void SSLSocketAcceptor::onConnect(SocketServer &server, socket_handle a, socket_handle s) {
   if (!socket_isValid(s)) {

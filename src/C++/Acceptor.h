@@ -111,6 +111,9 @@ private:
   MessageStoreFactory &m_messageStoreFactory;
 
 protected:
+  /// Wait for the start loop before releasing transport resources; safe from the start loop itself.
+  void joinStartThread();
+
   SessionSettings m_settings;
 
 private:

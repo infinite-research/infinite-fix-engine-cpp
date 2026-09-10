@@ -33,6 +33,7 @@
 #include <SSLSocketAcceptor.h>
 #include <ThreadedSSLSocketAcceptor.h>
 #endif
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -55,12 +56,6 @@ int listenerPort(socket_handle socket) {
   socklen_t size = sizeof(address);
   REQUIRE(getsockname(socket, reinterpret_cast<sockaddr *>(&address), &size) == 0);
   return ntohs(address.sin_port);
-}
-
-int availablePort() {
-  ListenerSocket listener(socket_createAcceptor("127.0.0.1", 0, true));
-  REQUIRE(listener.value != INVALID_SOCKET_HANDLE);
-  return listenerPort(listener.value);
 }
 
 SessionSettings listenerSettings(const std::vector<std::pair<int, std::string>> &listeners) {
@@ -122,20 +117,20 @@ TEST_CASE("SocketAcceptor bind settings") {
   MemoryStoreFactory stores;
 
   SECTION("configured address is forwarded") {
-    const int port = availablePort();
+    ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int port = listenerPort(reservation.value);
     auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
     if (threaded) {
       acceptor->block();
     } else {
       acceptor->start();
     }
-    ListenerSocket sibling(socket_createAcceptor("127.0.0.2", port, true));
-    CHECK(sibling.value != INVALID_SOCKET_HANDLE);
     acceptor->stop(true);
   }
 
   SECTION("invalid address is rejected before listening") {
-    const int port = availablePort();
+    const int port = 0;
     auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "localhost"}}));
     CHECK_THROWS_AS(acceptor->start(), ConfigError);
     ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
@@ -144,7 +139,7 @@ TEST_CASE("SocketAcceptor bind settings") {
   }
 
   SECTION("sessions sharing a port reject different addresses") {
-    const int port = availablePort();
+    const int port = 0;
     auto acceptor
         = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, ""}, {port, "127.0.0.1"}}));
     CHECK_THROWS_AS(acceptor->start(), ConfigError);
@@ -154,20 +149,18 @@ TEST_CASE("SocketAcceptor bind settings") {
   }
 
   SECTION("empty and explicit wildcard addresses share a listener") {
-    const int port = availablePort();
+    const int port = 0;
     auto acceptor
         = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, ""}, {port, "0.0.0.0"}}));
-    if (threaded) {
-      CHECK_NOTHROW(acceptor->block());
-    } else {
-      CHECK_NOTHROW(acceptor->start());
-    }
+    CHECK_NOTHROW(acceptor->start());
     acceptor->stop(true);
   }
 
   SECTION("failed initialization publishes no listener") {
-    const int firstPort = availablePort();
-    ListenerSocket occupied(socket_createAcceptor("127.0.0.1", 0, true));
+    ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int firstPort = listenerPort(reservation.value);
+    ListenerSocket occupied(socket_createAcceptor("", 0, true));
     REQUIRE(occupied.value != INVALID_SOCKET_HANDLE);
     const int occupiedPort = listenerPort(occupied.value);
     auto acceptor = listenerAcceptor(
@@ -181,6 +174,81 @@ TEST_CASE("SocketAcceptor bind settings") {
     CHECK(replacement.value != INVALID_SOCKET_HANDLE);
     acceptor->stop(true);
   }
+
+  SECTION("startup failure after initialization releases the listener") {
+    ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int port = listenerPort(reservation.value);
+    auto settings = listenerSettings({{port, "127.0.0.1"}});
+    Dictionary defaults = settings.get();
+    defaults.setInt(HTTP_ACCEPT_PORT, 0);
+    settings.set(defaults);
+    auto acceptor = listenerAcceptor(threaded, tls, application, stores, settings);
+    CHECK_THROWS_AS(acceptor->start(), ConfigError);
+    CHECK(acceptor->isStopped());
+    acceptor.reset();
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+  }
+
+  SECTION("poll stop and destruction release the listener") {
+    if (!threaded) {
+      ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+      REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+      const int port = listenerPort(reservation.value);
+      auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
+      CHECK(acceptor->poll());
+      acceptor->stop(true);
+      ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+      CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+      acceptor.reset();
+      CHECK(listenerPort(replacement.value) == port);
+    }
+  }
+}
+
+TEST_CASE("SocketAcceptor thread spawn failure", "[.]") {
+  // Run with test/fail-thread-spawn.gdb, which fails exactly one thread_spawn call.
+  const bool threaded = std::getenv("QUICKFIX_TEST_THREADED") != nullptr;
+  const bool tls = std::getenv("QUICKFIX_TEST_TLS") != nullptr;
+  const bool worker = std::getenv("QUICKFIX_TEST_WORKER") != nullptr;
+  const bool asynchronous = std::getenv("QUICKFIX_TEST_ASYNC") != nullptr;
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ListenerSocket first(socket_createAcceptor("127.0.0.2", 0, true));
+  ListenerSocket second(socket_createAcceptor("127.0.0.2", 0, true));
+  REQUIRE(first.value != INVALID_SOCKET_HANDLE);
+  REQUIRE(second.value != INVALID_SOCKET_HANDLE);
+  const int firstPort = listenerPort(first.value);
+  const int secondPort = listenerPort(second.value);
+  auto acceptor = listenerAcceptor(
+      threaded,
+      tls,
+      application,
+      stores,
+      listenerSettings({{firstPort, "127.0.0.1"}, {secondPort, "127.0.0.1"}}));
+  if (asynchronous) {
+    acceptor->start();
+    for (int retry = 0; retry < 1000 && !acceptor->isStopped(); ++retry) {
+      process_sleep(0.001);
+    }
+    const bool failed = acceptor->isStopped();
+    acceptor->stop(true);
+    CHECK(failed);
+  } else if (worker) {
+    acceptor->block();
+  } else {
+    CHECK_THROWS_AS(acceptor->start(), RuntimeError);
+  }
+  CHECK(acceptor->isStopped());
+  {
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", firstPort, true));
+    ListenerSocket other(socket_createAcceptor("127.0.0.1", secondPort, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+    CHECK(other.value != INVALID_SOCKET_HANDLE);
+  }
+  CHECK_NOTHROW(acceptor->start());
+  acceptor->stop(true);
 }
 
 TEST_CASE("SocketAcceptorTests") {

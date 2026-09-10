@@ -35,7 +35,7 @@ namespace FIX {
 SocketAcceptor::SocketAcceptor(Application &application, MessageStoreFactory &factory, const SessionSettings &settings)
     EXCEPT(ConfigError)
     : Acceptor(application, factory, settings),
-      m_pServer(0) {}
+      m_pServer(nullptr) {}
 
 SocketAcceptor::SocketAcceptor(
     Application &application,
@@ -43,7 +43,7 @@ SocketAcceptor::SocketAcceptor(
     const SessionSettings &settings,
     LogFactory &logFactory) EXCEPT(ConfigError)
     : Acceptor(application, factory, settings, logFactory),
-      m_pServer(0) {}
+      m_pServer(nullptr) {}
 
 SocketAcceptor::~SocketAcceptor() {
   SocketConnections::iterator iter;
@@ -104,7 +104,7 @@ void SocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT
 
     m_portToSessions.swap(portToSessions);
     m_sessionToPort.swap(sessionToPort);
-    m_pServer = server.release();
+    m_pServer = std::move(server);
   } catch (SocketException &e) {
     throw RuntimeError(
         "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
@@ -130,9 +130,7 @@ void SocketAcceptor::onStart() {
     }
   }
 
-  m_pServer->close();
-  delete m_pServer;
-  m_pServer = 0;
+  m_pServer.reset();
 }
 
 bool SocketAcceptor::onPoll() {
@@ -162,9 +160,8 @@ bool SocketAcceptor::onPoll() {
 }
 
 void SocketAcceptor::onStop() {
-  if (m_pServer) {
-    m_pServer->close();
-  }
+  joinStartThread();
+  m_pServer.reset();
 }
 
 void SocketAcceptor::onConnect(SocketServer &server, socket_handle a, socket_handle s) {

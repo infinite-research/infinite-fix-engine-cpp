@@ -238,7 +238,8 @@ socket_handle socket_createAcceptor(const std::string &value, int port, bool reu
     socket_setsockopt(socket, SO_REUSEADDR);
   }
 
-  if (bind(socket, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == BIND_SOCKET_ERROR) {
+  if (bind(socket, reinterpret_cast<sockaddr *>(&address), static_cast<socklen_t>(sizeof(address)))
+      == BIND_SOCKET_ERROR) {
 #ifdef _MSC_VER
     socketError = WSAGetLastError();
 #else

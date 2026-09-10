@@ -130,6 +130,7 @@
 #include "Acceptor.h"
 #include "SSLSocketConnection.h"
 #include "SocketServer.h"
+#include <memory>
 
 namespace FIX {
 /// Socket implementation of Acceptor.
@@ -170,7 +171,7 @@ private:
   void onError(SocketServer &);
   void onTimeout(SocketServer &);
 
-  SocketServer *m_pServer;
+  std::unique_ptr<SocketServer> m_pServer;
   PortToSessions m_portToSessions;
   SocketConnections m_connections;
 

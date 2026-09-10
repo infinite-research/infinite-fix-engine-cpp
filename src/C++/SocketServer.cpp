@@ -112,7 +112,17 @@ socket_handle SocketServer::add(
   if (socket == INVALID_SOCKET_HANDLE) {
     throw SocketException();
   }
-  auto cleanup = sg::make_scope_guard([&]() { socket_close(socket); });
+  bool socketMapped = false;
+  bool portMapped = false;
+  auto cleanup = sg::make_scope_guard([&]() {
+    if (portMapped) {
+      m_portToInfo.erase(port);
+    }
+    if (socketMapped) {
+      m_socketToInfo.erase(socket);
+    }
+    socket_close(socket);
+  });
   if (noDelay) {
     socket_setsockopt(socket, TCP_NODELAY);
   }
@@ -122,12 +132,19 @@ socket_handle SocketServer::add(
   if (rcvBufSize) {
     socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
   }
-  m_monitor.addRead(socket);
-  cleanup.dismiss();
-
   SocketInfo info(socket, port, noDelay, sendBufSize, rcvBufSize);
-  m_socketToInfo[socket] = info;
-  m_portToInfo[port] = info;
+  socketMapped = m_socketToInfo.emplace(socket, info).second;
+  if (!socketMapped) {
+    throw SocketException("Accept socket is already registered");
+  }
+  portMapped = m_portToInfo.emplace(port, info).second;
+  if (!portMapped) {
+    throw SocketException("Accept port is already registered");
+  }
+  if (!m_monitor.addRead(socket)) {
+    throw SocketException("Unable to monitor accept socket");
+  }
+  cleanup.dismiss();
   return socket;
 }
 
@@ -152,13 +169,16 @@ socket_handle SocketServer::accept(socket_handle socket) {
 
 void SocketServer::close() {
   for (const SocketToInfo::value_type &socketWithInfo : m_socketToInfo) {
-    socket_handle socket = socketWithInfo.first;
-    socket_close(socket);
-    socket_invalidate(socket);
+    m_monitor.drop(socketWithInfo.first, false);
   }
+  m_socketToInfo.clear();
+  m_portToInfo.clear();
 }
 
 bool SocketServer::block(Strategy &strategy, bool poll, double timeout) {
+  if (m_socketToInfo.empty()) {
+    return false;
+  }
   std::set<socket_handle> sockets;
   for (const SocketToInfo::value_type &socketWithInfo : m_socketToInfo) {
     if (!socket_isValid(socketWithInfo.first)) {

@@ -134,19 +134,28 @@ void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings
 }
 
 void ThreadedSocketAcceptor::onStart() {
+  Locker l(m_mutex);
+  if (isStopped()) {
+    return;
+  }
   for (const Sockets::value_type &socket : m_sockets) {
-    Locker l(m_mutex);
     int port = m_socketToPort[socket];
-    AcceptorThreadInfo *info = new AcceptorThreadInfo(this, socket, port);
-    thread_id thread;
-    thread_spawn(&socketAcceptorThread, info, thread);
-    addThread(socket, thread);
+    auto info = std::make_unique<AcceptorThreadInfo>(this, socket, port);
+    auto worker = m_threads.emplace(socket, thread_id{}).first;
+    auto cleanup = sg::make_scope_guard([&]() { m_threads.erase(worker); });
+    if (!thread_spawn(&socketAcceptorThread, info.get(), worker->second)) {
+      throw RuntimeError("Unable to spawn acceptor listener thread");
+    }
+    info.release();
+    cleanup.dismiss();
   }
 }
 
 bool ThreadedSocketAcceptor::onPoll() { return false; }
 
 void ThreadedSocketAcceptor::onStop() {
+  joinStartThread();
+  Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
 
@@ -163,12 +172,17 @@ void ThreadedSocketAcceptor::onStop() {
       }
     }
 
-    threads = m_threads;
-    m_threads.clear();
+    sockets.swap(m_sockets);
+    threads.swap(m_threads);
   }
 
+  for (const socket_handle socket : sockets) {
+    socket_close(socket);
+  }
   for (i = threads.begin(); i != threads.end(); ++i) {
-    socket_close(i->first);
+    if (sockets.find(i->first) == sockets.end()) {
+      socket_close(i->first);
+    }
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);
@@ -226,6 +240,13 @@ THREAD_PROC ThreadedSocketAcceptor::socketAcceptorThread(void *p) {
     {
       Locker l(pAcceptor->m_mutex);
 
+      if (pAcceptor->isStopped()) {
+        delete info;
+        delete pConnection;
+        socket_close(socket);
+        break;
+      }
+
       std::stringstream stream;
       stream << "Accepted connection from " << socket_peername(socket) << " on port " << port;
 
@@ -237,6 +258,7 @@ THREAD_PROC ThreadedSocketAcceptor::socketAcceptorThread(void *p) {
       if (!thread_spawn(&socketConnectionThread, info, thread)) {
         delete info;
         delete pConnection;
+        socket_close(socket);
       } else {
         pAcceptor->addThread(socket, thread);
       }

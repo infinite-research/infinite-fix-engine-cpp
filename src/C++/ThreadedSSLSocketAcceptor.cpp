@@ -290,20 +290,28 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
 }
 
 void ThreadedSSLSocketAcceptor::onStart() {
-  Sockets::iterator i;
-  for (i = m_sockets.begin(); i != m_sockets.end(); ++i) {
-    Locker l(m_mutex);
-    int port = m_socketToPort[*i];
-    AcceptorThreadInfo *info = new AcceptorThreadInfo(this, *i, port);
-    thread_id thread;
-    thread_spawn(&socketAcceptorThread, info, thread);
-    addThread(SocketKey(*i, 0), thread);
+  Locker l(m_mutex);
+  if (isStopped()) {
+    return;
+  }
+  for (const socket_handle socket : m_sockets) {
+    int port = m_socketToPort[socket];
+    auto info = std::make_unique<AcceptorThreadInfo>(this, socket, port);
+    auto worker = m_threads.emplace(SocketKey(socket, nullptr), thread_id{}).first;
+    auto cleanup = sg::make_scope_guard([&]() { m_threads.erase(worker); });
+    if (!thread_spawn(&socketAcceptorThread, info.get(), worker->second)) {
+      throw RuntimeError("Unable to spawn acceptor listener thread");
+    }
+    info.release();
+    cleanup.dismiss();
   }
 }
 
 bool ThreadedSSLSocketAcceptor::onPoll() { return false; }
 
 void ThreadedSSLSocketAcceptor::onStop() {
+  joinStartThread();
+  Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
 
@@ -320,12 +328,17 @@ void ThreadedSSLSocketAcceptor::onStop() {
       }
     }
 
-    threads = m_threads;
-    m_threads.clear();
+    sockets.swap(m_sockets);
+    threads.swap(m_threads);
   }
 
+  for (const socket_handle socket : sockets) {
+    socket_close(socket);
+  }
   for (i = threads.begin(); i != threads.end(); ++i) {
-    ssl_socket_close(i->first.first, i->first.second);
+    if (sockets.find(i->first.first) == sockets.end()) {
+      ssl_socket_close(i->first.first, i->first.second);
+    }
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);
@@ -396,6 +409,13 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketAcceptorThread(void *p) {
 
     {
       Locker l(pAcceptor->m_mutex);
+
+      if (pAcceptor->isStopped()) {
+        delete info;
+        delete pConnection;
+        SSL_free(ssl);
+        break;
+      }
 
       std::stringstream stream;
       stream << "Accepted connection from " << socket_peername(socket) << " on port " << port;

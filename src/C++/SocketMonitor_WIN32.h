@@ -54,6 +54,7 @@ public:
 
 private:
   friend class ConnectorWrapper;
+  friend class SocketServer;
   bool drop(socket_handle socket, bool notify);
   typedef std::set<socket_handle> Sockets;
   typedef std::queue<socket_handle> Queue;
