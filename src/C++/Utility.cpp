@@ -553,7 +553,11 @@ bool thread_spawn(THREAD_START_ROUTINE func, void *var, thread_id &thread) {
 
 bool thread_spawn(THREAD_START_ROUTINE func, void *var) {
   thread_id thread = 0;
-  return thread_spawn(func, var, thread);
+  if (!thread_spawn(func, var, thread)) {
+    return false;
+  }
+  thread_detach(thread);
+  return true;
 }
 
 void thread_join(thread_id thread) {
