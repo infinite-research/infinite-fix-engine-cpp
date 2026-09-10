@@ -130,7 +130,7 @@ void SocketAcceptor::onStart() {
     }
   }
 
-  m_pServer.reset();
+  onStop();
 }
 
 bool SocketAcceptor::onPoll() {
@@ -156,11 +156,21 @@ bool SocketAcceptor::onPoll() {
   }
 
   m_pServer->block(*this, true);
+  if (isStopped()) {
+    onStop();
+    return false;
+  }
   return true;
 }
 
 void SocketAcceptor::onStop() {
   joinStartThread();
+  if (m_pServer && m_pServer->isDispatching()) {
+    return;
+  }
+  while (!m_connections.empty()) {
+    SocketAcceptor::onDisconnect(*m_pServer, m_connections.begin()->first);
+  }
   m_pServer.reset();
 }
 

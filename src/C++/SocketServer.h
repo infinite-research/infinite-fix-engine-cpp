@@ -86,6 +86,10 @@ public:
   socket_handle portToSocket(int port);
 
 private:
+  friend class SocketAcceptor;
+  friend class SSLSocketAcceptor;
+  bool isDispatching() const;
+
   typedef std::map<socket_handle, SocketInfo> SocketToInfo;
   typedef std::map<int, SocketInfo> PortToInfo;
 

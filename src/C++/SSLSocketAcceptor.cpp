@@ -280,7 +280,7 @@ void SSLSocketAcceptor::onStart() {
     }
   }
 
-  m_pServer.reset();
+  onStop();
 }
 
 bool SSLSocketAcceptor::onPoll() {
@@ -306,11 +306,21 @@ bool SSLSocketAcceptor::onPoll() {
   }
 
   m_pServer->block(*this, true);
+  if (isStopped()) {
+    onStop();
+    return false;
+  }
   return true;
 }
 
 void SSLSocketAcceptor::onStop() {
   joinStartThread();
+  if (m_pServer && m_pServer->isDispatching()) {
+    return;
+  }
+  while (!m_connections.empty()) {
+    SSLSocketAcceptor::onDisconnect(*m_pServer, m_connections.begin()->first);
+  }
   m_pServer.reset();
 }
 
@@ -335,7 +345,7 @@ void SSLSocketAcceptor::onConnect(SocketServer &server, socket_handle a, socket_
 
   SSLSocketConnection *sconn = new SSLSocketConnection(s, ssl, sessions, &server.getMonitor());
   // SSL accept
-  if (acceptSSLConnection(sconn->getSocket(), sconn->sslObject(), getLog(), m_verify) != 0) {
+  if (acceptSSLConnection(sconn->getSocket(), sconn->sslObject(), getLog(), m_verify, false) != 0) {
     std::stringstream stream;
     stream << "Failed to accept SSL connection from " << socket_peername(s) << " on port " << port;
     if (getLog()) {

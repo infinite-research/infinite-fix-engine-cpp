@@ -44,9 +44,14 @@ SocketMonitor::SocketMonitor(int timeout)
 }
 
 SocketMonitor::~SocketMonitor() {
-  Sockets::iterator i;
-  for (i = m_readSockets.begin(); i != m_readSockets.end(); ++i) {
-    socket_close(*i);
+  while (!m_readSockets.empty()) {
+    drop(*m_readSockets.begin(), false);
+  }
+  while (!m_connectSockets.empty()) {
+    drop(*m_connectSockets.begin(), false);
+  }
+  while (!m_writeSockets.empty()) {
+    drop(*m_writeSockets.begin(), false);
   }
 
   socket_close(m_signal);
@@ -92,16 +97,13 @@ bool SocketMonitor::addWrite(socket_handle s) {
 
 bool SocketMonitor::drop(socket_handle s) { return drop(s, true); }
 
-bool SocketMonitor::drop(socket_handle s, bool notify) {
-  Sockets::iterator i = m_readSockets.find(s);
-  Sockets::iterator j = m_writeSockets.find(s);
-  Sockets::iterator k = m_connectSockets.find(s);
+bool SocketMonitor::release(socket_handle s) {
+  return m_readSockets.erase(s) + m_writeSockets.erase(s) + m_connectSockets.erase(s) != 0;
+}
 
-  if (i != m_readSockets.end() || j != m_writeSockets.end() || k != m_connectSockets.end()) {
+bool SocketMonitor::drop(socket_handle s, bool notify) {
+  if (release(s)) {
     socket_close(s);
-    m_readSockets.erase(s);
-    m_writeSockets.erase(s);
-    m_connectSockets.erase(s);
     if (notify) {
       m_dropped.push(s);
     }

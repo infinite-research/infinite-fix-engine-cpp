@@ -5,6 +5,13 @@ set confirm off
 set breakpoint pending on
 set debuginfod enabled off
 set $spawn_count = 0
+set $join_count = 0
+break FIX::thread_join(unsigned long)
+commands
+  silent
+  set $join_count = $join_count + 1
+  continue
+end
 break FIX::thread_spawn(void* (*)(void*), void*, unsigned long&)
 commands
   silent
@@ -15,4 +22,8 @@ commands
   continue
 end
 run
+if $_exitcode == 0 && $join_count != $spawn_count - 1
+  printf "Unreaped spawned thread: %d successful spawns, %d joins\n", $spawn_count - 1, $join_count
+  quit 1
+end
 quit $_exitcode

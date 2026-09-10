@@ -1475,6 +1475,15 @@ int doAccept(SSL *ssl, int &result) {
 }
 
 int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
+  return acceptSSLConnection(socket, ssl, log, verify, true);
+}
+
+int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bool closeOnFailure) {
+  auto closeSocket = [&]() {
+    if (closeOnFailure) {
+      ssl_socket_close(socket, ssl);
+    }
+  };
   int rc;
   int result = -1;
   char *subjName = 0;
@@ -1503,7 +1512,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
           log->onEvent("SSL handshake stopped: connection was closed");
         }
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       } else if (ERR_GET_REASON(ERR_peek_error()) == SSL_R_HTTP_REQUEST) {
         /*
@@ -1539,7 +1548,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         } while (rv > 0 && ca[0] != '\012' /*LF*/);
 
         SSL_set_shutdown(ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         ;
         return result;
       } else if (result == SSL_ERROR_SYSCALL) {
@@ -1591,7 +1600,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         }
 #endif
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       } else {
         /*
@@ -1616,7 +1625,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
          * - kick away the SSL stuff immediately
          */
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       }
       if (time(0) > timeout) {
@@ -1624,7 +1633,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
           log->onEvent("SSL handshake stopped: connection was closed");
         }
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       }
       process_sleep(0.01);
@@ -1640,7 +1649,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         log->onEvent("SSL client authentication failed: ");
       }
       SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-      ssl_socket_close(socket, ssl);
+      closeSocket();
       return result;
     } else {
       if ((xs = SSL_get_peer_certificate(ssl)) != 0) {
@@ -1654,7 +1663,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
       log->onEvent("No acceptable peer certificate available");
     }
     SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-    ssl_socket_close(socket, ssl);
+    closeSocket();
     result = 2;
   }
 

@@ -164,7 +164,9 @@ SSLSocketConnection::~SSLSocketConnection() {
     Session::unregisterSession(m_pSession->getSessionID());
   }
 
-  ssl_socket_close(m_socket, m_ssl);
+  if (!m_pMonitor || m_pMonitor->release(m_socket)) {
+    ssl_socket_close(m_socket, m_ssl);
+  }
 
   SSL_free(m_ssl);
 }

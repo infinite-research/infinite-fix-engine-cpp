@@ -167,6 +167,7 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::start called when already processing messages");
   }
 
+  joinStartThread();
   m_processing = true;
   m_stop = false;
 
@@ -183,6 +184,9 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     }
   } catch (...) {
     m_stop = true;
+    Acceptor *previous = activeAcceptor;
+    activeAcceptor = this;
+    auto guard = sg::make_scope_guard([previous]() { activeAcceptor = previous; });
     if (initialized) {
       onStop();
     }
@@ -197,12 +201,29 @@ void Acceptor::block() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::block called when already processing messages");
   }
 
+  joinStartThread();
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  auto guard = sg::make_scope_guard([this, previous]() {
+    m_processing = false;
+    activeAcceptor = previous;
+  });
   m_processing = true;
   m_stop = false;
-  onConfigure(m_settings);
-  onInitialize(m_settings);
-
-  startThread(this);
+  bool initialized = false;
+  try {
+    onConfigure(m_settings);
+    onInitialize(m_settings);
+    initialized = true;
+    onStart();
+  } catch (...) {
+    m_stop = true;
+    if (initialized) {
+      onStop();
+    }
+    HttpServer::stopGlobal();
+    throw;
+  }
 }
 
 bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
@@ -210,19 +231,30 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::poll called when already processing messages");
   }
 
-  {
-    auto guard = sg::make_scope_guard([this]() { m_processing = false; });
-
-    m_processing = true;
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  auto guard = sg::make_scope_guard([this, previous]() {
+    m_processing = false;
+    activeAcceptor = previous;
+  });
+  m_processing = true;
+  bool initialized = !m_firstPoll;
+  try {
     if (m_firstPoll) {
       m_stop = false;
       onConfigure(m_settings);
       onInitialize(m_settings);
       m_firstPoll = false;
+      initialized = true;
     }
+    return onPoll();
+  } catch (...) {
+    m_stop = true;
+    if (initialized) {
+      onStop();
+    }
+    throw;
   }
-
-  return onPoll();
 }
 
 void Acceptor::stop(bool force) {
@@ -272,9 +304,16 @@ bool Acceptor::isLoggedOn() const {
 }
 
 void Acceptor::joinStartThread() {
-  if (activeAcceptor != this && m_threadid) {
+  if (activeAcceptor == this) {
+    return;
+  }
+  if (m_threadid) {
     thread_join(m_threadid);
     m_threadid = 0;
+  } else {
+    while (m_processing) {
+      process_sleep(0.001);
+    }
   }
 }
 
@@ -286,18 +325,35 @@ THREAD_PROC Acceptor::startThread(void *p) {
     pAcceptor->m_processing = false;
     activeAcceptor = previous;
   });
+  auto log = [pAcceptor](const char *message) noexcept {
+    try {
+      pAcceptor->getLog()->onEvent(message);
+    } catch (...) {}
+  };
+  auto stop = [pAcceptor, &log](const char *message) noexcept {
+    pAcceptor->m_stop = true;
+    try {
+      pAcceptor->onStop();
+    } catch (const std::exception &e) {
+      log(e.what());
+    } catch (...) {
+      log("Unknown exception stopping acceptor start thread");
+    }
+    try {
+      HttpServer::stopGlobal();
+    } catch (const std::exception &e) {
+      log(e.what());
+    } catch (...) {
+      log("Unknown exception stopping global HTTP server");
+    }
+    log(message);
+  };
   try {
     pAcceptor->onStart();
   } catch (const std::exception &e) {
-    pAcceptor->m_stop = true;
-    pAcceptor->onStop();
-    HttpServer::stopGlobal();
-    pAcceptor->getLog()->onEvent(e.what());
+    stop(e.what());
   } catch (...) {
-    pAcceptor->m_stop = true;
-    pAcceptor->onStop();
-    HttpServer::stopGlobal();
-    pAcceptor->getLog()->onEvent("Unknown exception in acceptor start thread");
+    stop("Unknown exception in acceptor start thread");
   }
   return 0;
 }

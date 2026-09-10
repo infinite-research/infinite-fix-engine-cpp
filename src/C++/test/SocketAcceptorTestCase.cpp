@@ -33,7 +33,13 @@
 #include <SSLSocketAcceptor.h>
 #include <ThreadedSSLSocketAcceptor.h>
 #endif
+#include <atomic>
 #include <cstdlib>
+#include <future>
+#ifdef __linux__
+#include <fcntl.h>
+#include <filesystem>
+#endif
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -49,6 +55,30 @@ struct ListenerSocket {
   ~ListenerSocket() { socket_close(value); }
 
   socket_handle value;
+};
+
+template <typename Transport> struct CallbackStopAcceptor : Transport {
+  using Transport::Transport;
+  std::atomic<int> callbacks{0};
+  void onConnect(SocketServer &server, socket_handle, socket_handle socket) override {
+    server.getMonitor().addRead(socket);
+  }
+  bool onData(SocketServer &, socket_handle) override { return false; }
+  void onDisconnect(SocketServer &, socket_handle) override {
+    this->stop(true);
+    ++callbacks;
+  }
+};
+
+template <typename Transport> struct ExternalStopAcceptor : Transport {
+  using Transport::Transport;
+  std::promise<void> entered;
+  std::future<void> proceed;
+  void onTimeout(SocketServer &server) override {
+    entered.set_value();
+    proceed.wait();
+    server.getMonitor().numSockets();
+  }
 };
 
 int listenerPort(socket_handle socket) {
@@ -104,6 +134,242 @@ std::unique_ptr<Acceptor> listenerAcceptor(
   return std::make_unique<SocketAcceptor>(application, stores, settings);
 }
 } // namespace
+
+TEST_CASE("Acceptor synchronous start errors propagate") {
+  struct ThrowingAcceptor : Acceptor {
+    using Acceptor::Acceptor;
+    bool cleaned = false;
+    void onStart() override { throw RuntimeError("synchronous startup failure"); }
+    bool onPoll() override { return false; }
+    void onStop() override { cleaned = true; }
+  };
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ThrowingAcceptor acceptor(application, stores, listenerSettings({{0, "127.0.0.1"}}));
+  CHECK_THROWS_AS(acceptor.block(), RuntimeError);
+  CHECK(acceptor.isStopped());
+  CHECK(acceptor.cleaned);
+}
+
+TEST_CASE("Acceptor asynchronous start cleanup contains exceptions") {
+  struct ThrowingAcceptor : Acceptor {
+    using Acceptor::Acceptor;
+    void onStart() override { throw RuntimeError("asynchronous startup failure"); }
+    bool onPoll() override { return false; }
+    void onStop() override { throw RuntimeError("asynchronous cleanup failure"); }
+  };
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ThrowingAcceptor acceptor(application, stores, listenerSettings({{0, "127.0.0.1"}}));
+  acceptor.start();
+  for (int retry = 0; retry < 1000 && !acceptor.isStopped(); ++retry) {
+    process_sleep(0.001);
+  }
+  CHECK(acceptor.isStopped());
+  CHECK_NOTHROW(acceptor.stop(true));
+}
+
+TEST_CASE("SocketAcceptor callback stop defers dispatch teardown") {
+  const std::string mode = GENERATE("start", "block", "poll");
+#if HAVE_SSL && !defined(_MSC_VER)
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  CAPTURE(mode, tls);
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+  const int port = listenerPort(reservation.value);
+  auto settings = listenerSettings({{port, "127.0.0.1"}});
+  auto exercise = [&](auto &acceptor) {
+    auto peer = std::async(std::launch::async, [port]() {
+      for (int retry = 0; retry < 1000; ++retry) {
+        ListenerSocket socket(socket_createConnector());
+        if (socket_connect(socket.value, "127.0.0.1", port) == 0) {
+          return socket_send(socket.value, "x", 1) == 1;
+        }
+        process_sleep(0.001);
+      }
+      return false;
+    });
+    if (mode == "block") {
+      acceptor.block();
+    } else {
+      if (mode == "start") {
+        acceptor.start();
+      }
+      for (int retry = 0; retry < 1000 && !acceptor.callbacks; ++retry) {
+        if (mode == "poll") {
+          acceptor.poll();
+        }
+        process_sleep(0.001);
+      }
+    }
+    acceptor.stop(true);
+    CHECK(peer.get());
+    CHECK(acceptor.callbacks == 1);
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+  };
+#if HAVE_SSL && !defined(_MSC_VER)
+  if (tls) {
+    CallbackStopAcceptor<SSLSocketAcceptor> acceptor(application, stores, settings);
+    exercise(acceptor);
+  } else
+#endif
+  {
+    CallbackStopAcceptor<SocketAcceptor> acceptor(application, stores, settings);
+    exercise(acceptor);
+  }
+}
+
+TEST_CASE("SocketAcceptor external stop waits for dispatch") {
+  const bool polling = GENERATE(false, true);
+#if HAVE_SSL && !defined(_MSC_VER)
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  CAPTURE(polling, tls);
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+  const int port = listenerPort(reservation.value);
+  const auto settings = listenerSettings({{port, "127.0.0.1"}});
+  auto exercise = [&](auto &acceptor) {
+    std::promise<void> proceed;
+    acceptor.proceed = proceed.get_future();
+    auto entered = acceptor.entered.get_future();
+    auto worker = std::async(std::launch::async, [&]() {
+      if (polling) {
+        acceptor.poll();
+      } else {
+        acceptor.block();
+      }
+    });
+    entered.wait();
+    auto stopper = std::async(std::launch::async, [&]() { acceptor.stop(true); });
+    while (!acceptor.isStopped()) {
+      process_sleep(0.001);
+    }
+    CHECK(stopper.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout);
+    proceed.set_value();
+    stopper.get();
+    worker.get();
+    ListenerSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+    CHECK(replacement.value != INVALID_SOCKET_HANDLE);
+  };
+#if HAVE_SSL && !defined(_MSC_VER)
+  if (tls) {
+    ExternalStopAcceptor<SSLSocketAcceptor> acceptor(application, stores, settings);
+    exercise(acceptor);
+  } else
+#endif
+  {
+    ExternalStopAcceptor<SocketAcceptor> acceptor(application, stores, settings);
+    exercise(acceptor);
+  }
+}
+
+#ifdef __linux__
+TEST_CASE("SocketAcceptor accepted poll connection teardown") {
+  const bool promoted = GENERATE(false, true);
+#if HAVE_SSL && !defined(_MSC_VER)
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  CAPTURE(tls, promoted);
+  TestApplication application;
+  MemoryStoreFactory stores;
+  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
+  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+  const int port = listenerPort(reservation.value);
+  auto acceptor = listenerAcceptor(false, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
+  REQUIRE(acceptor->poll());
+  ListenerSocket client(socket_createConnector());
+  REQUIRE(socket_connect(client.value, "127.0.0.1", port) == 0);
+  timeval timeout{2, 0};
+  REQUIRE(setsockopt(client.value, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+  REQUIRE(setsockopt(client.value, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+#if HAVE_SSL && !defined(_MSC_VER)
+  auto context = std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)>(SSL_CTX_new(TLS_method()), SSL_CTX_free);
+  auto secure = std::unique_ptr<SSL, decltype(&SSL_free)>(SSL_new(context.get()), SSL_free);
+  SSL_set_fd(secure.get(), client.value);
+  std::future<int> handshake;
+  if (tls) {
+    handshake = std::async(std::launch::async, [&]() { return SSL_connect(secure.get()); });
+  }
+#endif
+  REQUIRE(acceptor->poll());
+#if HAVE_SSL && !defined(_MSC_VER)
+  if (tls) {
+    REQUIRE(handshake.get() == 1);
+  }
+#endif
+  if (promoted) {
+    REQUIRE(acceptor->poll());
+  }
+  socket_handle accepted = INVALID_SOCKET_HANDLE;
+  const int clientPort = listenerPort(client.value);
+  for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+    const int candidate = std::stoi(entry.path().filename().string());
+    sockaddr_in address{};
+    socklen_t size = sizeof(address);
+    if (getpeername(candidate, reinterpret_cast<sockaddr *>(&address), &size) == 0
+        && ntohs(address.sin_port) == clientPort) {
+      accepted = candidate;
+      break;
+    }
+  }
+  REQUIRE(accepted != INVALID_SOCKET_HANDLE);
+  acceptor->stop(true);
+  CHECK(fcntl(accepted, F_GETFD) == -1);
+  ListenerSocket first(socket_createAcceptor("127.0.0.1", port, true));
+  REQUIRE(first.value != INVALID_SOCKET_HANDLE);
+  if (first.value != accepted) {
+    REQUIRE(dup2(first.value, accepted) == accepted);
+    socket_close(first.value);
+    first.value = accepted;
+  }
+  acceptor.reset();
+  CHECK(listenerPort(first.value) == port);
+}
+#endif
+
+#if HAVE_SSL && defined(__linux__)
+TEST_CASE("SSLSocketConnection and monitor share descriptor ownership") {
+  const bool monitorFirst = GENERATE(false, true);
+  auto monitor = std::make_unique<SocketMonitor>();
+  const socket_handle socket = socket_createConnector();
+  REQUIRE(socket != INVALID_SOCKET_HANDLE);
+  REQUIRE(monitor->addRead(socket));
+  auto context = std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)>(SSL_CTX_new(TLS_method()), SSL_CTX_free);
+  auto connection = std::make_unique<SSLSocketConnection>(
+      socket,
+      SSL_new(context.get()),
+      SSLSocketConnection::Sessions{},
+      monitor.get());
+  if (monitorFirst) {
+    REQUIRE(monitor->drop(socket));
+  } else {
+    connection.reset();
+  }
+  ListenerSocket replacement(socket_createAcceptor("127.0.0.1", 0, true));
+  REQUIRE(replacement.value != INVALID_SOCKET_HANDLE);
+  if (replacement.value != socket) {
+    REQUIRE(dup2(replacement.value, socket) == socket);
+    socket_close(replacement.value);
+    replacement.value = socket;
+  }
+  connection.reset();
+  monitor.reset();
+  CHECK(listenerPort(replacement.value) != 0);
+}
+#endif
 
 TEST_CASE("SocketAcceptor bind settings") {
   const bool threaded = GENERATE(false, true);
@@ -233,10 +499,9 @@ TEST_CASE("SocketAcceptor thread spawn failure", "[.]") {
       process_sleep(0.001);
     }
     const bool failed = acceptor->isStopped();
-    acceptor->stop(true);
     CHECK(failed);
   } else if (worker) {
-    acceptor->block();
+    CHECK_THROWS_AS(acceptor->block(), RuntimeError);
   } else {
     CHECK_THROWS_AS(acceptor->start(), RuntimeError);
   }
@@ -247,7 +512,16 @@ TEST_CASE("SocketAcceptor thread spawn failure", "[.]") {
     CHECK(replacement.value != INVALID_SOCKET_HANDLE);
     CHECK(other.value != INVALID_SOCKET_HANDLE);
   }
-  CHECK_NOTHROW(acceptor->start());
+  bool restarted = false;
+  for (int retry = 0; retry < 1000 && !restarted; ++retry) {
+    try {
+      acceptor->start();
+      restarted = true;
+    } catch (const RuntimeError &) {
+      process_sleep(0.001);
+    }
+  }
+  CHECK(restarted);
   acceptor->stop(true);
 }
 

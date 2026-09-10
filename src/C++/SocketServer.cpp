@@ -36,6 +36,13 @@
 #include <exception>
 
 namespace FIX {
+namespace {
+struct ServerDispatch {
+  const SocketServer *server;
+  ServerDispatch *previous;
+};
+thread_local ServerDispatch *activeDispatch = nullptr;
+} // namespace
 /// Handles events from SocketMonitor for server connections.
 class ServerWrapper : public SocketMonitor::Strategy {
 public:
@@ -188,8 +195,20 @@ bool SocketServer::block(Strategy &strategy, bool poll, double timeout) {
   }
 
   ServerWrapper wrapper(sockets, *this, strategy);
+  ServerDispatch dispatch{this, activeDispatch};
+  activeDispatch = &dispatch;
+  auto guard = sg::make_scope_guard([&]() { activeDispatch = dispatch.previous; });
   m_monitor.block(wrapper, poll, timeout);
   return true;
+}
+
+bool SocketServer::isDispatching() const {
+  for (auto dispatch = activeDispatch; dispatch; dispatch = dispatch->previous) {
+    if (dispatch->server == this) {
+      return true;
+    }
+  }
+  return false;
 }
 
 int SocketServer::socketToPort(socket_handle socket) {
