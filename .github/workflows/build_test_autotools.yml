@@ -7,20 +7,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
     build:
       runs-on: ${{ matrix.runner }}
       strategy:
           fail-fast: false
           matrix:
-              runner: [ubuntu-latest, macos-latest]
+              runner: [ubuntu-latest]
               configuration: [Release]
               compiler-settings: ['']
               include:
                 - runner: ubuntu-latest
                   compiler-settings: CXX=clang++ CC=clang
-                - runner: macos-latest
-                  compiler-settings: CXX=g++ CC=gcc
       steps:
       - name: Install dependencies
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

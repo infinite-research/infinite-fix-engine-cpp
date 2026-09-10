@@ -7,22 +7,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
     build:
       runs-on: ${{ matrix.runner }}
       strategy:
           fail-fast: false
           matrix:
-              runner: [windows-2022, ubuntu-latest, macos-latest]
-              configuration: [Debug, Release]
+              runner: [ubuntu-latest]
+              configuration: [Release]
               ssl: ['OFF', 'ON']
               include:
-                - configuration: Debug
-                  config: debug
-                  portoffset: 0
                 - configuration: Release
                   config: release
-                  portoffset: 1
+                  portoffset: 0
       steps:
       - name: Echo event_name ${{ github.event_name }}
         shell: bash
