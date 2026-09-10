@@ -348,7 +348,7 @@ private:
   bool getIfSet(FIELD &field) const { return (MAP).getFieldIfSet(field); }
 
 /// Legacy spelling: returns an independent typed value, not a stored reference.
-#define FIELD_GET_REF(MAP, FLD) (MAP).getField<FIX::FLD>()
+#define FIELD_GET_REF(MAP, FLD) (MAP).template getField<FIX::FLD>()
 #define FIELD_THROW_IF_NOT_FOUND(MAP, FLD)                                                                             \
   if (!(MAP).isSetField(FIX::FIELD::FLD))                                                                              \
   throw FieldNotFound(FIX::FIELD::FLD)

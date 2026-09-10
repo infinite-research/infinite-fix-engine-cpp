@@ -33,6 +33,10 @@
 
 using namespace FIX;
 
+namespace {
+template <typename Map> Symbol getSymbol(const Map &map) { return FIELD_GET_REF(map, Symbol); }
+} // namespace
+
 TEST_CASE("FieldMapTests") {
   SECTION("typed retrieval returns independent real fields") {
     FieldMap fields;
@@ -58,8 +62,10 @@ TEST_CASE("FieldMapTests") {
     CHECK_FALSE(fields.getFieldOptional<ClOrdID>().has_value());
     CHECK(fields.getFieldOptional<Symbol>()->getValue() == "IBM");
     const auto &macroSymbol = FIELD_GET_REF(fields, Symbol);
+    const auto &dependentSymbol = getSymbol(fields);
     fields.setField(Symbol("ORCL"));
     CHECK(macroSymbol.getValue() == "IBM");
+    CHECK(dependentSymbol.getValue() == "IBM");
   }
 
   SECTION("move assignment releases previously owned groups") {
