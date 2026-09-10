@@ -1412,11 +1412,7 @@ bool loadCAInfo(
 X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log, std::string &errStr) {
   errStr.erase();
 
-  X509_STORE *revocationStore = 0;
-
   log->onEvent("Loading CRL information");
-
-  errStr.erase();
 
   std::string crlFile;
   if (settings.get().has(CERTIFICATE_REVOCATION_LIST_FILE)) {
@@ -1433,10 +1429,10 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
         || settings.get().has(CERTIFICATE_REVOCATION_LIST_DIRECTORY)) {
       errStr = "Configured certificate revocation list is empty";
     }
-    return revocationStore;
+    return 0;
   }
 
-  // The SSL context owns the store on legacy OpenSSL as well as modern OpenSSL.
+  // The SSL context owns this store (non-owning result); callers must not free it.
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
   X509_LOOKUP *lookup = store ? X509_STORE_add_lookup(store, X509_LOOKUP_file()) : nullptr;
   if (!lookup || (!crlFile.empty() && X509_load_crl_file(lookup, crlFile.c_str(), X509_FILETYPE_PEM) <= 0)
@@ -1467,7 +1463,7 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
     }
   }
 
-  return revocationStore;
+  return store;
 }
 
 int doAccept(SSL *ssl, int &result) {
