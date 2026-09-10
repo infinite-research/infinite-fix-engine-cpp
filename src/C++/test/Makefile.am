@@ -25,6 +25,7 @@ ut_SOURCES = \
 	HostDetailsProviderTestCase.cpp \
 	HttpMessageTestCase.cpp \
 	HttpParserTestCase.cpp \
+	HttpServerTestCase.cpp \
 	InfiniteCompleteFrameTestCase.cpp \
 	InfiniteFrameAdapterTestCase.cpp \
 	MemoryStoreTestCase.cpp \
@@ -56,6 +57,17 @@ ut_SOURCES = \
 	UtcTimeOnlyTestCase.cpp \
 	UtcTimeStampTestCase.cpp \
 	UtilityTestCase.cpp
+
+if HAVE_SSL
+quickfix_test_pki = $(abs_top_builddir)/test-runtime/certs/server.crt
+BUILT_SOURCES = $(quickfix_test_pki)
+
+ut_SOURCES += UtilitySSLTestCase.cpp TLSVerificationTestCase.cpp
+
+$(quickfix_test_pki): $(top_srcdir)/test/generate-test-pki.sh
+	$(MKDIR_P) $(abs_top_builddir)/test-runtime/certs
+	$(SHELL) $(top_srcdir)/test/generate-test-pki.sh $(abs_top_builddir)/test-runtime/certs
+endif
 	
 AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	'-DINFINITE_COMPLETE_FRAME_FIXTURE_PATH="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"' \
@@ -63,7 +75,8 @@ AM_CPPFLAGS = -DCATCH_AMALGAMATED_CUSTOM_MAIN \
 	-I$(top_srcdir)/src/C++ \
 	-I..
 
-ut_CPPFLAGS = $(AM_CPPFLAGS) -DIRFQ_INFINITE_TEST_SUPPORT=1
+ut_CPPFLAGS = $(AM_CPPFLAGS) -DIRFQ_INFINITE_TEST_SUPPORT=1 \
+	'-DQUICKFIX_TEST_PKI="$(abs_top_builddir)/test-runtime/certs"'
 
 check-local:
 	@fixture="$(abs_top_srcdir)/test/fixtures/complete-frame-gate.v1.tsv"; \

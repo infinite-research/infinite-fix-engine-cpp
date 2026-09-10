@@ -4,6 +4,9 @@ on:
     branches: [master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
     build:
       runs-on: ${{ matrix.runner }}
@@ -27,7 +30,9 @@ jobs:
         env:
           event_name: ${{ github.event_name }}
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install OpenSSL (macOS)
         if: matrix.ssl == 'ON' && matrix.runner == 'macos-latest'
         run: brew install openssl
@@ -45,7 +50,8 @@ jobs:
       - name: Generate
         shell: bash
         run: |
-          cmake . -DCMAKE_BUILD_TYPE=$Configuration -DCMAKE_INSTALL_PREFIX=../install_prefix/$Configuration \
+          cmake . -DCMAKE_BUILD_TYPE=$Configuration \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install_prefix/$Configuration" \
             -DHAVE_SSL=$SSL ${OPENSSL_ROOT_DIR:+-DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"}
         env:
           Configuration: ${{ matrix.configuration }}
@@ -130,17 +136,36 @@ jobs:
         shell: bash
         working-directory: ./test
         run: |
-          ./runat.sh $(($PortBase + $Offset))
+          RESULT=0
+          ./runat.sh nonthreaded $(($PortBase + $Offset)) || RESULT=$?
+          ./runat.sh threaded $(($ThreadedPortBase + $Offset)) || {
+            LANE_RESULT=$?
+            if [ "$RESULT" -eq 0 ]; then
+              RESULT=$LANE_RESULT
+            fi
+          }
+          exit "$RESULT"
         env:
           PortBase: 6666
+          ThreadedPortBase: 6668
           Offset: ${{ matrix.portoffset }}
       - name: Run performance tests
         if: ${{ env.pt_check == 'true' && matrix.configuration == 'Release' }}
         shell: bash
         working-directory: ./test
         run: |
-          $pt --quickfix-spec-path ../spec -# "~[network]"
-          $pt --quickfix-spec-path ../spec -# "[network]" --port $(($PortBase + $Offset))
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            ulimit -c 0
+          fi
+          RESULT=0
+          "$pt" --quickfix-spec-path "$GITHUB_WORKSPACE/spec" -# "~[network]" || RESULT=$?
+          "$pt" --quickfix-spec-path "$GITHUB_WORKSPACE/spec" -# "[network]" --port $(($PortBase + $Offset)) || {
+            LANE_RESULT=$?
+            if [ "$RESULT" -eq 0 ]; then
+              RESULT=$LANE_RESULT
+            fi
+          }
+          exit "$RESULT"
         env:
           pt: ${{ env.pt }}
           PortBase: 6668
@@ -150,6 +175,10 @@ jobs:
         shell: bash
         working-directory: ./test
         run: |
-          $ut --quickfix-config-file cfg/ut.cfg --quickfix-spec-path ../spec
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            ulimit -c 0
+          fi
+          "$ut" --quickfix-config-file "$GITHUB_WORKSPACE/test/cfg/ut.cfg" \
+            --quickfix-spec-path "$GITHUB_WORKSPACE/spec"
         env:
           ut: ${{ env.ut }}

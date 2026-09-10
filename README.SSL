@@ -126,3 +126,6 @@ Production certificate issuance, secure key storage, renewal, expiry
 monitoring and timely CRL updates belong to the deployment. Contexts load
 files at initialization; restart/recreate the transport to apply renewed
 certificates, trust or CRLs, preserving FIX sequence/store files.
+
+The complete trust model, per-finding control matrix, and deployment control
+ownership are recorded in SECURITY_ARCHITECTURE.md.

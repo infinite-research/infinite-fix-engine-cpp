@@ -17,3 +17,9 @@ Please include:
 - A description of the vulnerability and its impact
 - Steps to reproduce or a proof of concept
 - Any suggested mitigations if known
+
+## Security Architecture
+
+Trust boundaries, data classification, the per-finding control matrix, and the
+split of controls between the engine and the deploying host are recorded in
+[SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md).

@@ -100,14 +100,26 @@ if (QUICKFIX_TESTS)
     
   target_link_libraries(ut ${PROJECT_NAME})
 
-  add_test(
-    NAME infinite_complete_frame_dispatcher
-    COMMAND ut "InfiniteCompleteFrameDispatcherTests"
-               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
-  add_test(
-    NAME infinite_frame_adapter
-    COMMAND ut "[infinite][adapter][v2]"
-               --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+  function(add_quickfix_unit_test test_name)
+    if(WIN32)
+      add_test(
+        NAME ${test_name}
+        COMMAND ut ${ARGN}
+                   --quickfix-config-file ${PROJECT_SOURCE_DIR}/test/cfg/ut.cfg
+                   --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+    else()
+      add_test(
+        NAME ${test_name}
+        COMMAND sh -c "ulimit -c 0 || exit 1; exec \"\$@\"" quickfix-unit
+                   $<TARGET_FILE:ut> ${ARGN}
+                   --quickfix-config-file ${PROJECT_SOURCE_DIR}/test/cfg/ut.cfg
+                   --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
+    endif()
+    set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime)
+  endfunction()
+
+  add_quickfix_unit_test(infinite_complete_frame_dispatcher "InfiniteCompleteFrameDispatcherTests")
+  add_quickfix_unit_test(infinite_frame_adapter "[infinite][adapter][v2]")
   if(IRFQ_INFINITE_EMBED_DICTIONARIES)
     function(_irfq_attach_installed_consumer)
       set(_irfq_consumer_root "${CMAKE_BINARY_DIR}/infinite-adapter-installed-consumer")
@@ -153,10 +165,12 @@ if (QUICKFIX_TESTS)
       PROPERTIES FIXTURES_REQUIRED irfq_infinite_adapter_installed_consumer
                  TIMEOUT 30)
   endif()
-  add_test(
-    NAME quickfix_unit
-    COMMAND ut --quickfix-spec-path ${PROJECT_SOURCE_DIR}/spec)
-  set_tests_properties(quickfix_unit PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/test-runtime)
+  add_quickfix_unit_test(quickfix_unit)
+
+  if(HAVE_SSL AND NOT WIN32)
+    add_quickfix_unit_test(quickfix_tls_transport "TLSVerificationTests")
+    set_tests_properties(quickfix_tls_transport PROPERTIES LABELS "network;tls" RUN_SERIAL TRUE TIMEOUT 180)
+  endif()
 
   if (NOT WIN32)
     add_test(
@@ -164,6 +178,29 @@ if (QUICKFIX_TESTS)
       COMMAND sh ${PROJECT_SOURCE_DIR}/test/AcceptanceHarnessTest.sh
                  ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR})
     set_tests_properties(infinite_acceptance_harness_contract PROPERTIES TIMEOUT 30)
+    add_test(
+      NAME infinite_performance_harness_contract
+      COMMAND sh ${PROJECT_SOURCE_DIR}/test/PerformanceHarnessTest.sh
+                 ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+    set_tests_properties(infinite_performance_harness_contract PROPERTIES TIMEOUT 30)
+
+    if(QUICKFIX_EXAMPLES)
+      add_test(
+        NAME quickfix_acceptance_nonthreaded
+        COMMAND ${CMAKE_COMMAND} -E env
+                QUICKFIX_TEST_SRCDIR=${PROJECT_SOURCE_DIR}/test
+                QUICKFIX_TEST_BUILDDIR=${CMAKE_BINARY_DIR}/test
+                sh ${PROJECT_SOURCE_DIR}/test/runat.sh nonthreaded 6666)
+      add_test(
+        NAME quickfix_acceptance_threaded
+        COMMAND ${CMAKE_COMMAND} -E env
+                QUICKFIX_TEST_SRCDIR=${PROJECT_SOURCE_DIR}/test
+                QUICKFIX_TEST_BUILDDIR=${CMAKE_BINARY_DIR}/test
+                sh ${PROJECT_SOURCE_DIR}/test/runat.sh threaded 6667)
+      set_tests_properties(
+        quickfix_acceptance_nonthreaded quickfix_acceptance_threaded
+        PROPERTIES LABELS "acceptance;network" RUN_SERIAL TRUE TIMEOUT 600)
+    endif()
   endif()
   
   if (NOT WIN32)
