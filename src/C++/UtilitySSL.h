@@ -183,7 +183,7 @@ extern "C" {
 typedef int (*passPhraseHandleCallbackType)(char *, int, int, void *);
 
 int caListX509NameCmp(const X509_NAME *const *a, const X509_NAME *const *b);
-STACK_OF(X509_NAME) * findCAList(const char *cpCAfile, const char *cpCApath);
+struct stack_st_X509_NAME *findCAList(const char *cpCAfile, const char *cpCApath);
 int lookupX509Store(X509_STORE *pStore, int nType, X509_NAME *pName, X509_OBJECT *pObj);
 int callbackVerify(int ok, X509_STORE_CTX *ctx);
 int callbackVerifyCRL(int ok, X509_STORE_CTX *ctx, X509_STORE *revStore);

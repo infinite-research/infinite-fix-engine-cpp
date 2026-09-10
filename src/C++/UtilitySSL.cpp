@@ -703,7 +703,7 @@ int typeofSSLAlgo(X509 *pCert, EVP_PKEY *pKey) {
   return t;
 }
 
-STACK_OF(X509_NAME) * findCAList(const char *cpCAfile, const char *cpCApath) {
+struct stack_st_X509_NAME *findCAList(const char *cpCAfile, const char *cpCApath) {
   STACK_OF(X509_NAME) * skCAList;
   STACK_OF(X509_NAME) * sk;
 #ifndef HAVE_ACE_DIRENT
