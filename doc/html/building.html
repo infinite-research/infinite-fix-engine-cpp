@@ -104,6 +104,28 @@ sudo make install
     <code>QUICKFIX_TEST_BUILDDIR</code> when its legacy test scripts run from a
     separate build tree; direct script callers must supply the same two paths.</p>
 
+    <h2>Rebuilding consumers after the typed-access safety update</h2>
+    <p>Rebuild QuickFIX and every C++ consumer together. Public inline and template
+    code has changed; mixing old and new headers or consumer objects is unsupported.
+    Object layouts and exported library symbols are preserved, but this is not a
+    mixed-header binary compatibility guarantee.</p>
+    <ul>
+      <li><code>getField&lt;T&gt;()</code> and the legacy <code>FIELD_GET_REF</code>
+      macro now return independent typed values. Use <code>auto field = map.getField&lt;T&gt;()</code>;
+      subsequent map mutations do not change that value.</li>
+      <li><code>FIELD_GET_PTR</code> is removed because stored fields are sliced
+      <code>FieldBase</code> objects. Migrate to <code>getField&lt;T&gt;()</code> or
+      <code>getFieldOptional&lt;T&gt;()</code> for optional value retrieval.</li>
+      <li>Version messages inherit <code>FIX::Header&amp;</code> and
+      <code>FIX::Trailer&amp;</code> accessors. The <code>set/get/isSet/getIfSet</code>
+      convenience methods accept any field class. Version Header/Trailer classes
+      and their nested group names remain available for standalone use.</li>
+      <li>Crackers construct genuine typed callback objects. Mutable callback
+      changes are transferred back on return and when a callback throws. Callback
+      references are valid only during the callback; retaining them is unsupported.
+      If transferring changes itself throws, that exception propagates normally.</li>
+    </ul>
+
     <h2>CMake Build Options</h2>
     <table>
       <tr>

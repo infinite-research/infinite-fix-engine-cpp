@@ -30,6 +30,7 @@ ut_SOURCES = \
 	MemoryStoreTestCase.cpp \
 	MessageSortersTestCase.cpp \
 	MessagesTestCase.cpp \
+	MessageCrackerTestCase.cpp \
 	MessageStoreTestCase.h \
 	MySQLStoreTestCase.cpp \
 	NullStoreTestCase.cpp \

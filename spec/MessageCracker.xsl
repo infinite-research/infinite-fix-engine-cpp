@@ -43,6 +43,7 @@
 
 #include "../SessionID.h"
 #include "../Exceptions.h"
+#include &lt;utility&gt;
 <xsl:choose>
 <xsl:when test="//fix/@servicepack='0'">
 #include "../<xsl:value-of select="$lowertype"/><xsl:value-of select="//fix/@major"/><xsl:value-of select="//fix/@minor"/>/Message.h"
@@ -52,6 +53,9 @@
 </xsl:otherwise>
 </xsl:choose>
 
+<xsl:for-each select="//fix/messages/message">#include "<xsl:value-of select="@name"/>.h"
+</xsl:for-each>
+
 <xsl:choose>
 <xsl:when test="//fix/@servicepack='0'">
 namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xsl:value-of select="//fix/@minor"/>
@@ -60,7 +64,7 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
 namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xsl:value-of select="//fix/@minor"/>SP<xsl:value-of select="//fix/@servicepack"/>
 </xsl:otherwise>
 </xsl:choose>
-{ <xsl:call-template name="forward-declarations"/>
+{
 
   class MessageCracker
   {
@@ -77,10 +81,6 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
 }
 
 #endif
-</xsl:template>
-
-<xsl:template name="forward-declarations"><xsl:for-each select="//fix/messages/message"> 
-  class <xsl:value-of select="@name"/>;</xsl:for-each>
 </xsl:template>
 
 <xsl:template name="virtual-const-functions">
@@ -101,7 +101,15 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
 
 <xsl:template name="switch-statement">
 public:
+  /// Preserve the version-message entry point while dispatching genuine typed values.
   void crack( const Message&amp; message, 
+              const FIX::SessionID&amp; sessionID )
+  {
+    crack( static_cast&lt;const FIX::Message&amp;&gt;(message), sessionID );
+  }
+
+  /// Dispatch a generic message without assuming a derived object lifetime.
+  void crack( const FIX::Message&amp; message,
               const FIX::SessionID&amp; sessionID )
   {
     const std::string &amp; msgTypeValue 
@@ -109,12 +117,20 @@ public:
     
     <xsl:for-each select="//fix/messages/message">
     if( msgTypeValue == "<xsl:value-of select="@msgtype"/>" )
-      return onMessage( (const <xsl:value-of select="@name"/>&amp;)message, sessionID );
+      return onMessage( <xsl:value-of select="@name"/>(message), sessionID );
     </xsl:for-each>
-    return onMessage( message, sessionID );
+    return onMessage( Message(message), sessionID );
   }
   
+  /// Preserve the version-message entry point and mutable callback behavior.
 void crack( Message&amp; message, 
+            const FIX::SessionID&amp; sessionID )
+  {
+    crack( static_cast&lt;FIX::Message&amp;&gt;(message), sessionID );
+  }
+
+  /// Copy callback changes back on both normal return and exception propagation.
+void crack( FIX::Message&amp; message,
             const FIX::SessionID&amp; sessionID )
   {
     const std::string &amp; msgTypeValue 
@@ -122,9 +138,23 @@ void crack( Message&amp; message,
     
     <xsl:for-each select="//fix/messages/message">
     if( msgTypeValue == "<xsl:value-of select="@msgtype"/>" )
-      return onMessage( (<xsl:value-of select="@name"/>&amp;)message, sessionID );
+      return dispatch&lt;<xsl:value-of select="@name"/>&gt;( message, sessionID );
     </xsl:for-each>
-    return onMessage( message, sessionID );
+    return dispatch&lt;Message&gt;( message, sessionID );
+  }
+
+private:
+  template &lt;typename T&gt;
+  void dispatch( FIX::Message&amp; message, const FIX::SessionID&amp; sessionID )
+  {
+    T typed(message);
+    try {
+      onMessage( typed, sessionID );
+    } catch (...) {
+      message = std::move(typed);
+      throw;
+    }
+    message = std::move(typed);
   }
 </xsl:template>
 

@@ -49,6 +49,7 @@ if (QUICKFIX_TESTS)
   ${PROJECT_SOURCE_DIR}/src/C++/test/MemoryStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessageSortersTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MessagesTestCase.cpp
+  ${PROJECT_SOURCE_DIR}/src/C++/test/MessageCrackerTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/MySQLStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/NullStoreTestCase.cpp
   ${PROJECT_SOURCE_DIR}/src/C++/test/OdbcStoreTestCase.cpp

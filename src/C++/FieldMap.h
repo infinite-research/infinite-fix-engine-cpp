@@ -141,15 +141,30 @@ public:
     return field;
   }
 
-  /// Get a field without type checking
-  template <typename T> const T &getField() const EXCEPT(FieldNotFound) {
-    return *reinterpret_cast<const T *>(&getFieldRef(T::tag));
+  /// Get an independent typed value; stored fields have type FieldBase.
+  template <typename T> T getField() const EXCEPT(FieldNotFound) {
+    T field;
+    getField(field);
+    return field;
   }
 
+  /// Get an independent typed value, or nullopt when absent.
   template <typename F> std::optional<F> getFieldOptional() const {
     F field;
     return getFieldIfSet(field) ? std::optional<F>{field} : std::nullopt;
   }
+
+  /// Set any field class using the generated-message convenience syntax.
+  void set(const FieldBase &field) { setField(field); }
+  /// Populate and return the caller's genuine typed field.
+  template <typename T> T &get(T &field) const EXCEPT(FieldNotFound) {
+    getField(field);
+    return field;
+  }
+  /// Check whether any field class is present.
+  bool isSet(const FieldBase &field) const { return isSetField(field); }
+  /// Populate the caller's field if present, leaving it unchanged otherwise.
+  bool getIfSet(FieldBase &field) const { return getFieldIfSet(field); }
 
   /// Get a field without a field class
   const std::string &getField(int tag) const EXCEPT(FieldNotFound) { return getFieldRef(tag).getString(); }
@@ -326,11 +341,14 @@ private:
 #define FIELD_SET(MAP, FIELD)                                                                                          \
   bool isSet(const FIELD &field) const { return (MAP).isSetField(field); }                                             \
   void set(const FIELD &field) { (MAP).setField(field); }                                                              \
-  FIELD &get(FIELD &field) const { return (FIELD &)(MAP).getField(field); }                                            \
+  FIELD &get(FIELD &field) const {                                                                                     \
+    (MAP).getField(field);                                                                                             \
+    return field;                                                                                                      \
+  }                                                                                                                    \
   bool getIfSet(FIELD &field) const { return (MAP).getFieldIfSet(field); }
 
-#define FIELD_GET_PTR(MAP, FLD) (const FIX::FLD *)MAP.getFieldPtr(FIX::FIELD::FLD)
-#define FIELD_GET_REF(MAP, FLD) (const FIX::FLD &)MAP.getFieldRef(FIX::FIELD::FLD)
+/// Legacy spelling: returns an independent typed value, not a stored reference.
+#define FIELD_GET_REF(MAP, FLD) (MAP).getField<FIX::FLD>()
 #define FIELD_THROW_IF_NOT_FOUND(MAP, FLD)                                                                             \
   if (!(MAP).isSetField(FIX::FIELD::FLD))                                                                              \
   throw FieldNotFound(FIX::FIELD::FLD)

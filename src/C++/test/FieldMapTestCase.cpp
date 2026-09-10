@@ -34,6 +34,34 @@
 using namespace FIX;
 
 TEST_CASE("FieldMapTests") {
+  SECTION("typed retrieval returns independent real fields") {
+    FieldMap fields;
+    fields.setField(Symbol("MSFT"));
+    fields.setField(OrderQty(12.5));
+    fields.setField(SendingTime(UtcTimeStamp(12, 34, 56, 8, 9, 2026)));
+    const auto &symbol = fields.getField<Symbol>();
+    const auto &quantity = fields.getField<OrderQty>();
+    const auto &time = fields.getField<SendingTime>();
+    CHECK(typeid(symbol) == typeid(Symbol));
+    CHECK(typeid(quantity) == typeid(OrderQty));
+    CHECK(typeid(time) == typeid(SendingTime));
+    CHECK(symbol.getValue() == "MSFT");
+    CHECK(quantity.getValue() == 12.5);
+    CHECK(time.getValue() == UtcTimeStamp(12, 34, 56, 8, 9, 2026));
+    fields.setField(Symbol("IBM"));
+    fields.setField(OrderQty(1));
+    fields.setField(SendingTime(UtcTimeStamp(0, 0, 0, 1, 1, 2000)));
+    CHECK(symbol.getValue() == "MSFT");
+    CHECK(quantity.getValue() == 12.5);
+    CHECK(time.getValue() == UtcTimeStamp(12, 34, 56, 8, 9, 2026));
+    CHECK_THROWS_AS(fields.getField<ClOrdID>(), FieldNotFound);
+    CHECK_FALSE(fields.getFieldOptional<ClOrdID>().has_value());
+    CHECK(fields.getFieldOptional<Symbol>()->getValue() == "IBM");
+    const auto &macroSymbol = FIELD_GET_REF(fields, Symbol);
+    fields.setField(Symbol("ORCL"));
+    CHECK(macroSymbol.getValue() == "IBM");
+  }
+
   SECTION("move assignment releases previously owned groups") {
     struct TrackedGroup : FieldMap {
       explicit TrackedGroup(bool &destroyed)

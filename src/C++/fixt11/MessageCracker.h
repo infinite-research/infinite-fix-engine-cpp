@@ -25,19 +25,20 @@
 
 #include "../SessionID.h"
 #include "../Exceptions.h"
+#include <utility>
 
 #include "../fixt11/Message.h"
+#include "Heartbeat.h"
+#include "TestRequest.h"
+#include "ResendRequest.h"
+#include "Reject.h"
+#include "SequenceReset.h"
+#include "Logout.h"
+#include "Logon.h"
+#include "XMLnonFIX.h"
 
 namespace FIXT11
-{  
-  class Heartbeat; 
-  class TestRequest; 
-  class ResendRequest; 
-  class Reject; 
-  class SequenceReset; 
-  class Logout; 
-  class Logon; 
-  class XMLnonFIX;
+{
 
   class MessageCracker
   {
@@ -73,7 +74,15 @@ namespace FIXT11
  virtual void onMessage( XMLnonFIX&, const FIX::SessionID& ) {} 
 
 public:
+  /// Preserve the version-message entry point while dispatching genuine typed values.
   void crack( const Message& message, 
+              const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<const FIX::Message&>(message), sessionID );
+  }
+
+  /// Dispatch a generic message without assuming a derived object lifetime.
+  void crack( const FIX::Message& message,
               const FIX::SessionID& sessionID )
   {
     const std::string & msgTypeValue 
@@ -81,33 +90,41 @@ public:
     
     
     if( msgTypeValue == "0" )
-      return onMessage( (const Heartbeat&)message, sessionID );
+      return onMessage( Heartbeat(message), sessionID );
     
     if( msgTypeValue == "1" )
-      return onMessage( (const TestRequest&)message, sessionID );
+      return onMessage( TestRequest(message), sessionID );
     
     if( msgTypeValue == "2" )
-      return onMessage( (const ResendRequest&)message, sessionID );
+      return onMessage( ResendRequest(message), sessionID );
     
     if( msgTypeValue == "3" )
-      return onMessage( (const Reject&)message, sessionID );
+      return onMessage( Reject(message), sessionID );
     
     if( msgTypeValue == "4" )
-      return onMessage( (const SequenceReset&)message, sessionID );
+      return onMessage( SequenceReset(message), sessionID );
     
     if( msgTypeValue == "5" )
-      return onMessage( (const Logout&)message, sessionID );
+      return onMessage( Logout(message), sessionID );
     
     if( msgTypeValue == "A" )
-      return onMessage( (const Logon&)message, sessionID );
+      return onMessage( Logon(message), sessionID );
     
     if( msgTypeValue == "n" )
-      return onMessage( (const XMLnonFIX&)message, sessionID );
+      return onMessage( XMLnonFIX(message), sessionID );
     
-    return onMessage( message, sessionID );
+    return onMessage( Message(message), sessionID );
   }
   
+  /// Preserve the version-message entry point and mutable callback behavior.
 void crack( Message& message, 
+            const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<FIX::Message&>(message), sessionID );
+  }
+
+  /// Copy callback changes back on both normal return and exception propagation.
+void crack( FIX::Message& message,
             const FIX::SessionID& sessionID )
   {
     const std::string & msgTypeValue 
@@ -115,30 +132,44 @@ void crack( Message& message,
     
     
     if( msgTypeValue == "0" )
-      return onMessage( (Heartbeat&)message, sessionID );
+      return dispatch<Heartbeat>( message, sessionID );
     
     if( msgTypeValue == "1" )
-      return onMessage( (TestRequest&)message, sessionID );
+      return dispatch<TestRequest>( message, sessionID );
     
     if( msgTypeValue == "2" )
-      return onMessage( (ResendRequest&)message, sessionID );
+      return dispatch<ResendRequest>( message, sessionID );
     
     if( msgTypeValue == "3" )
-      return onMessage( (Reject&)message, sessionID );
+      return dispatch<Reject>( message, sessionID );
     
     if( msgTypeValue == "4" )
-      return onMessage( (SequenceReset&)message, sessionID );
+      return dispatch<SequenceReset>( message, sessionID );
     
     if( msgTypeValue == "5" )
-      return onMessage( (Logout&)message, sessionID );
+      return dispatch<Logout>( message, sessionID );
     
     if( msgTypeValue == "A" )
-      return onMessage( (Logon&)message, sessionID );
+      return dispatch<Logon>( message, sessionID );
     
     if( msgTypeValue == "n" )
-      return onMessage( (XMLnonFIX&)message, sessionID );
+      return dispatch<XMLnonFIX>( message, sessionID );
     
-    return onMessage( message, sessionID );
+    return dispatch<Message>( message, sessionID );
+  }
+
+private:
+  template <typename T>
+  void dispatch( FIX::Message& message, const FIX::SessionID& sessionID )
+  {
+    T typed(message);
+    try {
+      onMessage( typed, sessionID );
+    } catch (...) {
+      message = std::move(typed);
+      throw;
+    }
+    message = std::move(typed);
   }
 
   };
