@@ -118,6 +118,7 @@
 #if (HAVE_SSL > 0)
 
 #include <filesystem>
+#include <memory>
 #include <openssl/x509v3.h>
 #include <vector>
 
@@ -672,10 +673,12 @@ int callbackVerify(int ok, X509_STORE_CTX *ctx) {
 int typeofSSLAlgo(X509 *pCert, EVP_PKEY *pKey) {
 
   int t;
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> certificateKey(nullptr, EVP_PKEY_free);
 
   t = SSL_ALGO_UNKNOWN;
   if (pCert != 0) {
-    pKey = X509_get_pubkey(pCert);
+    certificateKey.reset(X509_get_pubkey(pCert));
+    pKey = certificateKey.get();
   }
   if (pKey != 0) {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -1219,7 +1222,7 @@ bool loadSSLCert(
     return false;
   }
 
-  X509 *X509Cert = readX509(fp, 0, 0, 0);
+  std::unique_ptr<X509, decltype(&X509_free)> X509Cert(readX509(fp, 0, 0, 0), X509_free);
 
   fclose(fp);
 
@@ -1229,11 +1232,11 @@ bool loadSSLCert(
     return false;
   }
 
-  switch (typeofSSLAlgo(X509Cert, 0)) {
+  switch (typeofSSLAlgo(X509Cert.get(), 0)) {
   case SSL_ALGO_RSA:
     log->onEvent("Configuring RSA client certificate");
 
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure RSA client certificate");
       return false;
     }
@@ -1241,7 +1244,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_DSA:
     log->onEvent("Configuring DSA client certificate");
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure DSA client certificate");
       return false;
     }
@@ -1249,7 +1252,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_EC:
     log->onEvent("Configuring EC client certificate");
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure EC client certificate");
       return false;
     }
@@ -1260,7 +1263,7 @@ bool loadSSLCert(
     return false;
     break;
   }
-  X509_free(X509Cert);
+  X509Cert.reset();
 
   if ((fp = fopen(key.c_str(), "r")) == 0) {
     errStr.assign(key);
@@ -1268,7 +1271,9 @@ bool loadSSLCert(
     return false;
   }
 
-  EVP_PKEY *privateKey = readPrivateKey(fp, 0, cb, passwordCallbackParam);
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> privateKey(
+      readPrivateKey(fp, 0, cb, passwordCallbackParam),
+      EVP_PKEY_free);
 
   fclose(fp);
 
@@ -1278,10 +1283,10 @@ bool loadSSLCert(
     return false;
   }
 
-  switch (typeofSSLAlgo(0, privateKey)) {
+  switch (typeofSSLAlgo(0, privateKey.get())) {
   case SSL_ALGO_RSA:
     log->onEvent("Configuring RSA client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure RSA server private key");
       return false;
     }
@@ -1289,7 +1294,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_DSA:
     log->onEvent("Configuring DSA client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure DSA server private key");
       return false;
     }
@@ -1297,7 +1302,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_EC:
     log->onEvent("Configuring EC client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure EC server private key");
       return false;
     }
@@ -1308,7 +1313,7 @@ bool loadSSLCert(
     return false;
     break;
   }
-  EVP_PKEY_free(privateKey);
+  privateKey.reset();
 
   /* Now we know that a key and cert have been set against
    * the SSL context */
