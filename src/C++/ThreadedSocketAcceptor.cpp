@@ -46,7 +46,12 @@ ThreadedSocketAcceptor::ThreadedSocketAcceptor(
   socket_init();
 }
 
-ThreadedSocketAcceptor::~ThreadedSocketAcceptor() { socket_term(); }
+ThreadedSocketAcceptor::~ThreadedSocketAcceptor() {
+  if (hasDeferredStopCleanup()) {
+    stop(true);
+  }
+  socket_term();
+}
 
 void ThreadedSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
   std::map<int, unsigned long> addresses;
@@ -158,6 +163,7 @@ void ThreadedSocketAcceptor::onStop() {
   Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
+  bool calledFromWorker = false;
 
   {
     Locker l(m_mutex);
@@ -172,17 +178,36 @@ void ThreadedSocketAcceptor::onStop() {
       }
     }
 
-    sockets.swap(m_sockets);
-    threads.swap(m_threads);
+    for (const auto &socketWithThread : m_threads) {
+      if (thread_is_current(socketWithThread.second)) {
+        calledFromWorker = true;
+        break;
+      }
+    }
+    if (calledFromWorker) {
+      if (!m_sockets.empty()) {
+        sockets.swap(m_sockets);
+        threads = m_threads;
+      }
+      deferStopCleanup();
+    } else {
+      sockets.swap(m_sockets);
+      threads.swap(m_threads);
+    }
   }
 
   for (const socket_handle socket : sockets) {
     socket_close(socket);
   }
-  for (i = threads.begin(); i != threads.end(); ++i) {
-    if (sockets.find(i->first) == sockets.end()) {
-      socket_close(i->first);
+  if (!sockets.empty()) {
+    for (i = threads.begin(); i != threads.end(); ++i) {
+      if (sockets.find(i->first) == sockets.end()) {
+        socket_close(i->first);
+      }
     }
+  }
+  if (calledFromWorker) {
+    return;
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);

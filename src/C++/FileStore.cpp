@@ -260,11 +260,10 @@ void FileStore::populateCache() {
       const auto size = readNumber(m_headerFile, c);
       if ((c != EOF && !std::isspace(static_cast<unsigned char>(c))) || sequence == 0
           || offset > static_cast<uint64_t>(INT64_MAX) || size > SIZE_MAX || offset > bodySize
-          || size > bodySize - offset
-          || !offsets.emplace(sequence, OffsetSize(static_cast<int64_t>(offset), static_cast<std::size_t>(size)))
-                  .second) {
-        throw IOException("Invalid message header range or duplicate sequence");
+          || size > bodySize - offset) {
+        throw IOException("Invalid message header range");
       }
+      offsets.insert_or_assign(sequence, OffsetSize(static_cast<int64_t>(offset), static_cast<std::size_t>(size)));
       skipSpace(m_headerFile, c);
     }
     if (ferror(m_headerFile)) {

@@ -264,7 +264,7 @@ bool loadCAInfo(
     std::string &errStr,
     int &verifyLevel);
 
-/// Load CRLs into the context-owned store. Returns null; a nonempty errStr indicates failure.
+/// Load CRLs into the context-owned store. Returns null and sets errStr on failure.
 X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log, std::string &errStr);
 
 int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify);

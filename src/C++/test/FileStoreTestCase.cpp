@@ -235,7 +235,6 @@ TEST_CASE("FileStoreTests_reject_corrupt_restore_atomically") {
       {"offset beyond EOF", "header", "2,7,0 "},
       {"range beyond EOF", "header", "2,4,3 "},
       {"incomplete header row", "header", "2,3,3 3,0"},
-      {"duplicate sequence row", "header", "2,0,3 2,3,3 "},
       {"header trailing garbage", "header", "2,3,3 garbage"},
       {"zero header sequence", "header", "0,0,3 "},
       {"truncated body", "body", "ol"},

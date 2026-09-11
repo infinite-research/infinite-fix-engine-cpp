@@ -586,6 +586,14 @@ thread_id thread_self() {
 #endif
 }
 
+bool thread_is_current(thread_id thread) {
+#ifdef _MSC_VER
+  return GetThreadId(thread) == GetCurrentThreadId();
+#else
+  return pthread_equal(thread, pthread_self()) != 0;
+#endif
+}
+
 void process_sleep(double s) {
 #ifdef _MSC_VER
   Sleep((long)(s * 1000));

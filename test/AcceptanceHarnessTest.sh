@@ -5,6 +5,7 @@ set -u
 SOURCE_ROOT=${1:?source root is required}
 SCRATCH_ROOT=${2:?scratch root is required}
 CASE_ROOT=$(mktemp -d "$SCRATCH_ROOT/acceptance-harness.XXXXXX") || exit 1
+CASE_ROOT=$(CDPATH= cd "$CASE_ROOT" && pwd -P) || exit 1
 PIDS=
 FAILURES=0
 

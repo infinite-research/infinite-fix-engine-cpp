@@ -13,6 +13,7 @@ else
   exit 2
 fi
 CASE_ROOT=$(mktemp -d "$SCRATCH_ROOT/performance-harness.XXXXXX") || exit 1
+CASE_ROOT=$(CDPATH= cd "$CASE_ROOT" && pwd -P) || exit 1
 trap 'rm -rf "$CASE_ROOT"' EXIT INT TERM
 
 SOURCE_DIR="$CASE_ROOT/source/test"

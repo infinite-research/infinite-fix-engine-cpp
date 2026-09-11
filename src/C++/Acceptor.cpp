@@ -48,7 +48,8 @@ Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFa
       m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
-      m_stop(true) {
+      m_stop(true),
+      m_stopCleanupPending(false) {
   initialize();
 }
 
@@ -65,7 +66,8 @@ Acceptor::Acceptor(
       m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
-      m_stop(true) {
+      m_stop(true),
+      m_stopCleanupPending(false) {
   m_pLog = logFactory.create();
   auto logGuard = sg::make_scope_guard([&]() { m_pLogFactory->destroy(m_pLog); });
   initialize();
@@ -167,6 +169,7 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::start called when already processing messages");
   }
 
+  completeDeferredStop();
   joinStartThread();
   m_processing = true;
   m_stop = false;
@@ -203,6 +206,7 @@ void Acceptor::block() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::block called when already processing messages");
   }
 
+  completeDeferredStop();
   joinStartThread();
   Acceptor *previous = activeAcceptor;
   activeAcceptor = this;
@@ -233,6 +237,7 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::poll called when already processing messages");
   }
 
+  completeDeferredStop();
   Acceptor *previous = activeAcceptor;
   activeAcceptor = this;
   auto guard = sg::make_scope_guard([this, previous]() {
@@ -261,6 +266,7 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
 
 void Acceptor::stop(bool force) {
   if (isStopped()) {
+    completeDeferredStop();
     joinStartThread();
     return;
   }
@@ -293,6 +299,15 @@ void Acceptor::stop(bool force) {
   for (Session *session : enabledSessions) {
     session->logon();
   }
+}
+
+void Acceptor::completeDeferredStop() {
+  if (!m_stopCleanupPending.exchange(false)) {
+    return;
+  }
+  auto retry = sg::make_scope_guard([&]() { m_stopCleanupPending = true; });
+  onStop();
+  retry.dismiss();
 }
 
 bool Acceptor::isLoggedOn() const {

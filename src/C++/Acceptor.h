@@ -87,6 +87,7 @@ public:
 
 private:
   void initialize() EXCEPT(ConfigError);
+  void completeDeferredStop();
 
   /// Implemented to configure acceptor
   virtual void onConfigure(const SessionSettings &) EXCEPT(ConfigError) {};
@@ -113,6 +114,8 @@ private:
 protected:
   /// Wait for the start loop before releasing transport resources; safe from the start loop itself.
   void joinStartThread();
+  void deferStopCleanup() { m_stopCleanupPending = true; }
+  bool hasDeferredStopCleanup() const { return m_stopCleanupPending.load(); }
 
   SessionSettings m_settings;
 
@@ -123,6 +126,7 @@ private:
   std::atomic<bool> m_processing;
   std::atomic<bool> m_firstPoll;
   std::atomic<bool> m_stop;
+  std::atomic<bool> m_stopCleanupPending;
 };
 /*! @} */
 } // namespace FIX

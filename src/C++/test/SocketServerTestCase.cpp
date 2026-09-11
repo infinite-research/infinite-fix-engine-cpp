@@ -54,6 +54,12 @@ unsigned long boundAddress(socket_handle socket) {
   return address.sin_addr.s_addr;
 }
 
+int availableLoopbackPort() {
+  TestSocket reservation(socket_createAcceptor("127.0.0.1", 0, true));
+  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+  return socket_hostport(reservation.value);
+}
+
 #ifdef __linux__
 size_t openDescriptors() {
   return static_cast<size_t>(
@@ -221,12 +227,11 @@ TEST_CASE("SocketServerTests") {
   }
 
   SECTION("close and destruction preserve a replacement listener") {
-    TestSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int secondaryPort = availableLoopbackPort();
     auto server = std::make_unique<SocketServer>(0);
     const socket_handle listener = server->add(0, true);
     const int port = socket_hostport(listener);
-    server->add("127.0.0.1", socket_hostport(reservation.value), true);
+    server->add("127.0.0.1", secondaryPort, true);
     CHECK(server->numConnections() == 0U);
     server->close();
     CHECK(server->numConnections() == 0U);

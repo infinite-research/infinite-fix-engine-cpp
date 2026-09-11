@@ -88,6 +88,12 @@ int listenerPort(socket_handle socket) {
   return ntohs(address.sin_port);
 }
 
+int availableLoopbackPort() {
+  ListenerSocket reservation(socket_createAcceptor("127.0.0.1", 0, true));
+  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+  return listenerPort(reservation.value);
+}
+
 SessionSettings listenerSettings(const std::vector<std::pair<int, std::string>> &listeners) {
   Dictionary defaults;
   defaults.setString(CONNECTION_TYPE, "acceptor");
@@ -204,9 +210,7 @@ TEST_CASE("SocketAcceptor callback stop defers dispatch teardown") {
   CAPTURE(mode, tls);
   TestApplication application;
   MemoryStoreFactory stores;
-  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-  const int port = listenerPort(reservation.value);
+  const int port = availableLoopbackPort();
   auto settings = listenerSettings({{port, "127.0.0.1"}});
   auto exercise = [&](auto &acceptor) {
     auto peer = std::async(std::launch::async, [port]() {
@@ -260,9 +264,7 @@ TEST_CASE("SocketAcceptor external stop waits for dispatch") {
   CAPTURE(polling, tls);
   TestApplication application;
   MemoryStoreFactory stores;
-  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-  const int port = listenerPort(reservation.value);
+  const int port = availableLoopbackPort();
   const auto settings = listenerSettings({{port, "127.0.0.1"}});
   auto exercise = [&](auto &acceptor) {
     std::promise<void> proceed;
@@ -310,9 +312,7 @@ TEST_CASE("SocketAcceptor accepted poll connection teardown") {
   CAPTURE(tls, promoted);
   TestApplication application;
   MemoryStoreFactory stores;
-  ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-  const int port = listenerPort(reservation.value);
+  const int port = availableLoopbackPort();
   auto acceptor = listenerAcceptor(false, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
   REQUIRE(acceptor->poll());
   ListenerSocket client(socket_createConnector());
@@ -409,7 +409,9 @@ TEST_CASE("SocketAcceptor bind settings") {
 
   SECTION("configured address is forwarded") {
     ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    if (reservation.value == INVALID_SOCKET_HANDLE) {
+      SKIP("configured-address isolation requires a second local loopback address");
+    }
     const int port = listenerPort(reservation.value);
     auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
     if (threaded) {
@@ -448,12 +450,10 @@ TEST_CASE("SocketAcceptor bind settings") {
   }
 
   SECTION("failed initialization publishes no listener") {
-    ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-    const int firstPort = listenerPort(reservation.value);
-    ListenerSocket occupied(socket_createAcceptor("", 0, true));
+    ListenerSocket occupied(socket_createAcceptor("127.0.0.1", 0, true));
     REQUIRE(occupied.value != INVALID_SOCKET_HANDLE);
     const int occupiedPort = listenerPort(occupied.value);
+    const int firstPort = availableLoopbackPort();
     auto acceptor = listenerAcceptor(
         threaded,
         tls,
@@ -467,9 +467,7 @@ TEST_CASE("SocketAcceptor bind settings") {
   }
 
   SECTION("startup failure after initialization releases the listener") {
-    ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-    const int port = listenerPort(reservation.value);
+    const int port = availableLoopbackPort();
     auto settings = listenerSettings({{port, "127.0.0.1"}});
     Dictionary defaults = settings.get();
     defaults.setInt(HTTP_ACCEPT_PORT, 0);
@@ -484,9 +482,7 @@ TEST_CASE("SocketAcceptor bind settings") {
 
   SECTION("poll stop and destruction release the listener") {
     if (!threaded) {
-      ListenerSocket reservation(socket_createAcceptor("127.0.0.2", 0, true));
-      REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-      const int port = listenerPort(reservation.value);
+      const int port = availableLoopbackPort();
       auto acceptor = listenerAcceptor(threaded, tls, application, stores, listenerSettings({{port, "127.0.0.1"}}));
       CHECK(acceptor->poll());
       acceptor->stop(true);

@@ -157,6 +157,9 @@ ThreadedSSLSocketAcceptor::ThreadedSSLSocketAcceptor(
 }
 
 ThreadedSSLSocketAcceptor::~ThreadedSSLSocketAcceptor() {
+  if (hasDeferredStopCleanup()) {
+    stop(true);
+  }
   if (m_sslInit) {
     SSL_CTX_free(m_ctx);
     m_ctx = 0;
@@ -314,6 +317,7 @@ void ThreadedSSLSocketAcceptor::onStop() {
   Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
+  bool calledFromWorker = false;
 
   {
     Locker l(m_mutex);
@@ -328,17 +332,36 @@ void ThreadedSSLSocketAcceptor::onStop() {
       }
     }
 
-    sockets.swap(m_sockets);
-    threads.swap(m_threads);
+    for (const auto &socketWithThread : m_threads) {
+      if (thread_is_current(socketWithThread.second)) {
+        calledFromWorker = true;
+        break;
+      }
+    }
+    if (calledFromWorker) {
+      if (!m_sockets.empty()) {
+        sockets.swap(m_sockets);
+        threads = m_threads;
+      }
+      deferStopCleanup();
+    } else {
+      sockets.swap(m_sockets);
+      threads.swap(m_threads);
+    }
   }
 
   for (const socket_handle socket : sockets) {
     socket_close(socket);
   }
-  for (i = threads.begin(); i != threads.end(); ++i) {
-    if (sockets.find(i->first.first) == sockets.end()) {
-      ssl_socket_close(i->first.first, i->first.second);
+  if (!sockets.empty()) {
+    for (i = threads.begin(); i != threads.end(); ++i) {
+      if (sockets.find(i->first.first) == sockets.end()) {
+        ssl_socket_close(i->first.first, i->first.second);
+      }
     }
+  }
+  if (calledFromWorker) {
+    return;
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);

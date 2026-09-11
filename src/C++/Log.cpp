@@ -34,14 +34,22 @@ std::string redactLogonCredentials(const std::string &value) {
   std::string::size_type position = 0;
   while (position < value.size()) {
     const bool fieldBoundary = position == 0 || value[position - 1] == '\001';
-    const bool credential
-        = fieldBoundary && (value.compare(position, 4, "553=") == 0 || value.compare(position, 4, "554=") == 0);
+    std::string::size_type tagStart = position;
+    while (fieldBoundary && tagStart < value.size() && value[tagStart] == '0') {
+      ++tagStart;
+    }
+    std::string::size_type tagEnd = tagStart;
+    while (fieldBoundary && tagEnd < value.size() && value[tagEnd] >= '0' && value[tagEnd] <= '9') {
+      ++tagEnd;
+    }
+    const bool credential = fieldBoundary && tagEnd - tagStart == 3 && tagEnd < value.size() && value[tagEnd] == '='
+                            && (value.compare(tagStart, 3, "553") == 0 || value.compare(tagStart, 3, "554") == 0);
     if (!credential) {
       ++position;
       continue;
     }
 
-    const std::string::size_type valueStart = position + 4;
+    const std::string::size_type valueStart = tagEnd + 1;
     result.append(value, copied, valueStart - copied);
     result += "<redacted>";
     const std::string::size_type fieldEnd = value.find('\001', valueStart);

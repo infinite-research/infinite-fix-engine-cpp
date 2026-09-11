@@ -205,6 +205,7 @@ bool thread_spawn(THREAD_START_ROUTINE func, void *var);
 void thread_join(thread_id thread);
 void thread_detach(thread_id thread);
 thread_id thread_self();
+bool thread_is_current(thread_id thread);
 
 void process_sleep(double s);
 

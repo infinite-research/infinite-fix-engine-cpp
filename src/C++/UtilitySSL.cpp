@@ -1460,6 +1460,7 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
     }
     if (!loaded) {
       errStr = "No CRLs found in configured directory";
+      return 0;
     }
   }
 
