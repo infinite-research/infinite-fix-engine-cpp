@@ -312,6 +312,17 @@ TEST_CASE_METHOD(restoredFileStoreFixture, "FileStoreTests_restore_compatibility
   CHECK(messages == std::vector<std::string>{"old"});
 }
 
+TEST_CASE_METHOD(restoredFileStoreFixture, "FileStoreTests_latest_duplicate_record_survives_restore") {
+  write("header", "1,0,3 1,3,3 ");
+  FileStore store(UtcTimeStamp::now(), "store", id);
+  std::vector<std::string> messages;
+  store.get(1, 1, messages);
+  CHECK(messages == std::vector<std::string>{"new"});
+  store.refresh();
+  store.get(1, 1, messages);
+  CHECK(messages == std::vector<std::string>{"new"});
+}
+
 TEST_CASE_METHOD(restoredFileStoreFixture, "FileStoreTests_binary_exact_reads") {
   const std::string message("a\0b\r\n", 5);
   {

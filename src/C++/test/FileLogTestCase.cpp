@@ -197,6 +197,9 @@ TEST_CASE_METHOD(generateFileNameFixture, "FileLogTests") {
         == "Unknown session: 8=FIX.4.2\0011553=keep\00158=keep554=value\001553=<redacted>\001554=<redacted>\001");
     CHECK(log.incoming == "553=<redacted>");
     CHECK(log.outgoing == "prefix\001554=<redacted>");
+    CHECK(
+        redactLogonCredentials("000553=padded-user\001000554=padded-password\001")
+        == "000553=<redacted>\001000554=<redacted>\001");
   }
 
   SECTION("records reversibly escape separators and preserve binary FIX bytes") {

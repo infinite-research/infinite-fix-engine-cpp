@@ -33,11 +33,14 @@
 #include "Responder.h"
 #include "SessionSettings.h"
 #include <map>
+#include <mutex>
 #include <string>
 
 namespace FIX {
 class Client;
 class Session;
+class ThreadedSocketAcceptor;
+class ThreadedSSLSocketAcceptor;
 
 /**
  * Base for classes which act as an acceptor for incoming connections.
@@ -86,8 +89,15 @@ public:
   MessageStoreFactory &getMessageStoreFactory() const { return m_messageStoreFactory; }
 
 private:
+  friend class ThreadedSocketAcceptor;
+  friend class ThreadedSSLSocketAcceptor;
+
   void initialize() EXCEPT(ConfigError);
-  void completeDeferredStop();
+  bool completeDeferredStop();
+  bool completeDeferredStopLocked();
+  bool lockStopCleanup(std::unique_lock<std::mutex> &);
+  Acceptor *activateCurrentThread();
+  void restoreCurrentThread(Acceptor *);
 
   /// Implemented to configure acceptor
   virtual void onConfigure(const SessionSettings &) EXCEPT(ConfigError) {};
@@ -127,6 +137,7 @@ private:
   std::atomic<bool> m_firstPoll;
   std::atomic<bool> m_stop;
   std::atomic<bool> m_stopCleanupPending;
+  std::mutex m_stopCleanupMutex;
 };
 /*! @} */
 } // namespace FIX

@@ -369,6 +369,7 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
         "protocol",
         "old-protocol",
         "crl-missing",
+        "crl-empty-directory",
         "ca-missing",
         "ca-empty");
     CAPTURE(server, scenario);
@@ -390,6 +391,9 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
     }
     if (scenario == "crl-missing") {
       config.setString(CERTIFICATE_REVOCATION_LIST_FILE, certificate("missing.crl"));
+    }
+    if (scenario == "crl-empty-directory") {
+      config.setString(CERTIFICATE_REVOCATION_LIST_DIRECTORY, certificate("empty"));
     }
     if (scenario == "ca-missing") {
       config.setString(CERTIFICATE_AUTHORITIES_FILE, certificate("missing.crt"));

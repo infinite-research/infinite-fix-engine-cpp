@@ -73,7 +73,10 @@ public:
   bool sentLogon() { return m_state.sentLogon(); }
   bool sentLogout() { return m_state.sentLogout(); }
   bool receivedLogon() { return m_state.receivedLogon(); }
-  bool isLoggedOn() { return receivedLogon() && sentLogon(); }
+  bool isLoggedOn() {
+    Locker locker(m_mutex);
+    return m_state.receivedLogon() && m_state.sentLogon();
+  }
   void reset() EXCEPT(IOException) {
     if (m_detached) {
       throw std::logic_error("Detached Session reset");

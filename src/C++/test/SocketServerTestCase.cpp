@@ -54,10 +54,28 @@ unsigned long boundAddress(socket_handle socket) {
   return address.sin_addr.s_addr;
 }
 
-int availableLoopbackPort() {
-  TestSocket reservation(socket_createAcceptor("127.0.0.1", 0, true));
-  REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
-  return socket_hostport(reservation.value);
+template <typename Scenario> void withLoopbackPort(Scenario scenario) {
+#ifdef _MSC_VER
+  const std::string addressInUse = error_wsaerror(WSAEADDRINUSE);
+#else
+  int addressInUseCode = EADDRINUSE;
+  const std::string addressInUse = error_strerror(addressInUseCode);
+#endif
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    TestSocket reservation(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(reservation.value);
+    socket_close(reservation.value);
+    reservation.value = INVALID_SOCKET_HANDLE;
+    try {
+      scenario(port);
+      return;
+    } catch (const SocketException &error) {
+      if (attempt == 9 || std::string(error.what()).find(addressInUse) == std::string::npos) {
+        throw;
+      }
+    }
+  }
 }
 
 #ifdef __linux__
@@ -227,17 +245,18 @@ TEST_CASE("SocketServerTests") {
   }
 
   SECTION("close and destruction preserve a replacement listener") {
-    const int secondaryPort = availableLoopbackPort();
-    auto server = std::make_unique<SocketServer>(0);
-    const socket_handle listener = server->add(0, true);
-    const int port = socket_hostport(listener);
-    server->add("127.0.0.1", secondaryPort, true);
-    CHECK(server->numConnections() == 0U);
-    server->close();
-    CHECK(server->numConnections() == 0U);
-    TestSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
-    REQUIRE(replacement.value != INVALID_SOCKET_HANDLE);
-    server.reset();
-    CHECK(boundAddress(replacement.value) == inet_addr("127.0.0.1"));
+    withLoopbackPort([](int secondaryPort) {
+      auto server = std::make_unique<SocketServer>(0);
+      const socket_handle listener = server->add(0, true);
+      const int port = socket_hostport(listener);
+      server->add("127.0.0.1", secondaryPort, true);
+      CHECK(server->numConnections() == 0U);
+      server->close();
+      CHECK(server->numConnections() == 0U);
+      TestSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+      REQUIRE(replacement.value != INVALID_SOCKET_HANDLE);
+      server.reset();
+      CHECK(boundAddress(replacement.value) == inet_addr("127.0.0.1"));
+    });
   }
 }

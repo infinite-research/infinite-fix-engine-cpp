@@ -169,7 +169,9 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::start called when already processing messages");
   }
 
-  completeDeferredStop();
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot start while stop cleanup remains on its worker thread");
+  }
   joinStartThread();
   m_processing = true;
   m_stop = false;
@@ -206,7 +208,9 @@ void Acceptor::block() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::block called when already processing messages");
   }
 
-  completeDeferredStop();
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot block while stop cleanup remains on its worker thread");
+  }
   joinStartThread();
   Acceptor *previous = activeAcceptor;
   activeAcceptor = this;
@@ -237,7 +241,9 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::poll called when already processing messages");
   }
 
-  completeDeferredStop();
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot poll while stop cleanup remains on its worker thread");
+  }
   Acceptor *previous = activeAcceptor;
   activeAcceptor = this;
   auto guard = sg::make_scope_guard([this, previous]() {
@@ -265,8 +271,13 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
 }
 
 void Acceptor::stop(bool force) {
+  std::unique_lock<std::mutex> cleanupLock(m_stopCleanupMutex, std::defer_lock);
+  if (!lockStopCleanup(cleanupLock)) {
+    return;
+  }
+
   if (isStopped()) {
-    completeDeferredStop();
+    completeDeferredStopLocked();
     joinStartThread();
     return;
   }
@@ -292,8 +303,9 @@ void Acceptor::stop(bool force) {
     }
   }
 
+  m_stopCleanupPending = true;
   m_stop = true;
-  onStop();
+  completeDeferredStopLocked();
   joinStartThread();
 
   for (Session *session : enabledSessions) {
@@ -301,14 +313,39 @@ void Acceptor::stop(bool force) {
   }
 }
 
-void Acceptor::completeDeferredStop() {
+bool Acceptor::completeDeferredStop() {
+  std::unique_lock<std::mutex> cleanupLock(m_stopCleanupMutex, std::defer_lock);
+  if (!lockStopCleanup(cleanupLock)) {
+    return false;
+  }
+  return completeDeferredStopLocked();
+}
+
+bool Acceptor::completeDeferredStopLocked() {
   if (!m_stopCleanupPending.exchange(false)) {
-    return;
+    return true;
   }
   auto retry = sg::make_scope_guard([&]() { m_stopCleanupPending = true; });
   onStop();
   retry.dismiss();
+  return !m_stopCleanupPending.load();
 }
+
+bool Acceptor::lockStopCleanup(std::unique_lock<std::mutex> &lock) {
+  if (activeAcceptor == this) {
+    return lock.try_lock();
+  }
+  lock.lock();
+  return true;
+}
+
+Acceptor *Acceptor::activateCurrentThread() {
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  return previous;
+}
+
+void Acceptor::restoreCurrentThread(Acceptor *previous) { activeAcceptor = previous; }
 
 bool Acceptor::isLoggedOn() const {
   Sessions sessions = m_sessions;

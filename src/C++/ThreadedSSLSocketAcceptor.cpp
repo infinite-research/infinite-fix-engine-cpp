@@ -319,18 +319,18 @@ void ThreadedSSLSocketAcceptor::onStop() {
   SocketToThread::iterator i;
   bool calledFromWorker = false;
 
+  time_t start = 0;
+  time_t now = 0;
+
+  ::time(&start);
+  while (isLoggedOn()) {
+    if (::time(&now) - 5 >= start) {
+      break;
+    }
+  }
+
   {
     Locker l(m_mutex);
-
-    time_t start = 0;
-    time_t now = 0;
-
-    ::time(&start);
-    while (isLoggedOn()) {
-      if (::time(&now) - 5 >= start) {
-        break;
-      }
-    }
 
     for (const auto &socketWithThread : m_threads) {
       if (thread_is_current(socketWithThread.second)) {
@@ -396,6 +396,8 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketAcceptorThread(void *p) {
   socket_handle s = info->m_socket;
   int port = info->m_port;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   int noDelay = 0;
   int sendBufSize = 0;
@@ -471,6 +473,8 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketConnectionThread(void *p) {
   ThreadedSSLSocketAcceptor *pAcceptor = info->m_pAcceptor;
   ThreadedSSLSocketConnection *pConnection = info->m_pConnection;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   socket_handle socket = pConnection->getSocket();
 
