@@ -199,6 +199,11 @@ public:
     session.m_state.lastReceivedTime(lastReceivedTime);
     session.m_state.lastSentTime(lastSentTime);
   }
+
+  static void logonFlags(Session &session, bool received, bool sent) {
+    session.m_state.receivedLogon(received);
+    session.m_state.sentLogon(sent);
+  }
 };
 } // namespace FIX
 
@@ -413,6 +418,37 @@ TEST_CASE("Session status queries do not wait for application callbacks", "[sess
   if (application.callbackQueried) {
     CHECK_FALSE(application.callbackStatus);
   }
+}
+
+TEST_CASE("Session Logon status supports concurrent flag transitions", "[session][status]") {
+  NullApplication application;
+  MemoryStoreFactory stores;
+  auto session = createConstructionSession(application, stores, nullptr, SessionID("FIX.4.2", "STATUS-FLAGS", "PEER"));
+  for (bool received : {false, true}) {
+    for (bool sent : {false, true}) {
+      SessionTestAccess::logonFlags(*session, received, sent);
+      CHECK(session->receivedLogon() == received);
+      CHECK(session->sentLogon() == sent);
+      CHECK(session->isLoggedOn() == (received && sent));
+    }
+  }
+  std::promise<void> start;
+  auto ready = start.get_future();
+  auto writer = std::async(std::launch::async, [&]() {
+    ready.wait();
+    for (int i = 0; i < 50000; ++i) {
+      SessionTestAccess::logonFlags(*session, (i & 1) != 0, (i & 2) != 0);
+    }
+  });
+  start.set_value();
+  int loggedOnSamples = 0;
+  // TSan checks the overlapping reads and writes; intermediate snapshots may differ.
+  for (int i = 0; i < 50000; ++i) {
+    loggedOnSamples += session->isLoggedOn();
+  }
+  writer.get();
+  CAPTURE(loggedOnSamples);
+  CHECK(session->isLoggedOn());
 }
 
 TEST_CASE("Session construction returns factory products and registration on failure", "[session][ownership]") {
