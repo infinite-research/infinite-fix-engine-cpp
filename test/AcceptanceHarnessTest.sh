@@ -282,7 +282,7 @@ start_listener "$CASE_ROOT/sentinel.port" || exit 1
 SENTINEL_PID=$LAST_PID
 FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
 if ! QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
-    FAKE_ACCEPTOR_MODE=live FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/live-at.pid" \
+    FAKE_ACCEPTOR_MODE=live FAKE_RUNNER_MODE=success FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/live-at.pid" \
     run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$FREE_PORT" >"$CASE_ROOT/live.out" 2>&1; then
   fail "runat rejected a live owned acceptor"
 fi

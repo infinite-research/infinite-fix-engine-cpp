@@ -157,7 +157,10 @@ public:
     return initiator.m_connector.getMonitor();
   }
   template <typename InitiatorType> static void dispatchDisconnect(InitiatorType &initiator, const SessionID &id) {
-    initiator.m_connector.block(initiator, true);
+    for (int attempt = 0; attempt < 100 && !initiator.m_connections.empty(); ++attempt) {
+      initiator.m_connector.block(initiator, true);
+      process_sleep(0.001);
+    }
     CHECK(initiator.m_connections.empty());
     CHECK(initiator.isDisconnected(id));
     CHECK_FALSE(Session::isSessionRegistered(id));
@@ -583,6 +586,7 @@ TEST_CASE("TLS handshake timeout drops monitored socket before reconnect", "[tls
   socket_handle stalled = socket_accept(listener);
   std::unique_ptr<socket_handle, decltype(closeSocket)> stalledGuard(&stalled, closeSocket);
   REQUIRE(stalled != INVALID_SOCKET_HANDLE);
+  REQUIRE(owner.poll());
   CHECK(SessionTestAccess::responder(*session) == nullptr);
   SessionTestAccess::expireTLSHandshake(owner, id);
   CHECK(SessionTestAccess::responder(*session) == nullptr);
