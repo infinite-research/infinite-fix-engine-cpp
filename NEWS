@@ -27,6 +27,11 @@ Acceptor stop and restart now serialize cleanup initiated from transport
 callbacks with concurrent external lifecycle calls. This extends Acceptor's
 class size; rebuild consumers against the matching library and headers.
 
+Session Logon status flags are now atomic so status queries do not wait for
+application callbacks. SessionState is consequently non-copyable; rebuild
+consumers with matching headers and library rather than mixing old inline
+accessors with the new atomic storage.
+
 HttpAcceptPort is no longer supported and configurations containing it are
 rejected. Use in-process Session methods behind a host-owned authenticated
 management boundary. Physical removal of the HTTP compatibility types is

@@ -421,7 +421,7 @@ TEST_CASE("Threaded acceptor callback stop is an external completion barrier") {
     REQUIRE(acceptor->isStopped());
     auto externalStop = std::async(std::launch::async, [&]() { acceptor->stop(true); });
     CHECK(externalStop.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout);
-    shutdown(client.value, SHUT_RDWR);
+    shutdown(client.value, 2);
     REQUIRE(returned.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
     externalStop.get();
 

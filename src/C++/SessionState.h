@@ -31,6 +31,8 @@
 #include "MessageStore.h"
 #include "Mutex.h"
 
+#include <atomic>
+
 namespace FIX {
 /// Maintains all of state for the Session class.
 class SessionState : public MessageStore, public Log {
@@ -239,9 +241,9 @@ public:
 
 private:
   bool m_enabled;
-  bool m_receivedLogon;
+  std::atomic<bool> m_receivedLogon;
   bool m_sentLogout;
-  bool m_sentLogon;
+  std::atomic<bool> m_sentLogon;
   bool m_sentReset;
   bool m_receivedReset;
   bool m_initiate;

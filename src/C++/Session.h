@@ -74,7 +74,7 @@ public:
   bool sentLogout() { return m_state.sentLogout(); }
   bool receivedLogon() { return m_state.receivedLogon(); }
   bool isLoggedOn() {
-    Locker locker(m_mutex);
+    // Status queries must not wait for a callback holding this or another session's mutex.
     return m_state.receivedLogon() && m_state.sentLogon();
   }
   void reset() EXCEPT(IOException) {

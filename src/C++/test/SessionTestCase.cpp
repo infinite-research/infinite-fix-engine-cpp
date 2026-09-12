@@ -63,6 +63,7 @@
 
 #include "catch_amalgamated.hpp"
 
+#include <functional>
 #include <future>
 #include <memory>
 #include <type_traits>
@@ -317,6 +318,7 @@ private:
 class ConstructionInitiator : public Initiator {
 public:
   using Initiator::Initiator;
+  using Initiator::setConnected;
 
 private:
   void onStart() override {}
@@ -353,6 +355,65 @@ Dictionary constructionSettings(const std::string &connectionType) {
   return settings;
 }
 } // namespace
+
+TEST_CASE("Session status queries do not wait for application callbacks", "[session][status]") {
+  const bool accepting = GENERATE(false, true);
+  CAPTURE(accepting);
+  struct Application : NullApplication {
+    std::function<bool()> query;
+    std::promise<void> entered;
+    std::promise<void> proceed;
+    bool queryFromCallback = false;
+    bool callbackQueried = false;
+    bool callbackStatus = true;
+
+    void toAdmin(Message &, const SessionID &) override {
+      entered.set_value();
+      // Bound cleanup even if an assertion or status query fails before release.
+      if (proceed.get_future().wait_for(std::chrono::seconds(5)) == std::future_status::ready && queryFromCallback) {
+        callbackStatus = query();
+        callbackQueried = true;
+      }
+    }
+  } application;
+  MemoryStoreFactory stores;
+  SessionSettings settings;
+  const SessionID id("FIX.4.2", "STATUS-QUERY", "PEER");
+  settings.set(constructionSettings(accepting ? "acceptor" : "initiator"));
+  settings.set(id, Dictionary());
+  std::unique_ptr<ConstructionAcceptor> acceptor;
+  std::unique_ptr<ConstructionInitiator> initiator;
+  Session *session;
+  if (accepting) {
+    acceptor = std::make_unique<ConstructionAcceptor>(application, stores, settings);
+    application.query = [&]() { return acceptor->isLoggedOn(); };
+    session = acceptor->getSession(id);
+  } else {
+    initiator = std::make_unique<ConstructionInitiator>(application, stores, settings);
+    initiator->setConnected(id);
+    application.query = [&]() { return initiator->isLoggedOn(); };
+    session = initiator->getSession(id);
+  }
+  REQUIRE(session);
+  auto entered = application.entered.get_future();
+  auto sender = std::async(std::launch::async, [&]() {
+    FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+    session->send(logon);
+  });
+  REQUIRE(entered.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+  auto status = std::async(std::launch::async, application.query);
+  const bool completed = status.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  CHECK(completed);
+  // On failure release the callback without re-entry, so the old deadlock cannot hang the test runner.
+  application.queryFromCallback = completed;
+  application.proceed.set_value();
+  sender.get();
+  CHECK_FALSE(status.get());
+  CHECK(application.callbackQueried);
+  if (application.callbackQueried) {
+    CHECK_FALSE(application.callbackStatus);
+  }
+}
 
 TEST_CASE("Session construction returns factory products and registration on failure", "[session][ownership]") {
   const SessionID id("FIX.4.2", "CONSTRUCTION", "PEER");
