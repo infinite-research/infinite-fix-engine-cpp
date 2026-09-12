@@ -10,6 +10,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+    windows:
+      name: Windows MSVC Release (TLS ${{ matrix.ssl }})
+      runs-on: windows-2022
+      timeout-minutes: 45
+      strategy:
+        fail-fast: false
+        matrix:
+          ssl: ['OFF', 'ON']
+      env:
+        OPENSSL_ROOT_DIR: C:/Program Files/OpenSSL
+      steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record candidate and tools
+        run: |
+          git rev-parse HEAD
+          cmake --version
+          ruby --version
+      - name: Configure MSVC
+        run: cmake -S . -B . -G "Visual Studio 17 2022" -A x64 -DHAVE_SSL=${{ matrix.ssl }}
+      - name: Build
+        id: build
+        run: cmake --build . --config Release --parallel 2
+      - name: Run registered tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ctest -C Release --output-on-failure --no-tests=error --timeout 180
+      - name: Verify acceptance ports
+        id: ports
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          foreach ($port in 6666..6670) {
+            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+            try { $listener.Start() } finally { $listener.Stop() }
+          }
+      - name: Run Windows acceptance harness
+        if: ${{ !cancelled() && steps.ports.outcome == 'success' }}
+        shell: cmd
+        working-directory: test
+        run: |
+          call runat.bat release 6666
+          exit /b %errorlevel%
+      - name: Run performance checks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        working-directory: test
+        run: |
+          .\release\pt\pt.exe --quickfix-spec-path ..\spec -# "~[network]"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\release\pt\pt.exe --quickfix-spec-path ..\spec -# "[network]" --port 6668
     build:
       runs-on: ${{ matrix.runner }}
       strategy:
