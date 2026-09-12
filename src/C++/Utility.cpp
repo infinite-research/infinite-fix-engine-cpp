@@ -234,9 +234,17 @@ socket_handle socket_createAcceptor(const std::string &value, int port, bool reu
   address.sin_family = PF_INET;
   address.sin_port = htons(port);
   address.sin_addr.s_addr = host;
+#ifdef _MSC_VER
+  (void)reuse;
+  if (socket_setsockopt(socket, SO_EXCLUSIVEADDRUSE) == SET_SOCK_OPT_ERROR) {
+    socketError = WSAGetLastError();
+    return INVALID_SOCKET_HANDLE;
+  }
+#else
   if (reuse) {
     socket_setsockopt(socket, SO_REUSEADDR);
   }
+#endif
 
   if (bind(socket, reinterpret_cast<sockaddr *>(&address), static_cast<socklen_t>(sizeof(address)))
       == BIND_SOCKET_ERROR) {

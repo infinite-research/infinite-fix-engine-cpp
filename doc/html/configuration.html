@@ -887,8 +887,13 @@ AppDataDictionary.FIX.4.4=FIX44.xml
         <tr align="left" valign="middle">
           <td><b>SocketReuseAddress</b></td>
 
-          <td>Indicates a socket should be created with
-          SO_REUSADDR, Only used with a SocketAcceptor</td>
+          <td>On POSIX, indicates a socket should be created with
+          SO_REUSEADDR. Windows listeners always use SO_EXCLUSIVEADDRUSE to
+          prevent another process from taking over the same address and port.
+          SocketReuseAddress does not bypass exclusive ownership on Windows;
+          startup fails while the address is owned, including while accepted
+          connections from a prior listener remain active. Only used with a
+          SocketAcceptor.</td>
 
           <td>Y<br>
           N</td>

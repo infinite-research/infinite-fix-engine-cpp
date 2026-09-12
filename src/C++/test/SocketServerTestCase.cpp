@@ -135,6 +135,31 @@ TEST_CASE("SocketServerTests") {
     CHECK(invalid.value == INVALID_SOCKET_HANDLE);
   }
 
+#ifdef _MSC_VER
+  SECTION("Windows listener ownership is exclusive") {
+    const bool reuse = GENERATE(false, true);
+    CAPTURE(reuse);
+    TestSocket listener(socket_createAcceptor("127.0.0.1", 0, reuse));
+    REQUIRE(listener.value != INVALID_SOCKET_HANDLE);
+
+    TestSocket challenger(socket_createConnector());
+    REQUIRE(challenger.value != INVALID_SOCKET_HANDLE);
+    const BOOL option = TRUE;
+    REQUIRE(
+        ::setsockopt(
+            challenger.value,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            reinterpret_cast<const char *>(&option),
+            sizeof(option))
+        != SET_SOCK_OPT_ERROR);
+    const int bindResult = socket_bind(challenger.value, "127.0.0.1", socket_hostport(listener.value));
+    const int bindError = bindResult == BIND_SOCKET_ERROR ? WSAGetLastError() : 0;
+    CHECK(bindResult == BIND_SOCKET_ERROR);
+    CHECK((bindError == WSAEACCES || bindError == WSAEADDRINUSE));
+  }
+#endif
+
   SECTION("listener reuse requires the same address") {
     SocketServer wildcardObject(0);
     const socket_handle wildcardListener = wildcardObject.add(0, true);

@@ -149,6 +149,7 @@ void socket_init();
 void socket_term();
 std::string socket_error();
 int socket_bind(socket_handle socket, const char *hostname, int port);
+/// Windows listeners always use exclusive address ownership; reuse applies to POSIX listeners.
 socket_handle socket_createAcceptor(int port, bool reuse = false);
 /// Create a listener on a numeric local IPv4 address; an empty address binds all interfaces.
 socket_handle socket_createAcceptor(const std::string &address, int port, bool reuse = false);
