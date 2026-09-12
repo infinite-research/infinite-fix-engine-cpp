@@ -162,7 +162,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build-assurance-evidence --parallel 2 \
+          cmake --build build-assurance-evidence --parallel 1 \
             2>&1 | tee "$RUNNER_TEMP/quickfix-assurance/build.log"
       - name: Analyze with CodeQL without remote upload
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
