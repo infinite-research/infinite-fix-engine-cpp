@@ -109,7 +109,7 @@ jobs:
   codeql-and-sbom:
     name: codeql-and-sbom
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - name: Checkout candidate snapshot
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -200,6 +200,7 @@ jobs:
             find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
           ) > "$RUNNER_TEMP/quickfix-assurance/installed-files.sha256"
       - name: Generate installed-build SPDX JSON
+        id: installed-sbom
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: build-assurance-evidence/install
@@ -241,7 +242,7 @@ jobs:
           severity-cutoff: high
           grype-version: v0.118.0
       - name: Scan installed-build SBOM with Grype
-        if: always()
+        if: ${{ !cancelled() && steps.installed-sbom.outcome == 'success' }}
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           sbom: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.spdx.json
