@@ -984,7 +984,7 @@ TEST_CASE("unauthenticated messages preserve persisted session state", "[admissi
     int authenticationCalls = 0, appCalls = 0, outgoingCalls = 0;
   } application;
   SessionID id("FIX.4.2", "AUTHENTICATION", "PEER");
-  FileStoreFactory stores("store");
+  TestFileStoreFactory stores("store");
   const auto now = UtcTimeStamp::now();
   {
     DataDictionaryProvider provider;
@@ -1004,9 +1004,9 @@ TEST_CASE("unauthenticated messages preserve persisted session state", "[admissi
     session.setResetOnLogon(resetOnLogon);
     session.setRefreshOnLogon(refreshOnLogon);
     if (refreshOnLogon) {
-      FileStore external(now, "store", id);
-      external.setNextSenderMsgSeqNum(11);
-      external.setNextTargetMsgSeqNum(13);
+      session.setNextSenderMsgSeqNum(11);
+      session.setNextTargetMsgSeqNum(13);
+      FileStoreTestAccess::setCachedSequenceNumbers(stores.store(), 7, 9);
     }
     const auto responder = SessionTestAccess::responder(session);
     Message message;

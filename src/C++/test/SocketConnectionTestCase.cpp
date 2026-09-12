@@ -110,7 +110,7 @@ TEST_CASE("connection admission preserves rejected session state", "[admission]"
     int authenticationCalls = 0, appCalls = 0, outgoingCalls = 0, logonCalls = 0, disconnectCalls = 0;
   } application;
   SessionID id("FIX.4.2", "ADMISSION", "PEER");
-  FileStoreFactory stores("store");
+  TestFileStoreFactory stores("store");
   SessionSettings settings;
   Dictionary dictionary;
   dictionary.setString(CONNECTION_TYPE, "acceptor");
@@ -133,15 +133,11 @@ TEST_CASE("connection admission preserves rejected session state", "[admission]"
     application.session = session;
     application.reject = reason == "authentication";
     session->setResponder(&application);
-    session->setNextSenderMsgSeqNum(7);
-    session->setNextTargetMsgSeqNum(9);
+    session->setNextSenderMsgSeqNum(11);
+    session->setNextTargetMsgSeqNum(13);
+    FileStoreTestAccess::setCachedSequenceNumbers(stores.store(), 7, 9);
     session->setRefreshOnLogon(true);
     session->setResetOnLogon(true);
-    {
-      FileStore external(UtcTimeStamp::now(), "store", id);
-      external.setNextSenderMsgSeqNum(11);
-      external.setNextTargetMsgSeqNum(13);
-    }
     if (reason == "address") {
       session->setAllowedRemoteAddresses({"192.0.2.1"});
     }
