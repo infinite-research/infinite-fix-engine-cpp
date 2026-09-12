@@ -387,7 +387,7 @@ std::uint64_t read64(const std::uint8_t *bytes) {
 
 struct PlanBuffers {
   std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> state{};
-  std::array<std::uint8_t, IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2> output{};
+  std::vector<std::uint8_t> output = std::vector<std::uint8_t>(IRFQ_INFINITE_MAX_OUTPUT_BYTES_V2);
   std::array<irfq_infinite_declarative_action_v2, IRFQ_INFINITE_MAX_ACTIONS_V2> actions{};
 
   irfq_infinite_prepare_response_v2 response() {
@@ -9136,7 +9136,7 @@ TEST_CASE(
   resume.kind = IRFQ_INFINITE_RESUME_OUTPUT_V2;
   PlanBuffers shortBuffers;
   shortBuffers.state.fill(0x5a);
-  shortBuffers.output.fill(0x5a);
+  std::fill(shortBuffers.output.begin(), shortBuffers.output.end(), 0x5a);
   std::memset(shortBuffers.actions.data(), 0x5a, sizeof(shortBuffers.actions));
   auto shortResult = poisonedPlanResponse(shortBuffers);
   const auto shortCapacity = initial.required_output_capacity - 1;
@@ -9244,7 +9244,7 @@ TEST_CASE(
   request.payload = {payload.data(), payload.size()};
   PlanBuffers insufficientBuffers;
   insufficientBuffers.state.fill(0x5a);
-  insufficientBuffers.output.fill(0x5a);
+  std::fill(insufficientBuffers.output.begin(), insufficientBuffers.output.end(), 0x5a);
   auto insufficient = poisonedPlanResponse(insufficientBuffers);
   insufficient.actions = nullptr;
   insufficient.action_capacity = 0;
@@ -12111,7 +12111,7 @@ TEST_CASE(
       const auto actionCapacityFailure = variant == "action-capacity";
       if (actionCapacityFailure) {
         invalidBuffers.state.fill(0x5a);
-        invalidBuffers.output.fill(0x5a);
+        std::fill(invalidBuffers.output.begin(), invalidBuffers.output.end(), 0x5a);
         std::memset(invalidBuffers.actions.data(), 0x5a, sizeof(invalidBuffers.actions));
       }
       auto invalid = actionCapacityFailure ? poisonedPlanResponse(invalidBuffers) : invalidBuffers.response();
