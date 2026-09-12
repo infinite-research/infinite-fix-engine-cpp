@@ -896,7 +896,7 @@ TEST_CASE("admission exceptions release only their responder and registration", 
       stores,
       id,
       dictionaries,
-      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      TimeRange(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0)),
       0,
       &hooks);
   session.setResponder(&previous);
@@ -1723,7 +1723,7 @@ TEST_CASE(
       stores,
       id,
       dictionaries,
-      TimeRange(UtcTimeOnly(), UtcTimeOnly()),
+      TimeRange(UtcTimeOnly(0, 0, 0), UtcTimeOnly(0, 0, 0)),
       0,
       nullptr);
   std::unique_ptr<ThreadedSocketConnection> plain;
