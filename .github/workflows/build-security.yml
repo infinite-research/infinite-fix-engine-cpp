@@ -134,11 +134,17 @@ jobs:
         with:
           path: .
           format: spdx-json
-          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-source.spdx.json
+          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-source.syft.spdx.json
           syft-version: v1.51.1
           upload-artifact: false
           upload-release-assets: false
           dependency-snapshot: false
+      - name: Verify and complete source dependency inventory
+        run: |
+          python3 -m unittest discover -s tools -p 'test_complete_sbom.py'
+          python3 tools/complete_sbom.py \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-source.syft.spdx.json" \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-source.spdx.json"
       - name: Install OpenSSL development files
         run: |
           sudo apt-get update
@@ -180,12 +186,6 @@ jobs:
         shell: bash
         run: |
           {
-            printf 'component\tversion\torigin\tlicense-file\n'
-            printf 'pugixml\t1.14\thttps://pugixml.org/\tlicenses/pugixml-MIT.txt\n'
-            printf 'double-conversion\tNOASSERTION\tNOASSERTION\tlicenses/double-conversion-BSD-3-Clause.txt\n'
-            printf 'scope_guard\tNOASSERTION\tNOASSERTION\tlicenses/scope_guard-Unlicense.txt\n'
-          } > "$RUNNER_TEMP/quickfix-assurance/vendored-dependencies.tsv"
-          {
             cmake --version
             c++ --version
             openssl version -a
@@ -200,16 +200,22 @@ jobs:
             find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
           ) > "$RUNNER_TEMP/quickfix-assurance/installed-files.sha256"
       - name: Generate installed-build SPDX JSON
-        id: installed-sbom
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: build-assurance-evidence/install
           format: spdx-json
-          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.spdx.json
+          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.syft.spdx.json
           syft-version: v1.51.1
           upload-artifact: false
           upload-release-assets: false
           dependency-snapshot: false
+      - name: Complete installed dependency inventory
+        id: installed-sbom
+        run: |
+          python3 tools/complete_sbom.py \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-installed.syft.spdx.json" \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-installed.spdx.json" \
+            --library build-assurance-evidence/install/lib/libquickfix.so --distro ubuntu
       - name: Retain three raw performance trials
         shell: bash
         env:
@@ -241,8 +247,11 @@ jobs:
           fail-build: true
           severity-cutoff: high
           grype-version: v0.118.0
+          add-cpes-if-none: true
       - name: Scan installed-build SBOM with Grype
         if: ${{ !cancelled() && steps.installed-sbom.outcome == 'success' }}
+        env:
+          GRYPE_DISTRO: ubuntu:24.04
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           sbom: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.spdx.json
@@ -251,6 +260,7 @@ jobs:
           fail-build: true
           severity-cutoff: high
           grype-version: v0.118.0
+          add-cpes-if-none: true
       - name: Upload assurance evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
