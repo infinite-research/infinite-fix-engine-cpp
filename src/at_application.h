@@ -37,6 +37,7 @@
 #include "fix50sp2/NewOrderSingle.h"
 #include "fix50sp2/SecurityDefinition.h"
 #include <map>
+#include <mutex>
 
 class MessageCracker : public FIX::MessageCracker {
 public:
@@ -49,12 +50,15 @@ public:
 
     std::pair<FIX::ClOrdID, FIX::SessionID> pair = std::make_pair(clOrdID, sessionID);
 
-    if (possResend == true) {
-      if (m_orderIDs.find(pair) != m_orderIDs.end()) {
-        return;
+    {
+      std::lock_guard<std::mutex> lock(m_orderIDsMutex);
+      if (possResend == true) {
+        if (m_orderIDs.find(pair) != m_orderIDs.end()) {
+          return;
+        }
       }
+      m_orderIDs.insert(pair);
     }
-    m_orderIDs.insert(pair);
     FIX::Session::sendToTarget(echo, sessionID);
   }
 
@@ -109,9 +113,11 @@ public:
   void onMessage(const FIX40::NewOrderSingle &message, const FIX::SessionID &sessionID) { process(message, sessionID); }
 
   std::set<std::pair<FIX::ClOrdID, FIX::SessionID>> m_orderIDs;
+  std::mutex m_orderIDsMutex;
 
 public:
   void reset(const FIX::SessionID &sessionID) {
+    std::lock_guard<std::mutex> lock(m_orderIDsMutex);
     for (auto it = m_orderIDs.begin(); it != m_orderIDs.end();) {
       if (it->second == sessionID) {
         it = m_orderIDs.erase(it);

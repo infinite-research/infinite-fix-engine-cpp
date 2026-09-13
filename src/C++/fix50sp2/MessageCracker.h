@@ -25,167 +25,168 @@
 
 #include "../SessionID.h"
 #include "../Exceptions.h"
+#include <utility>
 
 #include "../fix50sp2/Message.h"
+#include "IOI.h"
+#include "Advertisement.h"
+#include "ExecutionReport.h"
+#include "OrderCancelReject.h"
+#include "News.h"
+#include "Email.h"
+#include "NewOrderSingle.h"
+#include "NewOrderList.h"
+#include "OrderCancelRequest.h"
+#include "OrderCancelReplaceRequest.h"
+#include "OrderStatusRequest.h"
+#include "AllocationInstruction.h"
+#include "ListCancelRequest.h"
+#include "ListExecute.h"
+#include "ListStatusRequest.h"
+#include "ListStatus.h"
+#include "AllocationInstructionAck.h"
+#include "DontKnowTrade.h"
+#include "QuoteRequest.h"
+#include "Quote.h"
+#include "SettlementInstructions.h"
+#include "MarketDataRequest.h"
+#include "MarketDataSnapshotFullRefresh.h"
+#include "MarketDataIncrementalRefresh.h"
+#include "MarketDataRequestReject.h"
+#include "QuoteCancel.h"
+#include "QuoteStatusRequest.h"
+#include "MassQuoteAck.h"
+#include "SecurityDefinitionRequest.h"
+#include "SecurityDefinition.h"
+#include "SecurityStatusRequest.h"
+#include "SecurityStatus.h"
+#include "TradingSessionStatusRequest.h"
+#include "TradingSessionStatus.h"
+#include "MassQuote.h"
+#include "BusinessMessageReject.h"
+#include "BidRequest.h"
+#include "BidResponse.h"
+#include "ListStrikePrice.h"
+#include "RegistrationInstructions.h"
+#include "RegistrationInstructionsResponse.h"
+#include "OrderMassCancelRequest.h"
+#include "OrderMassCancelReport.h"
+#include "NewOrderCross.h"
+#include "CrossOrderCancelReplaceRequest.h"
+#include "CrossOrderCancelRequest.h"
+#include "SecurityTypeRequest.h"
+#include "SecurityTypes.h"
+#include "SecurityListRequest.h"
+#include "SecurityList.h"
+#include "DerivativeSecurityListRequest.h"
+#include "DerivativeSecurityList.h"
+#include "NewOrderMultileg.h"
+#include "MultilegOrderCancelReplace.h"
+#include "TradeCaptureReportRequest.h"
+#include "TradeCaptureReport.h"
+#include "OrderMassStatusRequest.h"
+#include "QuoteRequestReject.h"
+#include "RFQRequest.h"
+#include "QuoteStatusReport.h"
+#include "QuoteResponse.h"
+#include "Confirmation.h"
+#include "PositionMaintenanceRequest.h"
+#include "PositionMaintenanceReport.h"
+#include "RequestForPositions.h"
+#include "RequestForPositionsAck.h"
+#include "PositionReport.h"
+#include "TradeCaptureReportRequestAck.h"
+#include "TradeCaptureReportAck.h"
+#include "AllocationReport.h"
+#include "AllocationReportAck.h"
+#include "ConfirmationAck.h"
+#include "SettlementInstructionRequest.h"
+#include "AssignmentReport.h"
+#include "CollateralRequest.h"
+#include "CollateralAssignment.h"
+#include "CollateralResponse.h"
+#include "CollateralReport.h"
+#include "CollateralInquiry.h"
+#include "NetworkCounterpartySystemStatusRequest.h"
+#include "NetworkCounterpartySystemStatusResponse.h"
+#include "UserRequest.h"
+#include "UserResponse.h"
+#include "CollateralInquiryAck.h"
+#include "ConfirmationRequest.h"
+#include "ContraryIntentionReport.h"
+#include "SecurityDefinitionUpdateReport.h"
+#include "SecurityListUpdateReport.h"
+#include "AdjustedPositionReport.h"
+#include "AllocationInstructionAlert.h"
+#include "ExecutionAck.h"
+#include "TradingSessionList.h"
+#include "TradingSessionListRequest.h"
+#include "SettlementObligationReport.h"
+#include "DerivativeSecurityListUpdateReport.h"
+#include "TradingSessionListUpdateReport.h"
+#include "MarketDefinitionRequest.h"
+#include "MarketDefinition.h"
+#include "MarketDefinitionUpdateReport.h"
+#include "UserNotification.h"
+#include "OrderMassActionReport.h"
+#include "OrderMassActionRequest.h"
+#include "ApplicationMessageRequest.h"
+#include "ApplicationMessageRequestAck.h"
+#include "ApplicationMessageReport.h"
+#include "StreamAssignmentRequest.h"
+#include "StreamAssignmentReport.h"
+#include "StreamAssignmentReportACK.h"
+#include "MarginRequirementInquiry.h"
+#include "MarginRequirementInquiryAck.h"
+#include "MarginRequirementReport.h"
+#include "PartyDetailsListRequest.h"
+#include "PartyDetailsListReport.h"
+#include "PartyDetailsListUpdateReport.h"
+#include "PartyRiskLimitsRequest.h"
+#include "PartyRiskLimitsReport.h"
+#include "SecurityMassStatusRequest.h"
+#include "SecurityMassStatus.h"
+#include "AccountSummaryReport.h"
+#include "PartyRiskLimitsUpdateReport.h"
+#include "PartyRiskLimitsDefinitionRequest.h"
+#include "PartyRiskLimitsDefinitionRequestAck.h"
+#include "PartyEntitlementsRequest.h"
+#include "PartyEntitlementsReport.h"
+#include "QuoteAck.h"
+#include "PartyDetailsDefinitionRequest.h"
+#include "PartyDetailsDefinitionRequestAck.h"
+#include "PartyEntitlementsUpdateReport.h"
+#include "PartyEntitlementsDefinitionRequest.h"
+#include "PartyEntitlementsDefinitionRequestAck.h"
+#include "TradeMatchReport.h"
+#include "TradeMatchReportAck.h"
+#include "PartyRiskLimitsReportAck.h"
+#include "PartyRiskLimitCheckRequest.h"
+#include "PartyRiskLimitCheckRequestAck.h"
+#include "PartyActionRequest.h"
+#include "PartyActionReport.h"
+#include "MassOrder.h"
+#include "MassOrderAck.h"
+#include "PositionTransferInstruction.h"
+#include "PositionTransferInstructionAck.h"
+#include "PositionTransferReport.h"
+#include "MarketDataStatisticsRequest.h"
+#include "MarketDataStatisticsReport.h"
+#include "CollateralReportAck.h"
+#include "MarketDataReport.h"
+#include "CrossRequest.h"
+#include "CrossRequestAck.h"
+#include "AllocationInstructionAlertRequest.h"
+#include "AllocationInstructionAlertRequestAck.h"
+#include "TradeAggregationRequest.h"
+#include "TradeAggregationReport.h"
+#include "PayManagementReport.h"
+#include "PayManagementReportAck.h"
+#include "PayManagementRequest.h"
+#include "PayManagementRequestAck.h"
 
 namespace FIX50SP2
-{  
-  class IOI; 
-  class Advertisement; 
-  class ExecutionReport; 
-  class OrderCancelReject; 
-  class News; 
-  class Email; 
-  class NewOrderSingle; 
-  class NewOrderList; 
-  class OrderCancelRequest; 
-  class OrderCancelReplaceRequest; 
-  class OrderStatusRequest; 
-  class AllocationInstruction; 
-  class ListCancelRequest; 
-  class ListExecute; 
-  class ListStatusRequest; 
-  class ListStatus; 
-  class AllocationInstructionAck; 
-  class DontKnowTrade; 
-  class QuoteRequest; 
-  class Quote; 
-  class SettlementInstructions; 
-  class MarketDataRequest; 
-  class MarketDataSnapshotFullRefresh; 
-  class MarketDataIncrementalRefresh; 
-  class MarketDataRequestReject; 
-  class QuoteCancel; 
-  class QuoteStatusRequest; 
-  class MassQuoteAck; 
-  class SecurityDefinitionRequest; 
-  class SecurityDefinition; 
-  class SecurityStatusRequest; 
-  class SecurityStatus; 
-  class TradingSessionStatusRequest; 
-  class TradingSessionStatus; 
-  class MassQuote; 
-  class BusinessMessageReject; 
-  class BidRequest; 
-  class BidResponse; 
-  class ListStrikePrice; 
-  class RegistrationInstructions; 
-  class RegistrationInstructionsResponse; 
-  class OrderMassCancelRequest; 
-  class OrderMassCancelReport; 
-  class NewOrderCross; 
-  class CrossOrderCancelReplaceRequest; 
-  class CrossOrderCancelRequest; 
-  class SecurityTypeRequest; 
-  class SecurityTypes; 
-  class SecurityListRequest; 
-  class SecurityList; 
-  class DerivativeSecurityListRequest; 
-  class DerivativeSecurityList; 
-  class NewOrderMultileg; 
-  class MultilegOrderCancelReplace; 
-  class TradeCaptureReportRequest; 
-  class TradeCaptureReport; 
-  class OrderMassStatusRequest; 
-  class QuoteRequestReject; 
-  class RFQRequest; 
-  class QuoteStatusReport; 
-  class QuoteResponse; 
-  class Confirmation; 
-  class PositionMaintenanceRequest; 
-  class PositionMaintenanceReport; 
-  class RequestForPositions; 
-  class RequestForPositionsAck; 
-  class PositionReport; 
-  class TradeCaptureReportRequestAck; 
-  class TradeCaptureReportAck; 
-  class AllocationReport; 
-  class AllocationReportAck; 
-  class ConfirmationAck; 
-  class SettlementInstructionRequest; 
-  class AssignmentReport; 
-  class CollateralRequest; 
-  class CollateralAssignment; 
-  class CollateralResponse; 
-  class CollateralReport; 
-  class CollateralInquiry; 
-  class NetworkCounterpartySystemStatusRequest; 
-  class NetworkCounterpartySystemStatusResponse; 
-  class UserRequest; 
-  class UserResponse; 
-  class CollateralInquiryAck; 
-  class ConfirmationRequest; 
-  class ContraryIntentionReport; 
-  class SecurityDefinitionUpdateReport; 
-  class SecurityListUpdateReport; 
-  class AdjustedPositionReport; 
-  class AllocationInstructionAlert; 
-  class ExecutionAck; 
-  class TradingSessionList; 
-  class TradingSessionListRequest; 
-  class SettlementObligationReport; 
-  class DerivativeSecurityListUpdateReport; 
-  class TradingSessionListUpdateReport; 
-  class MarketDefinitionRequest; 
-  class MarketDefinition; 
-  class MarketDefinitionUpdateReport; 
-  class UserNotification; 
-  class OrderMassActionReport; 
-  class OrderMassActionRequest; 
-  class ApplicationMessageRequest; 
-  class ApplicationMessageRequestAck; 
-  class ApplicationMessageReport; 
-  class StreamAssignmentRequest; 
-  class StreamAssignmentReport; 
-  class StreamAssignmentReportACK; 
-  class MarginRequirementInquiry; 
-  class MarginRequirementInquiryAck; 
-  class MarginRequirementReport; 
-  class PartyDetailsListRequest; 
-  class PartyDetailsListReport; 
-  class PartyDetailsListUpdateReport; 
-  class PartyRiskLimitsRequest; 
-  class PartyRiskLimitsReport; 
-  class SecurityMassStatusRequest; 
-  class SecurityMassStatus; 
-  class AccountSummaryReport; 
-  class PartyRiskLimitsUpdateReport; 
-  class PartyRiskLimitsDefinitionRequest; 
-  class PartyRiskLimitsDefinitionRequestAck; 
-  class PartyEntitlementsRequest; 
-  class PartyEntitlementsReport; 
-  class QuoteAck; 
-  class PartyDetailsDefinitionRequest; 
-  class PartyDetailsDefinitionRequestAck; 
-  class PartyEntitlementsUpdateReport; 
-  class PartyEntitlementsDefinitionRequest; 
-  class PartyEntitlementsDefinitionRequestAck; 
-  class TradeMatchReport; 
-  class TradeMatchReportAck; 
-  class PartyRiskLimitsReportAck; 
-  class PartyRiskLimitCheckRequest; 
-  class PartyRiskLimitCheckRequestAck; 
-  class PartyActionRequest; 
-  class PartyActionReport; 
-  class MassOrder; 
-  class MassOrderAck; 
-  class PositionTransferInstruction; 
-  class PositionTransferInstructionAck; 
-  class PositionTransferReport; 
-  class MarketDataStatisticsRequest; 
-  class MarketDataStatisticsReport; 
-  class CollateralReportAck; 
-  class MarketDataReport; 
-  class CrossRequest; 
-  class CrossRequestAck; 
-  class AllocationInstructionAlertRequest; 
-  class AllocationInstructionAlertRequestAck; 
-  class TradeAggregationRequest; 
-  class TradeAggregationReport; 
-  class PayManagementReport; 
-  class PayManagementReportAck; 
-  class PayManagementRequest; 
-  class PayManagementRequestAck;
+{
 
   class MessageCracker
   {
@@ -665,7 +666,15 @@ namespace FIX50SP2
  virtual void onMessage( PayManagementRequestAck&, const FIX::SessionID& ) {} 
 
 public:
+  /// Preserve the version-message entry point while dispatching genuine typed values.
   void crack( const Message& message, 
+              const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<const FIX::Message&>(message), sessionID );
+  }
+
+  /// Dispatch a generic message without assuming a derived object lifetime.
+  void crack( const FIX::Message& message,
               const FIX::SessionID& sessionID )
   {
     const std::string & msgTypeValue 
@@ -673,477 +682,485 @@ public:
     
     
     if( msgTypeValue == "6" )
-      return onMessage( (const IOI&)message, sessionID );
+      return onMessage( IOI(message), sessionID );
     
     if( msgTypeValue == "7" )
-      return onMessage( (const Advertisement&)message, sessionID );
+      return onMessage( Advertisement(message), sessionID );
     
     if( msgTypeValue == "8" )
-      return onMessage( (const ExecutionReport&)message, sessionID );
+      return onMessage( ExecutionReport(message), sessionID );
     
     if( msgTypeValue == "9" )
-      return onMessage( (const OrderCancelReject&)message, sessionID );
+      return onMessage( OrderCancelReject(message), sessionID );
     
     if( msgTypeValue == "B" )
-      return onMessage( (const News&)message, sessionID );
+      return onMessage( News(message), sessionID );
     
     if( msgTypeValue == "C" )
-      return onMessage( (const Email&)message, sessionID );
+      return onMessage( Email(message), sessionID );
     
     if( msgTypeValue == "D" )
-      return onMessage( (const NewOrderSingle&)message, sessionID );
+      return onMessage( NewOrderSingle(message), sessionID );
     
     if( msgTypeValue == "E" )
-      return onMessage( (const NewOrderList&)message, sessionID );
+      return onMessage( NewOrderList(message), sessionID );
     
     if( msgTypeValue == "F" )
-      return onMessage( (const OrderCancelRequest&)message, sessionID );
+      return onMessage( OrderCancelRequest(message), sessionID );
     
     if( msgTypeValue == "G" )
-      return onMessage( (const OrderCancelReplaceRequest&)message, sessionID );
+      return onMessage( OrderCancelReplaceRequest(message), sessionID );
     
     if( msgTypeValue == "H" )
-      return onMessage( (const OrderStatusRequest&)message, sessionID );
+      return onMessage( OrderStatusRequest(message), sessionID );
     
     if( msgTypeValue == "J" )
-      return onMessage( (const AllocationInstruction&)message, sessionID );
+      return onMessage( AllocationInstruction(message), sessionID );
     
     if( msgTypeValue == "K" )
-      return onMessage( (const ListCancelRequest&)message, sessionID );
+      return onMessage( ListCancelRequest(message), sessionID );
     
     if( msgTypeValue == "L" )
-      return onMessage( (const ListExecute&)message, sessionID );
+      return onMessage( ListExecute(message), sessionID );
     
     if( msgTypeValue == "M" )
-      return onMessage( (const ListStatusRequest&)message, sessionID );
+      return onMessage( ListStatusRequest(message), sessionID );
     
     if( msgTypeValue == "N" )
-      return onMessage( (const ListStatus&)message, sessionID );
+      return onMessage( ListStatus(message), sessionID );
     
     if( msgTypeValue == "P" )
-      return onMessage( (const AllocationInstructionAck&)message, sessionID );
+      return onMessage( AllocationInstructionAck(message), sessionID );
     
     if( msgTypeValue == "Q" )
-      return onMessage( (const DontKnowTrade&)message, sessionID );
+      return onMessage( DontKnowTrade(message), sessionID );
     
     if( msgTypeValue == "R" )
-      return onMessage( (const QuoteRequest&)message, sessionID );
+      return onMessage( QuoteRequest(message), sessionID );
     
     if( msgTypeValue == "S" )
-      return onMessage( (const Quote&)message, sessionID );
+      return onMessage( Quote(message), sessionID );
     
     if( msgTypeValue == "T" )
-      return onMessage( (const SettlementInstructions&)message, sessionID );
+      return onMessage( SettlementInstructions(message), sessionID );
     
     if( msgTypeValue == "V" )
-      return onMessage( (const MarketDataRequest&)message, sessionID );
+      return onMessage( MarketDataRequest(message), sessionID );
     
     if( msgTypeValue == "W" )
-      return onMessage( (const MarketDataSnapshotFullRefresh&)message, sessionID );
+      return onMessage( MarketDataSnapshotFullRefresh(message), sessionID );
     
     if( msgTypeValue == "X" )
-      return onMessage( (const MarketDataIncrementalRefresh&)message, sessionID );
+      return onMessage( MarketDataIncrementalRefresh(message), sessionID );
     
     if( msgTypeValue == "Y" )
-      return onMessage( (const MarketDataRequestReject&)message, sessionID );
+      return onMessage( MarketDataRequestReject(message), sessionID );
     
     if( msgTypeValue == "Z" )
-      return onMessage( (const QuoteCancel&)message, sessionID );
+      return onMessage( QuoteCancel(message), sessionID );
     
     if( msgTypeValue == "a" )
-      return onMessage( (const QuoteStatusRequest&)message, sessionID );
+      return onMessage( QuoteStatusRequest(message), sessionID );
     
     if( msgTypeValue == "b" )
-      return onMessage( (const MassQuoteAck&)message, sessionID );
+      return onMessage( MassQuoteAck(message), sessionID );
     
     if( msgTypeValue == "c" )
-      return onMessage( (const SecurityDefinitionRequest&)message, sessionID );
+      return onMessage( SecurityDefinitionRequest(message), sessionID );
     
     if( msgTypeValue == "d" )
-      return onMessage( (const SecurityDefinition&)message, sessionID );
+      return onMessage( SecurityDefinition(message), sessionID );
     
     if( msgTypeValue == "e" )
-      return onMessage( (const SecurityStatusRequest&)message, sessionID );
+      return onMessage( SecurityStatusRequest(message), sessionID );
     
     if( msgTypeValue == "f" )
-      return onMessage( (const SecurityStatus&)message, sessionID );
+      return onMessage( SecurityStatus(message), sessionID );
     
     if( msgTypeValue == "g" )
-      return onMessage( (const TradingSessionStatusRequest&)message, sessionID );
+      return onMessage( TradingSessionStatusRequest(message), sessionID );
     
     if( msgTypeValue == "h" )
-      return onMessage( (const TradingSessionStatus&)message, sessionID );
+      return onMessage( TradingSessionStatus(message), sessionID );
     
     if( msgTypeValue == "i" )
-      return onMessage( (const MassQuote&)message, sessionID );
+      return onMessage( MassQuote(message), sessionID );
     
     if( msgTypeValue == "j" )
-      return onMessage( (const BusinessMessageReject&)message, sessionID );
+      return onMessage( BusinessMessageReject(message), sessionID );
     
     if( msgTypeValue == "k" )
-      return onMessage( (const BidRequest&)message, sessionID );
+      return onMessage( BidRequest(message), sessionID );
     
     if( msgTypeValue == "l" )
-      return onMessage( (const BidResponse&)message, sessionID );
+      return onMessage( BidResponse(message), sessionID );
     
     if( msgTypeValue == "m" )
-      return onMessage( (const ListStrikePrice&)message, sessionID );
+      return onMessage( ListStrikePrice(message), sessionID );
     
     if( msgTypeValue == "o" )
-      return onMessage( (const RegistrationInstructions&)message, sessionID );
+      return onMessage( RegistrationInstructions(message), sessionID );
     
     if( msgTypeValue == "p" )
-      return onMessage( (const RegistrationInstructionsResponse&)message, sessionID );
+      return onMessage( RegistrationInstructionsResponse(message), sessionID );
     
     if( msgTypeValue == "q" )
-      return onMessage( (const OrderMassCancelRequest&)message, sessionID );
+      return onMessage( OrderMassCancelRequest(message), sessionID );
     
     if( msgTypeValue == "r" )
-      return onMessage( (const OrderMassCancelReport&)message, sessionID );
+      return onMessage( OrderMassCancelReport(message), sessionID );
     
     if( msgTypeValue == "s" )
-      return onMessage( (const NewOrderCross&)message, sessionID );
+      return onMessage( NewOrderCross(message), sessionID );
     
     if( msgTypeValue == "t" )
-      return onMessage( (const CrossOrderCancelReplaceRequest&)message, sessionID );
+      return onMessage( CrossOrderCancelReplaceRequest(message), sessionID );
     
     if( msgTypeValue == "u" )
-      return onMessage( (const CrossOrderCancelRequest&)message, sessionID );
+      return onMessage( CrossOrderCancelRequest(message), sessionID );
     
     if( msgTypeValue == "v" )
-      return onMessage( (const SecurityTypeRequest&)message, sessionID );
+      return onMessage( SecurityTypeRequest(message), sessionID );
     
     if( msgTypeValue == "w" )
-      return onMessage( (const SecurityTypes&)message, sessionID );
+      return onMessage( SecurityTypes(message), sessionID );
     
     if( msgTypeValue == "x" )
-      return onMessage( (const SecurityListRequest&)message, sessionID );
+      return onMessage( SecurityListRequest(message), sessionID );
     
     if( msgTypeValue == "y" )
-      return onMessage( (const SecurityList&)message, sessionID );
+      return onMessage( SecurityList(message), sessionID );
     
     if( msgTypeValue == "z" )
-      return onMessage( (const DerivativeSecurityListRequest&)message, sessionID );
+      return onMessage( DerivativeSecurityListRequest(message), sessionID );
     
     if( msgTypeValue == "AA" )
-      return onMessage( (const DerivativeSecurityList&)message, sessionID );
+      return onMessage( DerivativeSecurityList(message), sessionID );
     
     if( msgTypeValue == "AB" )
-      return onMessage( (const NewOrderMultileg&)message, sessionID );
+      return onMessage( NewOrderMultileg(message), sessionID );
     
     if( msgTypeValue == "AC" )
-      return onMessage( (const MultilegOrderCancelReplace&)message, sessionID );
+      return onMessage( MultilegOrderCancelReplace(message), sessionID );
     
     if( msgTypeValue == "AD" )
-      return onMessage( (const TradeCaptureReportRequest&)message, sessionID );
+      return onMessage( TradeCaptureReportRequest(message), sessionID );
     
     if( msgTypeValue == "AE" )
-      return onMessage( (const TradeCaptureReport&)message, sessionID );
+      return onMessage( TradeCaptureReport(message), sessionID );
     
     if( msgTypeValue == "AF" )
-      return onMessage( (const OrderMassStatusRequest&)message, sessionID );
+      return onMessage( OrderMassStatusRequest(message), sessionID );
     
     if( msgTypeValue == "AG" )
-      return onMessage( (const QuoteRequestReject&)message, sessionID );
+      return onMessage( QuoteRequestReject(message), sessionID );
     
     if( msgTypeValue == "AH" )
-      return onMessage( (const RFQRequest&)message, sessionID );
+      return onMessage( RFQRequest(message), sessionID );
     
     if( msgTypeValue == "AI" )
-      return onMessage( (const QuoteStatusReport&)message, sessionID );
+      return onMessage( QuoteStatusReport(message), sessionID );
     
     if( msgTypeValue == "AJ" )
-      return onMessage( (const QuoteResponse&)message, sessionID );
+      return onMessage( QuoteResponse(message), sessionID );
     
     if( msgTypeValue == "AK" )
-      return onMessage( (const Confirmation&)message, sessionID );
+      return onMessage( Confirmation(message), sessionID );
     
     if( msgTypeValue == "AL" )
-      return onMessage( (const PositionMaintenanceRequest&)message, sessionID );
+      return onMessage( PositionMaintenanceRequest(message), sessionID );
     
     if( msgTypeValue == "AM" )
-      return onMessage( (const PositionMaintenanceReport&)message, sessionID );
+      return onMessage( PositionMaintenanceReport(message), sessionID );
     
     if( msgTypeValue == "AN" )
-      return onMessage( (const RequestForPositions&)message, sessionID );
+      return onMessage( RequestForPositions(message), sessionID );
     
     if( msgTypeValue == "AO" )
-      return onMessage( (const RequestForPositionsAck&)message, sessionID );
+      return onMessage( RequestForPositionsAck(message), sessionID );
     
     if( msgTypeValue == "AP" )
-      return onMessage( (const PositionReport&)message, sessionID );
+      return onMessage( PositionReport(message), sessionID );
     
     if( msgTypeValue == "AQ" )
-      return onMessage( (const TradeCaptureReportRequestAck&)message, sessionID );
+      return onMessage( TradeCaptureReportRequestAck(message), sessionID );
     
     if( msgTypeValue == "AR" )
-      return onMessage( (const TradeCaptureReportAck&)message, sessionID );
+      return onMessage( TradeCaptureReportAck(message), sessionID );
     
     if( msgTypeValue == "AS" )
-      return onMessage( (const AllocationReport&)message, sessionID );
+      return onMessage( AllocationReport(message), sessionID );
     
     if( msgTypeValue == "AT" )
-      return onMessage( (const AllocationReportAck&)message, sessionID );
+      return onMessage( AllocationReportAck(message), sessionID );
     
     if( msgTypeValue == "AU" )
-      return onMessage( (const ConfirmationAck&)message, sessionID );
+      return onMessage( ConfirmationAck(message), sessionID );
     
     if( msgTypeValue == "AV" )
-      return onMessage( (const SettlementInstructionRequest&)message, sessionID );
+      return onMessage( SettlementInstructionRequest(message), sessionID );
     
     if( msgTypeValue == "AW" )
-      return onMessage( (const AssignmentReport&)message, sessionID );
+      return onMessage( AssignmentReport(message), sessionID );
     
     if( msgTypeValue == "AX" )
-      return onMessage( (const CollateralRequest&)message, sessionID );
+      return onMessage( CollateralRequest(message), sessionID );
     
     if( msgTypeValue == "AY" )
-      return onMessage( (const CollateralAssignment&)message, sessionID );
+      return onMessage( CollateralAssignment(message), sessionID );
     
     if( msgTypeValue == "AZ" )
-      return onMessage( (const CollateralResponse&)message, sessionID );
+      return onMessage( CollateralResponse(message), sessionID );
     
     if( msgTypeValue == "BA" )
-      return onMessage( (const CollateralReport&)message, sessionID );
+      return onMessage( CollateralReport(message), sessionID );
     
     if( msgTypeValue == "BB" )
-      return onMessage( (const CollateralInquiry&)message, sessionID );
+      return onMessage( CollateralInquiry(message), sessionID );
     
     if( msgTypeValue == "BC" )
-      return onMessage( (const NetworkCounterpartySystemStatusRequest&)message, sessionID );
+      return onMessage( NetworkCounterpartySystemStatusRequest(message), sessionID );
     
     if( msgTypeValue == "BD" )
-      return onMessage( (const NetworkCounterpartySystemStatusResponse&)message, sessionID );
+      return onMessage( NetworkCounterpartySystemStatusResponse(message), sessionID );
     
     if( msgTypeValue == "BE" )
-      return onMessage( (const UserRequest&)message, sessionID );
+      return onMessage( UserRequest(message), sessionID );
     
     if( msgTypeValue == "BF" )
-      return onMessage( (const UserResponse&)message, sessionID );
+      return onMessage( UserResponse(message), sessionID );
     
     if( msgTypeValue == "BG" )
-      return onMessage( (const CollateralInquiryAck&)message, sessionID );
+      return onMessage( CollateralInquiryAck(message), sessionID );
     
     if( msgTypeValue == "BH" )
-      return onMessage( (const ConfirmationRequest&)message, sessionID );
+      return onMessage( ConfirmationRequest(message), sessionID );
     
     if( msgTypeValue == "BO" )
-      return onMessage( (const ContraryIntentionReport&)message, sessionID );
+      return onMessage( ContraryIntentionReport(message), sessionID );
     
     if( msgTypeValue == "BP" )
-      return onMessage( (const SecurityDefinitionUpdateReport&)message, sessionID );
+      return onMessage( SecurityDefinitionUpdateReport(message), sessionID );
     
     if( msgTypeValue == "BK" )
-      return onMessage( (const SecurityListUpdateReport&)message, sessionID );
+      return onMessage( SecurityListUpdateReport(message), sessionID );
     
     if( msgTypeValue == "BL" )
-      return onMessage( (const AdjustedPositionReport&)message, sessionID );
+      return onMessage( AdjustedPositionReport(message), sessionID );
     
     if( msgTypeValue == "BM" )
-      return onMessage( (const AllocationInstructionAlert&)message, sessionID );
+      return onMessage( AllocationInstructionAlert(message), sessionID );
     
     if( msgTypeValue == "BN" )
-      return onMessage( (const ExecutionAck&)message, sessionID );
+      return onMessage( ExecutionAck(message), sessionID );
     
     if( msgTypeValue == "BJ" )
-      return onMessage( (const TradingSessionList&)message, sessionID );
+      return onMessage( TradingSessionList(message), sessionID );
     
     if( msgTypeValue == "BI" )
-      return onMessage( (const TradingSessionListRequest&)message, sessionID );
+      return onMessage( TradingSessionListRequest(message), sessionID );
     
     if( msgTypeValue == "BQ" )
-      return onMessage( (const SettlementObligationReport&)message, sessionID );
+      return onMessage( SettlementObligationReport(message), sessionID );
     
     if( msgTypeValue == "BR" )
-      return onMessage( (const DerivativeSecurityListUpdateReport&)message, sessionID );
+      return onMessage( DerivativeSecurityListUpdateReport(message), sessionID );
     
     if( msgTypeValue == "BS" )
-      return onMessage( (const TradingSessionListUpdateReport&)message, sessionID );
+      return onMessage( TradingSessionListUpdateReport(message), sessionID );
     
     if( msgTypeValue == "BT" )
-      return onMessage( (const MarketDefinitionRequest&)message, sessionID );
+      return onMessage( MarketDefinitionRequest(message), sessionID );
     
     if( msgTypeValue == "BU" )
-      return onMessage( (const MarketDefinition&)message, sessionID );
+      return onMessage( MarketDefinition(message), sessionID );
     
     if( msgTypeValue == "BV" )
-      return onMessage( (const MarketDefinitionUpdateReport&)message, sessionID );
+      return onMessage( MarketDefinitionUpdateReport(message), sessionID );
     
     if( msgTypeValue == "CB" )
-      return onMessage( (const UserNotification&)message, sessionID );
+      return onMessage( UserNotification(message), sessionID );
     
     if( msgTypeValue == "BZ" )
-      return onMessage( (const OrderMassActionReport&)message, sessionID );
+      return onMessage( OrderMassActionReport(message), sessionID );
     
     if( msgTypeValue == "CA" )
-      return onMessage( (const OrderMassActionRequest&)message, sessionID );
+      return onMessage( OrderMassActionRequest(message), sessionID );
     
     if( msgTypeValue == "BW" )
-      return onMessage( (const ApplicationMessageRequest&)message, sessionID );
+      return onMessage( ApplicationMessageRequest(message), sessionID );
     
     if( msgTypeValue == "BX" )
-      return onMessage( (const ApplicationMessageRequestAck&)message, sessionID );
+      return onMessage( ApplicationMessageRequestAck(message), sessionID );
     
     if( msgTypeValue == "BY" )
-      return onMessage( (const ApplicationMessageReport&)message, sessionID );
+      return onMessage( ApplicationMessageReport(message), sessionID );
     
     if( msgTypeValue == "CC" )
-      return onMessage( (const StreamAssignmentRequest&)message, sessionID );
+      return onMessage( StreamAssignmentRequest(message), sessionID );
     
     if( msgTypeValue == "CD" )
-      return onMessage( (const StreamAssignmentReport&)message, sessionID );
+      return onMessage( StreamAssignmentReport(message), sessionID );
     
     if( msgTypeValue == "CE" )
-      return onMessage( (const StreamAssignmentReportACK&)message, sessionID );
+      return onMessage( StreamAssignmentReportACK(message), sessionID );
     
     if( msgTypeValue == "CH" )
-      return onMessage( (const MarginRequirementInquiry&)message, sessionID );
+      return onMessage( MarginRequirementInquiry(message), sessionID );
     
     if( msgTypeValue == "CI" )
-      return onMessage( (const MarginRequirementInquiryAck&)message, sessionID );
+      return onMessage( MarginRequirementInquiryAck(message), sessionID );
     
     if( msgTypeValue == "CJ" )
-      return onMessage( (const MarginRequirementReport&)message, sessionID );
+      return onMessage( MarginRequirementReport(message), sessionID );
     
     if( msgTypeValue == "CF" )
-      return onMessage( (const PartyDetailsListRequest&)message, sessionID );
+      return onMessage( PartyDetailsListRequest(message), sessionID );
     
     if( msgTypeValue == "CG" )
-      return onMessage( (const PartyDetailsListReport&)message, sessionID );
+      return onMessage( PartyDetailsListReport(message), sessionID );
     
     if( msgTypeValue == "CK" )
-      return onMessage( (const PartyDetailsListUpdateReport&)message, sessionID );
+      return onMessage( PartyDetailsListUpdateReport(message), sessionID );
     
     if( msgTypeValue == "CL" )
-      return onMessage( (const PartyRiskLimitsRequest&)message, sessionID );
+      return onMessage( PartyRiskLimitsRequest(message), sessionID );
     
     if( msgTypeValue == "CM" )
-      return onMessage( (const PartyRiskLimitsReport&)message, sessionID );
+      return onMessage( PartyRiskLimitsReport(message), sessionID );
     
     if( msgTypeValue == "CN" )
-      return onMessage( (const SecurityMassStatusRequest&)message, sessionID );
+      return onMessage( SecurityMassStatusRequest(message), sessionID );
     
     if( msgTypeValue == "CO" )
-      return onMessage( (const SecurityMassStatus&)message, sessionID );
+      return onMessage( SecurityMassStatus(message), sessionID );
     
     if( msgTypeValue == "CQ" )
-      return onMessage( (const AccountSummaryReport&)message, sessionID );
+      return onMessage( AccountSummaryReport(message), sessionID );
     
     if( msgTypeValue == "CR" )
-      return onMessage( (const PartyRiskLimitsUpdateReport&)message, sessionID );
+      return onMessage( PartyRiskLimitsUpdateReport(message), sessionID );
     
     if( msgTypeValue == "CS" )
-      return onMessage( (const PartyRiskLimitsDefinitionRequest&)message, sessionID );
+      return onMessage( PartyRiskLimitsDefinitionRequest(message), sessionID );
     
     if( msgTypeValue == "CT" )
-      return onMessage( (const PartyRiskLimitsDefinitionRequestAck&)message, sessionID );
+      return onMessage( PartyRiskLimitsDefinitionRequestAck(message), sessionID );
     
     if( msgTypeValue == "CU" )
-      return onMessage( (const PartyEntitlementsRequest&)message, sessionID );
+      return onMessage( PartyEntitlementsRequest(message), sessionID );
     
     if( msgTypeValue == "CV" )
-      return onMessage( (const PartyEntitlementsReport&)message, sessionID );
+      return onMessage( PartyEntitlementsReport(message), sessionID );
     
     if( msgTypeValue == "CW" )
-      return onMessage( (const QuoteAck&)message, sessionID );
+      return onMessage( QuoteAck(message), sessionID );
     
     if( msgTypeValue == "CX" )
-      return onMessage( (const PartyDetailsDefinitionRequest&)message, sessionID );
+      return onMessage( PartyDetailsDefinitionRequest(message), sessionID );
     
     if( msgTypeValue == "CY" )
-      return onMessage( (const PartyDetailsDefinitionRequestAck&)message, sessionID );
+      return onMessage( PartyDetailsDefinitionRequestAck(message), sessionID );
     
     if( msgTypeValue == "CZ" )
-      return onMessage( (const PartyEntitlementsUpdateReport&)message, sessionID );
+      return onMessage( PartyEntitlementsUpdateReport(message), sessionID );
     
     if( msgTypeValue == "DA" )
-      return onMessage( (const PartyEntitlementsDefinitionRequest&)message, sessionID );
+      return onMessage( PartyEntitlementsDefinitionRequest(message), sessionID );
     
     if( msgTypeValue == "DB" )
-      return onMessage( (const PartyEntitlementsDefinitionRequestAck&)message, sessionID );
+      return onMessage( PartyEntitlementsDefinitionRequestAck(message), sessionID );
     
     if( msgTypeValue == "DC" )
-      return onMessage( (const TradeMatchReport&)message, sessionID );
+      return onMessage( TradeMatchReport(message), sessionID );
     
     if( msgTypeValue == "DD" )
-      return onMessage( (const TradeMatchReportAck&)message, sessionID );
+      return onMessage( TradeMatchReportAck(message), sessionID );
     
     if( msgTypeValue == "DE" )
-      return onMessage( (const PartyRiskLimitsReportAck&)message, sessionID );
+      return onMessage( PartyRiskLimitsReportAck(message), sessionID );
     
     if( msgTypeValue == "DF" )
-      return onMessage( (const PartyRiskLimitCheckRequest&)message, sessionID );
+      return onMessage( PartyRiskLimitCheckRequest(message), sessionID );
     
     if( msgTypeValue == "DG" )
-      return onMessage( (const PartyRiskLimitCheckRequestAck&)message, sessionID );
+      return onMessage( PartyRiskLimitCheckRequestAck(message), sessionID );
     
     if( msgTypeValue == "DH" )
-      return onMessage( (const PartyActionRequest&)message, sessionID );
+      return onMessage( PartyActionRequest(message), sessionID );
     
     if( msgTypeValue == "DI" )
-      return onMessage( (const PartyActionReport&)message, sessionID );
+      return onMessage( PartyActionReport(message), sessionID );
     
     if( msgTypeValue == "DJ" )
-      return onMessage( (const MassOrder&)message, sessionID );
+      return onMessage( MassOrder(message), sessionID );
     
     if( msgTypeValue == "DK" )
-      return onMessage( (const MassOrderAck&)message, sessionID );
+      return onMessage( MassOrderAck(message), sessionID );
     
     if( msgTypeValue == "DL" )
-      return onMessage( (const PositionTransferInstruction&)message, sessionID );
+      return onMessage( PositionTransferInstruction(message), sessionID );
     
     if( msgTypeValue == "DM" )
-      return onMessage( (const PositionTransferInstructionAck&)message, sessionID );
+      return onMessage( PositionTransferInstructionAck(message), sessionID );
     
     if( msgTypeValue == "DN" )
-      return onMessage( (const PositionTransferReport&)message, sessionID );
+      return onMessage( PositionTransferReport(message), sessionID );
     
     if( msgTypeValue == "DO" )
-      return onMessage( (const MarketDataStatisticsRequest&)message, sessionID );
+      return onMessage( MarketDataStatisticsRequest(message), sessionID );
     
     if( msgTypeValue == "DP" )
-      return onMessage( (const MarketDataStatisticsReport&)message, sessionID );
+      return onMessage( MarketDataStatisticsReport(message), sessionID );
     
     if( msgTypeValue == "DQ" )
-      return onMessage( (const CollateralReportAck&)message, sessionID );
+      return onMessage( CollateralReportAck(message), sessionID );
     
     if( msgTypeValue == "DR" )
-      return onMessage( (const MarketDataReport&)message, sessionID );
+      return onMessage( MarketDataReport(message), sessionID );
     
     if( msgTypeValue == "DS" )
-      return onMessage( (const CrossRequest&)message, sessionID );
+      return onMessage( CrossRequest(message), sessionID );
     
     if( msgTypeValue == "DT" )
-      return onMessage( (const CrossRequestAck&)message, sessionID );
+      return onMessage( CrossRequestAck(message), sessionID );
     
     if( msgTypeValue == "DU" )
-      return onMessage( (const AllocationInstructionAlertRequest&)message, sessionID );
+      return onMessage( AllocationInstructionAlertRequest(message), sessionID );
     
     if( msgTypeValue == "DV" )
-      return onMessage( (const AllocationInstructionAlertRequestAck&)message, sessionID );
+      return onMessage( AllocationInstructionAlertRequestAck(message), sessionID );
     
     if( msgTypeValue == "DW" )
-      return onMessage( (const TradeAggregationRequest&)message, sessionID );
+      return onMessage( TradeAggregationRequest(message), sessionID );
     
     if( msgTypeValue == "DX" )
-      return onMessage( (const TradeAggregationReport&)message, sessionID );
+      return onMessage( TradeAggregationReport(message), sessionID );
     
     if( msgTypeValue == "EA" )
-      return onMessage( (const PayManagementReport&)message, sessionID );
+      return onMessage( PayManagementReport(message), sessionID );
     
     if( msgTypeValue == "EB" )
-      return onMessage( (const PayManagementReportAck&)message, sessionID );
+      return onMessage( PayManagementReportAck(message), sessionID );
     
     if( msgTypeValue == "DY" )
-      return onMessage( (const PayManagementRequest&)message, sessionID );
+      return onMessage( PayManagementRequest(message), sessionID );
     
     if( msgTypeValue == "DZ" )
-      return onMessage( (const PayManagementRequestAck&)message, sessionID );
+      return onMessage( PayManagementRequestAck(message), sessionID );
     
-    return onMessage( message, sessionID );
+    return onMessage( Message(message), sessionID );
   }
   
+  /// Preserve the version-message entry point and mutable callback behavior.
 void crack( Message& message, 
+            const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<FIX::Message&>(message), sessionID );
+  }
+
+  /// Copy callback changes back on both normal return and exception propagation.
+void crack( FIX::Message& message,
             const FIX::SessionID& sessionID )
   {
     const std::string & msgTypeValue 
@@ -1151,474 +1168,488 @@ void crack( Message& message,
     
     
     if( msgTypeValue == "6" )
-      return onMessage( (IOI&)message, sessionID );
+      return dispatch<IOI>( message, sessionID );
     
     if( msgTypeValue == "7" )
-      return onMessage( (Advertisement&)message, sessionID );
+      return dispatch<Advertisement>( message, sessionID );
     
     if( msgTypeValue == "8" )
-      return onMessage( (ExecutionReport&)message, sessionID );
+      return dispatch<ExecutionReport>( message, sessionID );
     
     if( msgTypeValue == "9" )
-      return onMessage( (OrderCancelReject&)message, sessionID );
+      return dispatch<OrderCancelReject>( message, sessionID );
     
     if( msgTypeValue == "B" )
-      return onMessage( (News&)message, sessionID );
+      return dispatch<News>( message, sessionID );
     
     if( msgTypeValue == "C" )
-      return onMessage( (Email&)message, sessionID );
+      return dispatch<Email>( message, sessionID );
     
     if( msgTypeValue == "D" )
-      return onMessage( (NewOrderSingle&)message, sessionID );
+      return dispatch<NewOrderSingle>( message, sessionID );
     
     if( msgTypeValue == "E" )
-      return onMessage( (NewOrderList&)message, sessionID );
+      return dispatch<NewOrderList>( message, sessionID );
     
     if( msgTypeValue == "F" )
-      return onMessage( (OrderCancelRequest&)message, sessionID );
+      return dispatch<OrderCancelRequest>( message, sessionID );
     
     if( msgTypeValue == "G" )
-      return onMessage( (OrderCancelReplaceRequest&)message, sessionID );
+      return dispatch<OrderCancelReplaceRequest>( message, sessionID );
     
     if( msgTypeValue == "H" )
-      return onMessage( (OrderStatusRequest&)message, sessionID );
+      return dispatch<OrderStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "J" )
-      return onMessage( (AllocationInstruction&)message, sessionID );
+      return dispatch<AllocationInstruction>( message, sessionID );
     
     if( msgTypeValue == "K" )
-      return onMessage( (ListCancelRequest&)message, sessionID );
+      return dispatch<ListCancelRequest>( message, sessionID );
     
     if( msgTypeValue == "L" )
-      return onMessage( (ListExecute&)message, sessionID );
+      return dispatch<ListExecute>( message, sessionID );
     
     if( msgTypeValue == "M" )
-      return onMessage( (ListStatusRequest&)message, sessionID );
+      return dispatch<ListStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "N" )
-      return onMessage( (ListStatus&)message, sessionID );
+      return dispatch<ListStatus>( message, sessionID );
     
     if( msgTypeValue == "P" )
-      return onMessage( (AllocationInstructionAck&)message, sessionID );
+      return dispatch<AllocationInstructionAck>( message, sessionID );
     
     if( msgTypeValue == "Q" )
-      return onMessage( (DontKnowTrade&)message, sessionID );
+      return dispatch<DontKnowTrade>( message, sessionID );
     
     if( msgTypeValue == "R" )
-      return onMessage( (QuoteRequest&)message, sessionID );
+      return dispatch<QuoteRequest>( message, sessionID );
     
     if( msgTypeValue == "S" )
-      return onMessage( (Quote&)message, sessionID );
+      return dispatch<Quote>( message, sessionID );
     
     if( msgTypeValue == "T" )
-      return onMessage( (SettlementInstructions&)message, sessionID );
+      return dispatch<SettlementInstructions>( message, sessionID );
     
     if( msgTypeValue == "V" )
-      return onMessage( (MarketDataRequest&)message, sessionID );
+      return dispatch<MarketDataRequest>( message, sessionID );
     
     if( msgTypeValue == "W" )
-      return onMessage( (MarketDataSnapshotFullRefresh&)message, sessionID );
+      return dispatch<MarketDataSnapshotFullRefresh>( message, sessionID );
     
     if( msgTypeValue == "X" )
-      return onMessage( (MarketDataIncrementalRefresh&)message, sessionID );
+      return dispatch<MarketDataIncrementalRefresh>( message, sessionID );
     
     if( msgTypeValue == "Y" )
-      return onMessage( (MarketDataRequestReject&)message, sessionID );
+      return dispatch<MarketDataRequestReject>( message, sessionID );
     
     if( msgTypeValue == "Z" )
-      return onMessage( (QuoteCancel&)message, sessionID );
+      return dispatch<QuoteCancel>( message, sessionID );
     
     if( msgTypeValue == "a" )
-      return onMessage( (QuoteStatusRequest&)message, sessionID );
+      return dispatch<QuoteStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "b" )
-      return onMessage( (MassQuoteAck&)message, sessionID );
+      return dispatch<MassQuoteAck>( message, sessionID );
     
     if( msgTypeValue == "c" )
-      return onMessage( (SecurityDefinitionRequest&)message, sessionID );
+      return dispatch<SecurityDefinitionRequest>( message, sessionID );
     
     if( msgTypeValue == "d" )
-      return onMessage( (SecurityDefinition&)message, sessionID );
+      return dispatch<SecurityDefinition>( message, sessionID );
     
     if( msgTypeValue == "e" )
-      return onMessage( (SecurityStatusRequest&)message, sessionID );
+      return dispatch<SecurityStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "f" )
-      return onMessage( (SecurityStatus&)message, sessionID );
+      return dispatch<SecurityStatus>( message, sessionID );
     
     if( msgTypeValue == "g" )
-      return onMessage( (TradingSessionStatusRequest&)message, sessionID );
+      return dispatch<TradingSessionStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "h" )
-      return onMessage( (TradingSessionStatus&)message, sessionID );
+      return dispatch<TradingSessionStatus>( message, sessionID );
     
     if( msgTypeValue == "i" )
-      return onMessage( (MassQuote&)message, sessionID );
+      return dispatch<MassQuote>( message, sessionID );
     
     if( msgTypeValue == "j" )
-      return onMessage( (BusinessMessageReject&)message, sessionID );
+      return dispatch<BusinessMessageReject>( message, sessionID );
     
     if( msgTypeValue == "k" )
-      return onMessage( (BidRequest&)message, sessionID );
+      return dispatch<BidRequest>( message, sessionID );
     
     if( msgTypeValue == "l" )
-      return onMessage( (BidResponse&)message, sessionID );
+      return dispatch<BidResponse>( message, sessionID );
     
     if( msgTypeValue == "m" )
-      return onMessage( (ListStrikePrice&)message, sessionID );
+      return dispatch<ListStrikePrice>( message, sessionID );
     
     if( msgTypeValue == "o" )
-      return onMessage( (RegistrationInstructions&)message, sessionID );
+      return dispatch<RegistrationInstructions>( message, sessionID );
     
     if( msgTypeValue == "p" )
-      return onMessage( (RegistrationInstructionsResponse&)message, sessionID );
+      return dispatch<RegistrationInstructionsResponse>( message, sessionID );
     
     if( msgTypeValue == "q" )
-      return onMessage( (OrderMassCancelRequest&)message, sessionID );
+      return dispatch<OrderMassCancelRequest>( message, sessionID );
     
     if( msgTypeValue == "r" )
-      return onMessage( (OrderMassCancelReport&)message, sessionID );
+      return dispatch<OrderMassCancelReport>( message, sessionID );
     
     if( msgTypeValue == "s" )
-      return onMessage( (NewOrderCross&)message, sessionID );
+      return dispatch<NewOrderCross>( message, sessionID );
     
     if( msgTypeValue == "t" )
-      return onMessage( (CrossOrderCancelReplaceRequest&)message, sessionID );
+      return dispatch<CrossOrderCancelReplaceRequest>( message, sessionID );
     
     if( msgTypeValue == "u" )
-      return onMessage( (CrossOrderCancelRequest&)message, sessionID );
+      return dispatch<CrossOrderCancelRequest>( message, sessionID );
     
     if( msgTypeValue == "v" )
-      return onMessage( (SecurityTypeRequest&)message, sessionID );
+      return dispatch<SecurityTypeRequest>( message, sessionID );
     
     if( msgTypeValue == "w" )
-      return onMessage( (SecurityTypes&)message, sessionID );
+      return dispatch<SecurityTypes>( message, sessionID );
     
     if( msgTypeValue == "x" )
-      return onMessage( (SecurityListRequest&)message, sessionID );
+      return dispatch<SecurityListRequest>( message, sessionID );
     
     if( msgTypeValue == "y" )
-      return onMessage( (SecurityList&)message, sessionID );
+      return dispatch<SecurityList>( message, sessionID );
     
     if( msgTypeValue == "z" )
-      return onMessage( (DerivativeSecurityListRequest&)message, sessionID );
+      return dispatch<DerivativeSecurityListRequest>( message, sessionID );
     
     if( msgTypeValue == "AA" )
-      return onMessage( (DerivativeSecurityList&)message, sessionID );
+      return dispatch<DerivativeSecurityList>( message, sessionID );
     
     if( msgTypeValue == "AB" )
-      return onMessage( (NewOrderMultileg&)message, sessionID );
+      return dispatch<NewOrderMultileg>( message, sessionID );
     
     if( msgTypeValue == "AC" )
-      return onMessage( (MultilegOrderCancelReplace&)message, sessionID );
+      return dispatch<MultilegOrderCancelReplace>( message, sessionID );
     
     if( msgTypeValue == "AD" )
-      return onMessage( (TradeCaptureReportRequest&)message, sessionID );
+      return dispatch<TradeCaptureReportRequest>( message, sessionID );
     
     if( msgTypeValue == "AE" )
-      return onMessage( (TradeCaptureReport&)message, sessionID );
+      return dispatch<TradeCaptureReport>( message, sessionID );
     
     if( msgTypeValue == "AF" )
-      return onMessage( (OrderMassStatusRequest&)message, sessionID );
+      return dispatch<OrderMassStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "AG" )
-      return onMessage( (QuoteRequestReject&)message, sessionID );
+      return dispatch<QuoteRequestReject>( message, sessionID );
     
     if( msgTypeValue == "AH" )
-      return onMessage( (RFQRequest&)message, sessionID );
+      return dispatch<RFQRequest>( message, sessionID );
     
     if( msgTypeValue == "AI" )
-      return onMessage( (QuoteStatusReport&)message, sessionID );
+      return dispatch<QuoteStatusReport>( message, sessionID );
     
     if( msgTypeValue == "AJ" )
-      return onMessage( (QuoteResponse&)message, sessionID );
+      return dispatch<QuoteResponse>( message, sessionID );
     
     if( msgTypeValue == "AK" )
-      return onMessage( (Confirmation&)message, sessionID );
+      return dispatch<Confirmation>( message, sessionID );
     
     if( msgTypeValue == "AL" )
-      return onMessage( (PositionMaintenanceRequest&)message, sessionID );
+      return dispatch<PositionMaintenanceRequest>( message, sessionID );
     
     if( msgTypeValue == "AM" )
-      return onMessage( (PositionMaintenanceReport&)message, sessionID );
+      return dispatch<PositionMaintenanceReport>( message, sessionID );
     
     if( msgTypeValue == "AN" )
-      return onMessage( (RequestForPositions&)message, sessionID );
+      return dispatch<RequestForPositions>( message, sessionID );
     
     if( msgTypeValue == "AO" )
-      return onMessage( (RequestForPositionsAck&)message, sessionID );
+      return dispatch<RequestForPositionsAck>( message, sessionID );
     
     if( msgTypeValue == "AP" )
-      return onMessage( (PositionReport&)message, sessionID );
+      return dispatch<PositionReport>( message, sessionID );
     
     if( msgTypeValue == "AQ" )
-      return onMessage( (TradeCaptureReportRequestAck&)message, sessionID );
+      return dispatch<TradeCaptureReportRequestAck>( message, sessionID );
     
     if( msgTypeValue == "AR" )
-      return onMessage( (TradeCaptureReportAck&)message, sessionID );
+      return dispatch<TradeCaptureReportAck>( message, sessionID );
     
     if( msgTypeValue == "AS" )
-      return onMessage( (AllocationReport&)message, sessionID );
+      return dispatch<AllocationReport>( message, sessionID );
     
     if( msgTypeValue == "AT" )
-      return onMessage( (AllocationReportAck&)message, sessionID );
+      return dispatch<AllocationReportAck>( message, sessionID );
     
     if( msgTypeValue == "AU" )
-      return onMessage( (ConfirmationAck&)message, sessionID );
+      return dispatch<ConfirmationAck>( message, sessionID );
     
     if( msgTypeValue == "AV" )
-      return onMessage( (SettlementInstructionRequest&)message, sessionID );
+      return dispatch<SettlementInstructionRequest>( message, sessionID );
     
     if( msgTypeValue == "AW" )
-      return onMessage( (AssignmentReport&)message, sessionID );
+      return dispatch<AssignmentReport>( message, sessionID );
     
     if( msgTypeValue == "AX" )
-      return onMessage( (CollateralRequest&)message, sessionID );
+      return dispatch<CollateralRequest>( message, sessionID );
     
     if( msgTypeValue == "AY" )
-      return onMessage( (CollateralAssignment&)message, sessionID );
+      return dispatch<CollateralAssignment>( message, sessionID );
     
     if( msgTypeValue == "AZ" )
-      return onMessage( (CollateralResponse&)message, sessionID );
+      return dispatch<CollateralResponse>( message, sessionID );
     
     if( msgTypeValue == "BA" )
-      return onMessage( (CollateralReport&)message, sessionID );
+      return dispatch<CollateralReport>( message, sessionID );
     
     if( msgTypeValue == "BB" )
-      return onMessage( (CollateralInquiry&)message, sessionID );
+      return dispatch<CollateralInquiry>( message, sessionID );
     
     if( msgTypeValue == "BC" )
-      return onMessage( (NetworkCounterpartySystemStatusRequest&)message, sessionID );
+      return dispatch<NetworkCounterpartySystemStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "BD" )
-      return onMessage( (NetworkCounterpartySystemStatusResponse&)message, sessionID );
+      return dispatch<NetworkCounterpartySystemStatusResponse>( message, sessionID );
     
     if( msgTypeValue == "BE" )
-      return onMessage( (UserRequest&)message, sessionID );
+      return dispatch<UserRequest>( message, sessionID );
     
     if( msgTypeValue == "BF" )
-      return onMessage( (UserResponse&)message, sessionID );
+      return dispatch<UserResponse>( message, sessionID );
     
     if( msgTypeValue == "BG" )
-      return onMessage( (CollateralInquiryAck&)message, sessionID );
+      return dispatch<CollateralInquiryAck>( message, sessionID );
     
     if( msgTypeValue == "BH" )
-      return onMessage( (ConfirmationRequest&)message, sessionID );
+      return dispatch<ConfirmationRequest>( message, sessionID );
     
     if( msgTypeValue == "BO" )
-      return onMessage( (ContraryIntentionReport&)message, sessionID );
+      return dispatch<ContraryIntentionReport>( message, sessionID );
     
     if( msgTypeValue == "BP" )
-      return onMessage( (SecurityDefinitionUpdateReport&)message, sessionID );
+      return dispatch<SecurityDefinitionUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "BK" )
-      return onMessage( (SecurityListUpdateReport&)message, sessionID );
+      return dispatch<SecurityListUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "BL" )
-      return onMessage( (AdjustedPositionReport&)message, sessionID );
+      return dispatch<AdjustedPositionReport>( message, sessionID );
     
     if( msgTypeValue == "BM" )
-      return onMessage( (AllocationInstructionAlert&)message, sessionID );
+      return dispatch<AllocationInstructionAlert>( message, sessionID );
     
     if( msgTypeValue == "BN" )
-      return onMessage( (ExecutionAck&)message, sessionID );
+      return dispatch<ExecutionAck>( message, sessionID );
     
     if( msgTypeValue == "BJ" )
-      return onMessage( (TradingSessionList&)message, sessionID );
+      return dispatch<TradingSessionList>( message, sessionID );
     
     if( msgTypeValue == "BI" )
-      return onMessage( (TradingSessionListRequest&)message, sessionID );
+      return dispatch<TradingSessionListRequest>( message, sessionID );
     
     if( msgTypeValue == "BQ" )
-      return onMessage( (SettlementObligationReport&)message, sessionID );
+      return dispatch<SettlementObligationReport>( message, sessionID );
     
     if( msgTypeValue == "BR" )
-      return onMessage( (DerivativeSecurityListUpdateReport&)message, sessionID );
+      return dispatch<DerivativeSecurityListUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "BS" )
-      return onMessage( (TradingSessionListUpdateReport&)message, sessionID );
+      return dispatch<TradingSessionListUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "BT" )
-      return onMessage( (MarketDefinitionRequest&)message, sessionID );
+      return dispatch<MarketDefinitionRequest>( message, sessionID );
     
     if( msgTypeValue == "BU" )
-      return onMessage( (MarketDefinition&)message, sessionID );
+      return dispatch<MarketDefinition>( message, sessionID );
     
     if( msgTypeValue == "BV" )
-      return onMessage( (MarketDefinitionUpdateReport&)message, sessionID );
+      return dispatch<MarketDefinitionUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "CB" )
-      return onMessage( (UserNotification&)message, sessionID );
+      return dispatch<UserNotification>( message, sessionID );
     
     if( msgTypeValue == "BZ" )
-      return onMessage( (OrderMassActionReport&)message, sessionID );
+      return dispatch<OrderMassActionReport>( message, sessionID );
     
     if( msgTypeValue == "CA" )
-      return onMessage( (OrderMassActionRequest&)message, sessionID );
+      return dispatch<OrderMassActionRequest>( message, sessionID );
     
     if( msgTypeValue == "BW" )
-      return onMessage( (ApplicationMessageRequest&)message, sessionID );
+      return dispatch<ApplicationMessageRequest>( message, sessionID );
     
     if( msgTypeValue == "BX" )
-      return onMessage( (ApplicationMessageRequestAck&)message, sessionID );
+      return dispatch<ApplicationMessageRequestAck>( message, sessionID );
     
     if( msgTypeValue == "BY" )
-      return onMessage( (ApplicationMessageReport&)message, sessionID );
+      return dispatch<ApplicationMessageReport>( message, sessionID );
     
     if( msgTypeValue == "CC" )
-      return onMessage( (StreamAssignmentRequest&)message, sessionID );
+      return dispatch<StreamAssignmentRequest>( message, sessionID );
     
     if( msgTypeValue == "CD" )
-      return onMessage( (StreamAssignmentReport&)message, sessionID );
+      return dispatch<StreamAssignmentReport>( message, sessionID );
     
     if( msgTypeValue == "CE" )
-      return onMessage( (StreamAssignmentReportACK&)message, sessionID );
+      return dispatch<StreamAssignmentReportACK>( message, sessionID );
     
     if( msgTypeValue == "CH" )
-      return onMessage( (MarginRequirementInquiry&)message, sessionID );
+      return dispatch<MarginRequirementInquiry>( message, sessionID );
     
     if( msgTypeValue == "CI" )
-      return onMessage( (MarginRequirementInquiryAck&)message, sessionID );
+      return dispatch<MarginRequirementInquiryAck>( message, sessionID );
     
     if( msgTypeValue == "CJ" )
-      return onMessage( (MarginRequirementReport&)message, sessionID );
+      return dispatch<MarginRequirementReport>( message, sessionID );
     
     if( msgTypeValue == "CF" )
-      return onMessage( (PartyDetailsListRequest&)message, sessionID );
+      return dispatch<PartyDetailsListRequest>( message, sessionID );
     
     if( msgTypeValue == "CG" )
-      return onMessage( (PartyDetailsListReport&)message, sessionID );
+      return dispatch<PartyDetailsListReport>( message, sessionID );
     
     if( msgTypeValue == "CK" )
-      return onMessage( (PartyDetailsListUpdateReport&)message, sessionID );
+      return dispatch<PartyDetailsListUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "CL" )
-      return onMessage( (PartyRiskLimitsRequest&)message, sessionID );
+      return dispatch<PartyRiskLimitsRequest>( message, sessionID );
     
     if( msgTypeValue == "CM" )
-      return onMessage( (PartyRiskLimitsReport&)message, sessionID );
+      return dispatch<PartyRiskLimitsReport>( message, sessionID );
     
     if( msgTypeValue == "CN" )
-      return onMessage( (SecurityMassStatusRequest&)message, sessionID );
+      return dispatch<SecurityMassStatusRequest>( message, sessionID );
     
     if( msgTypeValue == "CO" )
-      return onMessage( (SecurityMassStatus&)message, sessionID );
+      return dispatch<SecurityMassStatus>( message, sessionID );
     
     if( msgTypeValue == "CQ" )
-      return onMessage( (AccountSummaryReport&)message, sessionID );
+      return dispatch<AccountSummaryReport>( message, sessionID );
     
     if( msgTypeValue == "CR" )
-      return onMessage( (PartyRiskLimitsUpdateReport&)message, sessionID );
+      return dispatch<PartyRiskLimitsUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "CS" )
-      return onMessage( (PartyRiskLimitsDefinitionRequest&)message, sessionID );
+      return dispatch<PartyRiskLimitsDefinitionRequest>( message, sessionID );
     
     if( msgTypeValue == "CT" )
-      return onMessage( (PartyRiskLimitsDefinitionRequestAck&)message, sessionID );
+      return dispatch<PartyRiskLimitsDefinitionRequestAck>( message, sessionID );
     
     if( msgTypeValue == "CU" )
-      return onMessage( (PartyEntitlementsRequest&)message, sessionID );
+      return dispatch<PartyEntitlementsRequest>( message, sessionID );
     
     if( msgTypeValue == "CV" )
-      return onMessage( (PartyEntitlementsReport&)message, sessionID );
+      return dispatch<PartyEntitlementsReport>( message, sessionID );
     
     if( msgTypeValue == "CW" )
-      return onMessage( (QuoteAck&)message, sessionID );
+      return dispatch<QuoteAck>( message, sessionID );
     
     if( msgTypeValue == "CX" )
-      return onMessage( (PartyDetailsDefinitionRequest&)message, sessionID );
+      return dispatch<PartyDetailsDefinitionRequest>( message, sessionID );
     
     if( msgTypeValue == "CY" )
-      return onMessage( (PartyDetailsDefinitionRequestAck&)message, sessionID );
+      return dispatch<PartyDetailsDefinitionRequestAck>( message, sessionID );
     
     if( msgTypeValue == "CZ" )
-      return onMessage( (PartyEntitlementsUpdateReport&)message, sessionID );
+      return dispatch<PartyEntitlementsUpdateReport>( message, sessionID );
     
     if( msgTypeValue == "DA" )
-      return onMessage( (PartyEntitlementsDefinitionRequest&)message, sessionID );
+      return dispatch<PartyEntitlementsDefinitionRequest>( message, sessionID );
     
     if( msgTypeValue == "DB" )
-      return onMessage( (PartyEntitlementsDefinitionRequestAck&)message, sessionID );
+      return dispatch<PartyEntitlementsDefinitionRequestAck>( message, sessionID );
     
     if( msgTypeValue == "DC" )
-      return onMessage( (TradeMatchReport&)message, sessionID );
+      return dispatch<TradeMatchReport>( message, sessionID );
     
     if( msgTypeValue == "DD" )
-      return onMessage( (TradeMatchReportAck&)message, sessionID );
+      return dispatch<TradeMatchReportAck>( message, sessionID );
     
     if( msgTypeValue == "DE" )
-      return onMessage( (PartyRiskLimitsReportAck&)message, sessionID );
+      return dispatch<PartyRiskLimitsReportAck>( message, sessionID );
     
     if( msgTypeValue == "DF" )
-      return onMessage( (PartyRiskLimitCheckRequest&)message, sessionID );
+      return dispatch<PartyRiskLimitCheckRequest>( message, sessionID );
     
     if( msgTypeValue == "DG" )
-      return onMessage( (PartyRiskLimitCheckRequestAck&)message, sessionID );
+      return dispatch<PartyRiskLimitCheckRequestAck>( message, sessionID );
     
     if( msgTypeValue == "DH" )
-      return onMessage( (PartyActionRequest&)message, sessionID );
+      return dispatch<PartyActionRequest>( message, sessionID );
     
     if( msgTypeValue == "DI" )
-      return onMessage( (PartyActionReport&)message, sessionID );
+      return dispatch<PartyActionReport>( message, sessionID );
     
     if( msgTypeValue == "DJ" )
-      return onMessage( (MassOrder&)message, sessionID );
+      return dispatch<MassOrder>( message, sessionID );
     
     if( msgTypeValue == "DK" )
-      return onMessage( (MassOrderAck&)message, sessionID );
+      return dispatch<MassOrderAck>( message, sessionID );
     
     if( msgTypeValue == "DL" )
-      return onMessage( (PositionTransferInstruction&)message, sessionID );
+      return dispatch<PositionTransferInstruction>( message, sessionID );
     
     if( msgTypeValue == "DM" )
-      return onMessage( (PositionTransferInstructionAck&)message, sessionID );
+      return dispatch<PositionTransferInstructionAck>( message, sessionID );
     
     if( msgTypeValue == "DN" )
-      return onMessage( (PositionTransferReport&)message, sessionID );
+      return dispatch<PositionTransferReport>( message, sessionID );
     
     if( msgTypeValue == "DO" )
-      return onMessage( (MarketDataStatisticsRequest&)message, sessionID );
+      return dispatch<MarketDataStatisticsRequest>( message, sessionID );
     
     if( msgTypeValue == "DP" )
-      return onMessage( (MarketDataStatisticsReport&)message, sessionID );
+      return dispatch<MarketDataStatisticsReport>( message, sessionID );
     
     if( msgTypeValue == "DQ" )
-      return onMessage( (CollateralReportAck&)message, sessionID );
+      return dispatch<CollateralReportAck>( message, sessionID );
     
     if( msgTypeValue == "DR" )
-      return onMessage( (MarketDataReport&)message, sessionID );
+      return dispatch<MarketDataReport>( message, sessionID );
     
     if( msgTypeValue == "DS" )
-      return onMessage( (CrossRequest&)message, sessionID );
+      return dispatch<CrossRequest>( message, sessionID );
     
     if( msgTypeValue == "DT" )
-      return onMessage( (CrossRequestAck&)message, sessionID );
+      return dispatch<CrossRequestAck>( message, sessionID );
     
     if( msgTypeValue == "DU" )
-      return onMessage( (AllocationInstructionAlertRequest&)message, sessionID );
+      return dispatch<AllocationInstructionAlertRequest>( message, sessionID );
     
     if( msgTypeValue == "DV" )
-      return onMessage( (AllocationInstructionAlertRequestAck&)message, sessionID );
+      return dispatch<AllocationInstructionAlertRequestAck>( message, sessionID );
     
     if( msgTypeValue == "DW" )
-      return onMessage( (TradeAggregationRequest&)message, sessionID );
+      return dispatch<TradeAggregationRequest>( message, sessionID );
     
     if( msgTypeValue == "DX" )
-      return onMessage( (TradeAggregationReport&)message, sessionID );
+      return dispatch<TradeAggregationReport>( message, sessionID );
     
     if( msgTypeValue == "EA" )
-      return onMessage( (PayManagementReport&)message, sessionID );
+      return dispatch<PayManagementReport>( message, sessionID );
     
     if( msgTypeValue == "EB" )
-      return onMessage( (PayManagementReportAck&)message, sessionID );
+      return dispatch<PayManagementReportAck>( message, sessionID );
     
     if( msgTypeValue == "DY" )
-      return onMessage( (PayManagementRequest&)message, sessionID );
+      return dispatch<PayManagementRequest>( message, sessionID );
     
     if( msgTypeValue == "DZ" )
-      return onMessage( (PayManagementRequestAck&)message, sessionID );
+      return dispatch<PayManagementRequestAck>( message, sessionID );
     
-    return onMessage( message, sessionID );
+    return dispatch<Message>( message, sessionID );
+  }
+
+private:
+  template <typename T>
+  void dispatch( FIX::Message& message, const FIX::SessionID& sessionID )
+  {
+    T typed(message);
+    try {
+      onMessage( typed, sessionID );
+    } catch (...) {
+      message = std::move(typed);
+      throw;
+    }
+    message = std::move(typed);
   }
 
   };

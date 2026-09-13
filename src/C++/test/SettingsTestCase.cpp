@@ -32,6 +32,73 @@
 using namespace FIX;
 
 TEST_CASE("SettingsTests") {
+  SECTION("readCompleteLines") {
+    const auto length = GENERATE(16, 1022, 1023, 1024, 4096);
+    const std::string newline = GENERATE(std::string("\n"), std::string("\r\n"));
+    const bool finalNewline = GENERATE(false, true);
+    CAPTURE(length, newline, finalNewline);
+    const std::string value(length, 'x');
+    std::istringstream input(
+        "[FIRST]" + newline + "Value=" + value + newline + "[LAST]" + newline + "Value=" + value
+        + (finalNewline ? newline : ""));
+    Settings object;
+
+    CHECK_NOTHROW(input >> object);
+    REQUIRE(object.get("FIRST").size() == 1);
+    CHECK(object.get("FIRST")[0].has("Value"));
+    if (object.get("FIRST")[0].has("Value")) {
+      CHECK(object.get("FIRST")[0].getString("Value") == value);
+    }
+    CHECK(object.get("LAST").size() == 1);
+    if (object.get("LAST").size() == 1) {
+      CHECK(object.get("LAST")[0].getString("Value") == value);
+    }
+  }
+
+  SECTION("failedReadPreservesExistingSettings") {
+    struct FailingBuffer : std::stringbuf {
+      FailingBuffer(const std::string &configuration)
+          : std::stringbuf(configuration) {
+        setg(eback(), eback(), eback() + configuration.find("unfinished") + 3);
+      }
+      int_type underflow() override { throw std::ios_base::failure("read failed"); }
+    } buffer("[NEW]\nValue=new\n[PARTIAL]\nValue=unfinished\n[UNREAD]\nValue=unread\n");
+    std::istream input(&buffer);
+    Settings object;
+    std::istringstream initial("[OLD]\nValue=old\n");
+    initial >> object;
+
+    CHECK_THROWS_AS(input >> object, ConfigError);
+    CHECK(input.bad());
+    REQUIRE(object.get("OLD").size() == 1);
+    CHECK(object.get("OLD")[0].getString("Value") == "old");
+    CHECK(object.get("NEW").empty());
+    CHECK(object.get("PARTIAL").empty());
+    CHECK(object.get("UNREAD").empty());
+  }
+
+  SECTION("rejectFailedStreamState") {
+    const auto state = GENERATE(std::ios::failbit, std::ios::badbit | std::ios::eofbit);
+    std::istringstream input("[NEW]\nValue=new\n");
+    input.setstate(state);
+    Settings object;
+    CHECK_THROWS_AS(input >> object, ConfigError);
+    CHECK(object.get("NEW").empty());
+  }
+
+  SECTION("successfulReadAppendsSections") {
+    Settings object;
+    std::istringstream first("[SECTION]\nValue=first\n");
+    std::istringstream second("Ignored=before section\n[SECTION]\nValue=second");
+    first >> object;
+    second >> object;
+    const auto sections = object.get("SECTION");
+    REQUIRE(sections.size() == 2);
+    CHECK(sections[0].getString("Value") == "first");
+    CHECK(sections[1].getString("Value") == "second");
+    CHECK_FALSE(sections[0].has("Ignored"));
+  }
+
   SECTION("readFromIstream") {
     Settings object;
     std::string configuration = "[FOO]\nbar=24\nbaz=moo\n\n"

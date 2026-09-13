@@ -33,14 +33,268 @@
 #include <SocketConnection.h>
 #include <SocketInitiator.h>
 #include <SocketServer.h>
+#include <ThreadedSocketConnection.h>
 #include <Utility.h>
 #include <fix42/Logon.h>
 #include <fix42/NewOrderSingle.h>
+#include <fix42/SequenceReset.h>
 #include <set>
+#if HAVE_SSL
+#include <SSLSocketAcceptor.h>
+#include <SSLSocketConnection.h>
+#include <ThreadedSSLSocketConnection.h>
+#include <future>
+#endif
 
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
+
+#if HAVE_SSL
+TEST_CASE("threaded TLS constructors tolerate invalid sockets", "[socket][ssl]") {
+  SECTION("incoming") {
+    ThreadedSSLSocketConnection connection(INVALID_SOCKET_HANDLE, nullptr, {}, nullptr);
+    CHECK(connection.getSocket() == INVALID_SOCKET_HANDLE);
+    CHECK(connection.getSession() == nullptr);
+  }
+
+  SECTION("outgoing") {
+    const SessionID id("FIX.4.2", "INVALID_SOCKET", "PEER");
+    REQUIRE(Session::lookupSession(id) == nullptr);
+    ThreadedSSLSocketConnection connection(id, INVALID_SOCKET_HANDLE, nullptr, "", 0, nullptr);
+    CHECK(connection.getSocket() == INVALID_SOCKET_HANDLE);
+    CHECK(connection.getSession() == nullptr);
+  }
+}
+#endif
+
+TEST_CASE("connection admission preserves rejected session state", "[admission]") {
+  const bool threaded = GENERATE(false, true);
+#if HAVE_SSL
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  const std::string reason = GENERATE(
+      "reset",
+      "reject",
+      "address",
+      "listener",
+      "authentication",
+      "valid",
+      "duplicate",
+      "established-reject");
+  const bool established = reason == "duplicate" || reason == "established-reject";
+  const bool admitted = reason == "valid" || established;
+  CAPTURE(threaded, tls, reason);
+  struct Application : NullApplication, Responder {
+    void fromAdmin(const Message &, const SessionID &id) override {
+      ++authenticationCalls;
+      CHECK(Session::isSessionRegistered(id) == expectedRegistered);
+      CHECK(session->getExpectedSenderNum() == expectedSender);
+      CHECK(session->getExpectedTargetNum() == expectedTarget);
+      if (reject) {
+        throw RejectLogon();
+      }
+    }
+    void fromApp(const Message &, const SessionID &) override { ++appCalls; }
+    void toAdmin(Message &, const SessionID &) override { ++outgoingCalls; }
+    void onLogon(const SessionID &) override { ++logonCalls; }
+    void onLogout(const SessionID &) override { ++logoutCalls; }
+    bool send(const std::string &) override { return true; }
+    void disconnect() override { ++disconnectCalls; }
+    Session *session = nullptr;
+    bool reject = false;
+    bool expectedRegistered = false;
+    int expectedSender = 7, expectedTarget = 9, logoutCalls = 0;
+    int authenticationCalls = 0, appCalls = 0, outgoingCalls = 0, logonCalls = 0, disconnectCalls = 0;
+  } application;
+  SessionID id("FIX.4.2", "ADMISSION", "PEER");
+  TestFileStoreFactory stores("store");
+  SessionSettings settings;
+  Dictionary dictionary;
+  dictionary.setString(CONNECTION_TYPE, "acceptor");
+  dictionary.setString(START_TIME, "00:00:00");
+  dictionary.setString(END_TIME, "00:00:00");
+  dictionary.setString(USE_DATA_DICTIONARY, "N");
+  settings.set(id, dictionary);
+  {
+    std::unique_ptr<Acceptor> acceptor;
+#if HAVE_SSL
+    if (tls) {
+      acceptor.reset(new SSLSocketAcceptor(application, stores, settings));
+    } else
+#endif
+    {
+      acceptor.reset(new SocketAcceptor(application, stores, settings));
+    }
+    Session *session = Session::lookupSession(id);
+    REQUIRE(session);
+    application.session = session;
+    application.reject = reason == "authentication";
+    session->setResponder(&application);
+    session->setNextSenderMsgSeqNum(11);
+    session->setNextTargetMsgSeqNum(13);
+    FileStoreTestAccess::setCachedSequenceNumbers(stores.store(), 7, 9);
+    session->setRefreshOnLogon(true);
+    session->setResetOnLogon(true);
+    if (reason == "address") {
+      session->setAllowedRemoteAddresses({"192.0.2.1"});
+    }
+    FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+    logon.getHeader().setField(SenderCompID("PEER"));
+    logon.getHeader().setField(TargetCompID("ADMISSION"));
+    logon.getHeader().setField(MsgSeqNum(1));
+    logon.getHeader().setField(SendingTime(UtcTimeStamp::now()));
+    logon.setField(ResetSeqNumFlag(true));
+    FIX42::SequenceReset reset(NewSeqNo(50));
+    reset.getHeader() = logon.getHeader();
+    reset.getHeader().setField(MsgType(MsgType_SequenceReset));
+    Message first = logon;
+    if (reason == "reset") {
+      first = reset;
+    } else if (reason == "reject") {
+      first.getHeader().setField(MsgType(MsgType_Reject));
+    }
+    const std::string wire = first.toString() + (admitted ? "" : reset.toString());
+    auto sockets = socket_createpair();
+    REQUIRE(sockets.first != INVALID_SOCKET_HANDLE);
+    REQUIRE(sockets.second != INVALID_SOCKET_HANDLE);
+#if HAVE_SSL
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(SSL_CTX_new(TLS_method()), SSL_CTX_free);
+    std::unique_ptr<SSL, decltype(&SSL_free)> client(nullptr, SSL_free);
+    SSL *ssl = nullptr;
+    if (tls) {
+      REQUIRE(context);
+      REQUIRE(SSL_CTX_set_max_proto_version(context.get(), TLS1_2_VERSION) == 1);
+      REQUIRE(SSL_CTX_set_cipher_list(context.get(), "PSK-AES128-CBC-SHA") == 1);
+      SSL_CTX_set_psk_client_callback(
+          context.get(),
+          [](SSL *, const char *, char *identity, unsigned int size, unsigned char *key, unsigned int keySize)
+              -> unsigned int {
+            if (size < 10 || keySize < 16) {
+              return 0;
+            }
+            std::copy_n("admission", 10, identity);
+            std::fill_n(key, 16, 42);
+            return 16;
+          });
+      SSL_CTX_set_psk_server_callback(
+          context.get(),
+          [](SSL *, const char *, unsigned char *key, unsigned int keySize) -> unsigned int {
+            if (keySize < 16) {
+              return 0;
+            }
+            std::fill_n(key, 16, 42);
+            return 16;
+          });
+      client.reset(SSL_new(context.get()));
+      ssl = SSL_new(context.get());
+      REQUIRE(client);
+      REQUIRE(ssl);
+      SSL_set_quiet_shutdown(ssl, 1);
+      REQUIRE(SSL_set_fd(client.get(), sockets.first) == 1);
+      REQUIRE(SSL_set_fd(ssl, sockets.second) == 1);
+      auto handshake = std::async(std::launch::async, [&]() { return SSL_connect(client.get()); });
+      REQUIRE(SSL_accept(ssl) == 1);
+      REQUIRE(handshake.get() == 1);
+      REQUIRE(SSL_write(client.get(), wire.data(), static_cast<int>(wire.size())) == static_cast<int>(wire.size()));
+    } else
+#endif
+    {
+      REQUIRE(socket_send(sockets.first, wire.data(), wire.size()) == static_cast<ssize_t>(wire.size()));
+    }
+    std::set<SessionID> listeners;
+    if (reason != "listener") {
+      listeners.insert(id);
+    }
+    SocketServer server;
+    auto exercise = [&](auto &connection, auto read) {
+      read();
+      CHECK((connection.getSession() != nullptr) == admitted);
+      if (established) {
+        REQUIRE(session->isLoggedOn());
+        application.expectedRegistered = true;
+        application.expectedSender = 2;
+        application.expectedTarget = 2;
+        application.reject = reason == "established-reject";
+        auto rejected = logon;
+        if (reason == "duplicate") {
+          rejected.removeField(FIELD::ResetSeqNumFlag);
+        }
+        rejected.getHeader().setField(MsgSeqNum(2));
+        const auto buffered = rejected.toString() + reset.toString() + logon.toString();
+#if HAVE_SSL
+        if (tls) {
+          REQUIRE(
+              SSL_write(client.get(), buffered.data(), static_cast<int>(buffered.size()))
+              == static_cast<int>(buffered.size()));
+        } else
+#endif
+        {
+          REQUIRE(
+              socket_send(sockets.first, buffered.data(), buffered.size()) == static_cast<ssize_t>(buffered.size()));
+        }
+        read();
+        CHECK_FALSE(session->receivedLogon());
+        CHECK_FALSE(session->sentLogon());
+        CHECK(application.logoutCalls == 1);
+        CHECK(application.authenticationCalls == (reason == "duplicate" ? 1 : 2));
+        CHECK(session->getExpectedTargetNum() == 2);
+        if (session->receivedLogon()) {
+          session->disconnect();
+        }
+      } else if (admitted) {
+        session->disconnect();
+      }
+    };
+#if HAVE_SSL
+    if (tls && threaded) {
+      {
+        ThreadedSSLSocketConnection connection(sockets.second, ssl, listeners, nullptr);
+        exercise(connection, [&]() { connection.read(); });
+      }
+      SSL_free(ssl);
+    } else if (tls) {
+      SSLSocketConnection connection(sockets.second, ssl, listeners, &server.getMonitor());
+      exercise(connection, [&]() { connection.read(static_cast<SSLSocketAcceptor &>(*acceptor), server); });
+    } else
+#endif
+        if (threaded) {
+      ThreadedSocketConnection connection(sockets.second, listeners, nullptr);
+      exercise(connection, [&]() { connection.read(); });
+    } else {
+      SocketConnection connection(sockets.second, listeners, &server.getMonitor());
+      exercise(connection, [&]() { connection.read(static_cast<SocketAcceptor &>(*acceptor), server); });
+      socket_close(sockets.second);
+    }
+    socket_close(sockets.first);
+    CHECK_FALSE(Session::isSessionRegistered(id));
+    CHECK(
+        application.authenticationCalls
+        == (reason == "established-reject" ? 2 : ((reason == "authentication" || admitted) ? 1 : 0)));
+    CHECK(application.appCalls == 0);
+    CHECK(application.outgoingCalls == (admitted ? 1 : 0));
+    CHECK(application.logonCalls == (admitted ? 1 : 0));
+    CHECK(session->getExpectedSenderNum() == (admitted ? 2 : 7));
+    CHECK(session->getExpectedTargetNum() == (admitted ? 2 : 9));
+    session->disconnect();
+    CHECK(application.disconnectCalls == (admitted ? 0 : 1));
+    if (established) {
+      application.reject = false;
+      application.expectedRegistered = false;
+      REQUIRE(session->acceptLogon(logon.toString(), application));
+      CHECK(session->isLoggedOn());
+      CHECK(session->getExpectedTargetNum() == 2);
+      CHECK(application.authenticationCalls == (reason == "duplicate" ? 2 : 3));
+      session->disconnect();
+      Session::unregisterSession(id);
+    }
+  }
+  FileStore reopened(UtcTimeStamp::now(), "store", id);
+  CHECK(reopened.getNextSenderMsgSeqNum() == (admitted ? 2 : 11));
+  CHECK(reopened.getNextTargetMsgSeqNum() == (admitted ? 2 : 13));
+}
 
 TEST_CASE("SocketConnectionTests") {
   struct TestSocketMonitor : public SocketMonitor {

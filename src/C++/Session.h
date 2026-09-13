@@ -73,7 +73,10 @@ public:
   bool sentLogon() { return m_state.sentLogon(); }
   bool sentLogout() { return m_state.sentLogout(); }
   bool receivedLogon() { return m_state.receivedLogon(); }
-  bool isLoggedOn() { return receivedLogon() && sentLogon(); }
+  bool isLoggedOn() {
+    // Status queries must not wait for a callback holding this or another session's mutex.
+    return m_state.receivedLogon() && m_state.sentLogon();
+  }
   void reset() EXCEPT(IOException) {
     if (m_detached) {
       throw std::logic_error("Detached Session reset");
@@ -203,22 +206,34 @@ public:
   void setIsNonStopSession(bool value) { m_isNonStopSession = value; }
 
   const std::set<std::string> &getAllowedRemoteAddresses() const { return m_allowedRemoteAddresses; }
+  /// Optional exact peer SAN enforced by TLS acceptors before Logon admission.
+  const std::string &getCertificateAcceptedPeerName() const { return m_certificateAcceptedPeerName; }
+  /// Set an exact DNS/IP SAN; an empty value disables certificate-to-session binding.
+  void setCertificateAcceptedPeerName(const std::string &value) { m_certificateAcceptedPeerName = value; }
   void setAllowedRemoteAddresses(const std::set<std::string> &value) { m_allowedRemoteAddresses = value; }
   bool inAllowedRemoteAddresses(const std::string &value) const {
     return (m_allowedRemoteAddresses.cend() != m_allowedRemoteAddresses.find(value));
   }
 
   void setResponder(Responder *pR) {
-    if (m_refreshOnLogon) {
-      refresh();
-    }
-    if (!m_detached && !checkSessionTime(m_timestamper())) {
-      reset();
+    Locker locker(m_mutex);
+    if (pR) {
+      if (m_refreshOnLogon) {
+        refresh();
+      }
+      if (!m_detached && !checkSessionTime(m_timestamper())) {
+        reset();
+      }
     }
     m_pResponder = pR;
   }
 
   bool send(Message &);
+  /// Authenticate an initial Logon before registering or attaching its responder.
+  /// The caller must first enforce listener membership and the source address ACL.
+  /// Authenticated admission prepares the session period before attaching the responder.
+  /// On an escaping exception, restore the previous responder and release this registration.
+  bool acceptLogon(const std::string &, Responder &);
   void next(const UtcTimeStamp &now);
   void next(const std::string &, const UtcTimeStamp &now, bool queued = false);
   void next(const Message &, const UtcTimeStamp &now, bool queued = false);
@@ -233,6 +248,10 @@ public:
 private:
   friend class InfiniteSessionPlanner;
   friend class SessionTestAccess;
+  friend class SocketInitiator;
+  friend class SSLSocketInitiator;
+  friend class SocketAcceptor;
+  friend class SSLSocketAcceptor;
 
   Session(
       std::function<UtcTimeStamp()> timestamper,
@@ -251,6 +270,8 @@ private:
   static bool addSession(Session &);
   static void removeSession(Session &);
   void next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow);
+  void next(const Message &, const UtcTimeStamp &, bool queued, bool authenticated);
+  bool authenticateLogon(const Message &, const UtcTimeStamp &);
 
   bool send(const std::string &);
   bool sendRaw(Message &, SEQNUM msgSeqNum = 0);
@@ -290,6 +311,8 @@ private:
   void fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID);
 
   void doBadTime(const Message &msg);
+  void disconnect(bool resetStore);
+  void disconnectIfConnected();
   void doBadCompID(const Message &msg);
   bool doPossDup(const Message &msg);
   bool doTargetTooLow(const Message &msg);
@@ -321,7 +344,7 @@ private:
   void populateRejectReason(Message &, int field, const std::string &text);
   void populateRejectReason(Message &, const std::string &text);
 
-  bool verify(const Message &msg, bool checkTooHigh = true, bool checkTooLow = true);
+  bool verify(const Message &msg, bool checkTooHigh = true, bool checkTooLow = true, bool invokeCallback = true);
 
   Message newMessage(const MsgType &msgType) const;
 
@@ -355,6 +378,7 @@ private:
   Responder *m_pResponder;
   bool m_detached;
   Mutex m_mutex;
+  std::string m_certificateAcceptedPeerName;
 
   static Sessions s_sessions;
   static SessionIDs s_sessionIDs;

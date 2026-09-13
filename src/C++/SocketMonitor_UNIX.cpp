@@ -44,9 +44,14 @@ SocketMonitor::SocketMonitor(int timeout)
 }
 
 SocketMonitor::~SocketMonitor() {
-  Sockets::iterator i;
-  for (i = m_readSockets.begin(); i != m_readSockets.end(); ++i) {
-    socket_close(*i);
+  while (!m_readSockets.empty()) {
+    drop(*m_readSockets.begin(), false);
+  }
+  while (!m_connectSockets.empty()) {
+    drop(*m_connectSockets.begin(), false);
+  }
+  while (!m_writeSockets.empty()) {
+    drop(*m_writeSockets.begin(), false);
   }
 
   socket_close(m_signal);
@@ -90,17 +95,18 @@ bool SocketMonitor::addWrite(socket_handle s) {
   return true;
 }
 
-bool SocketMonitor::drop(socket_handle s) {
-  Sockets::iterator i = m_readSockets.find(s);
-  Sockets::iterator j = m_writeSockets.find(s);
-  Sockets::iterator k = m_connectSockets.find(s);
+bool SocketMonitor::drop(socket_handle s) { return drop(s, true); }
 
-  if (i != m_readSockets.end() || j != m_writeSockets.end() || k != m_connectSockets.end()) {
+bool SocketMonitor::release(socket_handle s) {
+  return m_readSockets.erase(s) + m_writeSockets.erase(s) + m_connectSockets.erase(s) != 0;
+}
+
+bool SocketMonitor::drop(socket_handle s, bool notify) {
+  if (release(s)) {
     socket_close(s);
-    m_readSockets.erase(s);
-    m_writeSockets.erase(s);
-    m_connectSockets.erase(s);
-    m_dropped.push(s);
+    if (notify) {
+      m_dropped.push(s);
+    }
     return true;
   }
   return false;
@@ -212,14 +218,16 @@ void SocketMonitor::processError(Strategy &strategy, socket_handle socket_fd) { 
 
 void SocketMonitor::processPollList(Strategy &strategy, struct pollfd *pfds, unsigned pfds_size) {
   for (unsigned i = 0; i < pfds_size; ++i) {
-    if ((pfds[i].revents & POLLIN) || (pfds[i].revents & POLLPRI)) {
+    if (((pfds[i].revents & POLLIN) || (pfds[i].revents & POLLPRI)) && m_readSockets.count(pfds[i].fd)) {
       processRead(strategy, pfds[i].fd);
     }
 
-    if ((pfds[i].revents & POLLOUT)) {
+    if ((pfds[i].revents & POLLOUT) && (m_writeSockets.count(pfds[i].fd) || m_connectSockets.count(pfds[i].fd))) {
       processWrite(strategy, pfds[i].fd);
     }
-    if ((pfds[i].revents & POLLERR) || ((pfds[i].revents & POLLHUP) && !(pfds[i].revents & POLLIN))) {
+    if (((pfds[i].revents & POLLERR) || ((pfds[i].revents & POLLHUP) && !(pfds[i].revents & POLLIN)))
+        && (m_readSockets.count(pfds[i].fd) || m_writeSockets.count(pfds[i].fd)
+            || m_connectSockets.count(pfds[i].fd))) {
       processError(strategy, pfds[i].fd);
     }
   }

@@ -135,7 +135,9 @@ ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(socket_handle socket, S
       m_pSession(0),
       m_disconnect(false) {
   FD_ZERO(&m_fds);
-  FD_SET(m_socket, &m_fds);
+  if (socket_isValid(m_socket)) {
+    FD_SET(m_socket, &m_fds);
+  }
 }
 
 ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(
@@ -153,9 +155,8 @@ ThreadedSSLSocketConnection::ThreadedSSLSocketConnection(
       m_pSession(Session::lookupSession(sessionID)),
       m_disconnect(false) {
   FD_ZERO(&m_fds);
-  FD_SET(m_socket, &m_fds);
-  if (m_pSession) {
-    m_pSession->setResponder(this);
+  if (socket_isValid(m_socket)) {
+    FD_SET(m_socket, &m_fds);
   }
 }
 
@@ -281,6 +282,17 @@ bool ThreadedSSLSocketConnection::read() {
     }
 
     return true;
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : m_pLog;
+    if (log) {
+      log->onEvent(redactLogonCredentials(e.what()));
+    }
+    if (m_pSession) {
+      m_pSession->disconnect();
+    } else {
+      disconnect();
+    }
+    return false;
   } catch (SocketRecvFailed &e) {
     if (m_disconnect) {
       return false;
@@ -298,10 +310,7 @@ bool ThreadedSSLSocketConnection::read() {
 }
 
 bool ThreadedSSLSocketConnection::readMessage(std::string &message) EXCEPT(SocketRecvFailed) {
-  try {
-    return m_parser.readFixMessage(message);
-  } catch (MessageParseError &) {}
-  return true;
+  return m_parser.readFixMessage(message);
 }
 
 void ThreadedSSLSocketConnection::processStream() {
@@ -310,11 +319,18 @@ void ThreadedSSLSocketConnection::processStream() {
     if (!m_pSession) {
       if (!setSession(message)) {
         disconnect();
-        continue;
+        return;
       }
+      if (!m_pSession->receivedLogon()) {
+        return;
+      }
+      continue;
     }
     try {
       m_pSession->next(message, UtcTimeStamp::now());
+      if (m_disconnect) {
+        return;
+      }
     } catch (InvalidMessage &) {
       if (!m_pSession->isLoggedOn()) {
         disconnect();
@@ -325,38 +341,32 @@ void ThreadedSSLSocketConnection::processStream() {
 }
 
 bool ThreadedSSLSocketConnection::setSession(const std::string &message) {
-  m_pSession = Session::lookupSession(message, true);
-  if (!m_pSession) {
+  Session *candidate = Session::lookupSession(message, true);
+  if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+      || !ssl_peer_matches(m_ssl, candidate->getCertificateAcceptedPeerName())
+      || (!candidate->getAllowedRemoteAddresses().empty()
+          && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
     if (m_pLog) {
-      m_pLog->onEvent("Session not found for incoming message: " + message);
-      m_pLog->onIncoming(message);
+      m_pLog->onEvent("Incoming connection was not admitted");
     }
     return false;
   }
 
-  SessionID sessionID = m_pSession->getSessionID();
-  m_pSession = 0;
+  const SessionID &sessionID = candidate->getSessionID();
 
   // see if the session frees up within 5 seconds
   for (int i = 1; i <= 5; i++) {
     if (!Session::isSessionRegistered(sessionID)) {
-      m_pSession = Session::registerSession(sessionID);
-    }
-    if (m_pSession) {
-      break;
+      if (!candidate->acceptLogon(message, *this)) {
+        return false;
+      }
+      m_pSession = candidate;
+      return true;
     }
     process_sleep(1);
   }
 
-  if (!m_pSession) {
-    return false;
-  }
-  if (m_sessions.find(m_pSession->getSessionID()) == m_sessions.end()) {
-    return false;
-  }
-
-  m_pSession->setResponder(this);
-  return true;
+  return false;
 }
 
 } // namespace FIX

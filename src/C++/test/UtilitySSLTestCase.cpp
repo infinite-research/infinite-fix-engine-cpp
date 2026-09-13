@@ -33,6 +33,25 @@
 using namespace FIX;
 
 TEST_CASE("UtilitySSLTests") {
+  SECTION("context enforces TLS 1.2 minimum") {
+    SessionSettings settings;
+    std::string error;
+    SSL_CTX *context = createSSLContext(GENERATE(false, true), settings, error);
+    REQUIRE(context);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    CHECK(SSL_CTX_get_min_proto_version(context) == TLS1_2_VERSION);
+#else
+    const long disabled = SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1;
+    CHECK((SSL_CTX_get_options(context) & disabled) == disabled);
+#endif
+    SSL_CTX_free(context);
+  }
+
+  SECTION("protocol tokens require complete boundaries") {
+    CHECK(protocolOptions("TLSv1_2TLSv1_3") == -1);
+    CHECK(protocolOptions("all nonsense") == -1);
+    CHECK(protocolOptions(" TLSv1_2 ") == SSL_PROTOCOL_TLSV1_2);
+  }
   SECTION("is_ip_address_IPv4_ReturnsTrue") {
     CHECK(is_ip_address("192.168.1.1"));
     CHECK(is_ip_address("127.0.0.1"));

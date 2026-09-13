@@ -42,21 +42,25 @@
   }
 }
 
-%typemap(in) FIX::DataDictionary const *& (FIX::DataDictionary* temp) {
-  $1 = new FIX::DataDictionary*[1];
-  *$1 = temp;
-} 	 
-
-%typemap(free) FIX::DataDictionary const *& {
-  delete[] temp; 	 
+%typemap(in) FIX::DataDictionary const *& (FIX::DataDictionary *temp = nullptr) {
+  $1 = &temp;
 } 	 
 	  	 
 %typemap(argout) FIX::DataDictionary const *& {
-  void* argp;
-  FIX::DataDictionary* pDD = 0;
-  int res = SWIG_ConvertPtr($input, &argp, SWIGTYPE_p_FIX__DataDictionary, 0 );
-  pDD = reinterpret_cast< FIX::DataDictionary * >(argp);
-  *pDD = *(*$1);
+  if( result ) {
+    if( !*$1 ) {
+      $cleanup
+      SWIG_exception_fail(SWIG_RuntimeError, "getGroup returned no DataDictionary");
+    }
+    void *argp = nullptr;
+    int res = SWIG_ConvertPtr($input, &argp, SWIGTYPE_p_FIX__DataDictionary, 0);
+    if( !SWIG_IsOK(res) || !argp ) {
+      $cleanup
+      SWIG_exception_fail(SWIG_TypeError, Ruby_Format_TypeError("", "FIX::DataDictionary *", "$symname", $argnum, $input));
+    }
+    FIX::DataDictionary *pDD = reinterpret_cast< FIX::DataDictionary * >(argp);
+    *pDD = **$1;
+  }
 } 	 
 
 %include ../quickfix.i

@@ -1,0 +1,272 @@
+name: Build assurance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-default:
+    name: unit-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S . -B build-assurance-default -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-assurance-default --parallel 2
+      - name: Run registered tests
+        shell: bash
+        run: |
+          ulimit -c 0
+          ctest --test-dir build-assurance-default --output-on-failure
+
+  unit-tls:
+    name: unit-tls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OpenSSL development files
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Configure
+        run: cmake -S . -B build-assurance-tls -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON
+      - name: Build
+        run: cmake --build build-assurance-tls --parallel 2
+      - name: Run registered tests, including TLS transport
+        shell: bash
+        run: |
+          ulimit -c 0
+          ctest --test-dir build-assurance-tls --output-on-failure
+
+  sanitizers:
+    name: sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OpenSSL development files
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Configure ASan and UBSan
+        run: |
+          cmake -S . -B build-assurance-asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DHAVE_SSL=ON \
+            -DQUICKFIX_EXAMPLES=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build ASan and UBSan
+        run: cmake --build build-assurance-asan --parallel 2
+      - name: Run ASan and UBSan registered tests
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:disable_coredump=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          ulimit -c 0
+          ctest --test-dir build-assurance-asan --output-on-failure
+      - name: Configure TSan
+        run: |
+          cmake -S . -B build-assurance-tsan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DHAVE_SSL=ON \
+            -DQUICKFIX_EXAMPLES=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+      - name: Build TSan unit target
+        run: cmake --build build-assurance-tsan --parallel 2 --target ut
+      - name: Run focused TSan tests
+        shell: bash
+        env:
+          QUICKFIX_TEST_SRCDIR: ${{ github.workspace }}/test
+          QUICKFIX_TEST_BUILDDIR: ${{ github.workspace }}/build-assurance-tsan
+          QUICKFIX_TEST_RUNTIMEDIR: ${{ github.workspace }}/build-assurance-tsan/test-runtime
+          QUICKFIX_TEST_UT: ${{ github.workspace }}/build-assurance-tsan/lib/ut
+          TSAN_OPTIONS: halt_on_error=1
+        run: sh test/runut.sh "FileLogTests"
+
+  codeql-and-sbom:
+    name: codeql-and-sbom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout candidate snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set generated-PKI-only secret-scan exclusion
+        shell: bash
+        run: printf '%s\n' '(^|/)test-runtime/certs/' > .trufflehog-exclude-paths
+      - name: Scan committed source for secrets
+        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
+        with:
+          path: ./
+          extra_args: --exclude-paths=.trufflehog-exclude-paths --results=verified,unknown
+          version: 3.97.4
+      - name: Prepare evidence directory
+        shell: bash
+        run: |
+          rm .trufflehog-exclude-paths
+          mkdir -p "$RUNNER_TEMP/quickfix-assurance"
+      - name: Generate source SPDX JSON
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-source.syft.spdx.json
+          syft-version: v1.51.1
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+      - name: Verify and complete source dependency inventory
+        run: |
+          python3 -m unittest discover -s tools -p 'test_complete_sbom.py'
+          python3 tools/complete_sbom.py \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-source.syft.spdx.json" \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-source.spdx.json"
+      - name: Install OpenSSL development files
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libssl-dev
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-and-quality
+      - name: Configure evidence build
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake -S . -B build-assurance-evidence \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/build-assurance-evidence/install" \
+            -DHAVE_SSL=ON \
+            2>&1 | tee "$RUNNER_TEMP/quickfix-assurance/configure.log"
+      - name: Build evidence tree
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-assurance-evidence --parallel 1 \
+            2>&1 | tee "$RUNNER_TEMP/quickfix-assurance/build.log"
+      - name: Analyze with CodeQL without remote upload
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          output: ${{ runner.temp }}/quickfix-assurance/codeql
+          upload: never
+          upload-database: false
+      - name: Install evidence build
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --install build-assurance-evidence \
+            2>&1 | tee "$RUNNER_TEMP/quickfix-assurance/install.log"
+      - name: Record dependency and build evidence
+        shell: bash
+        run: |
+          {
+            cmake --version
+            c++ --version
+            openssl version -a
+            dpkg-query -W -f='${binary:Package}\t${Version}\n' libssl-dev
+          } > "$RUNNER_TEMP/quickfix-assurance/tool-and-package-versions.txt" 2>&1
+          ldd build-assurance-evidence/install/lib/libquickfix.so \
+            > "$RUNNER_TEMP/quickfix-assurance/linked-libraries.txt"
+          cp build-assurance-evidence/CMakeCache.txt \
+            "$RUNNER_TEMP/quickfix-assurance/CMakeCache.txt"
+          (
+            cd build-assurance-evidence/install
+            find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+          ) > "$RUNNER_TEMP/quickfix-assurance/installed-files.sha256"
+      - name: Generate installed-build SPDX JSON
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: build-assurance-evidence/install
+          format: spdx-json
+          output-file: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.syft.spdx.json
+          syft-version: v1.51.1
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+      - name: Complete installed dependency inventory
+        id: installed-sbom
+        run: |
+          python3 tools/complete_sbom.py \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-installed.syft.spdx.json" \
+            "$RUNNER_TEMP/quickfix-assurance/quickfix-installed.spdx.json" \
+            --library build-assurance-evidence/install/lib/libquickfix.so --distro ubuntu
+      - name: Retain three raw performance trials
+        shell: bash
+        env:
+          QUICKFIX_TEST_SRCDIR: ${{ github.workspace }}/test
+          QUICKFIX_TEST_BUILDDIR: ${{ github.workspace }}/build-assurance-evidence/test
+          QUICKFIX_TEST_RUNTIMEDIR: ${{ github.workspace }}/build-assurance-evidence/test-runtime
+        run: |
+          ulimit -c 0
+          RESULT=0
+          TRIAL=1
+          for PORT in 6668 6669 6670; do
+            set +e
+            sh test/runpt.sh --port "$PORT" 2>&1 \
+              | tee "$RUNNER_TEMP/quickfix-assurance/performance-trial-$TRIAL.txt"
+            TRIAL_RESULT=${PIPESTATUS[0]}
+            set -e
+            if [ "$RESULT" -eq 0 ] && [ "$TRIAL_RESULT" -ne 0 ]; then
+              RESULT=$TRIAL_RESULT
+            fi
+            TRIAL=$((TRIAL + 1))
+          done
+          exit "$RESULT"
+      - name: Scan source SBOM with Grype
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: ${{ runner.temp }}/quickfix-assurance/quickfix-source.spdx.json
+          output-format: sarif
+          output-file: ${{ runner.temp }}/quickfix-assurance/grype-source.sarif
+          fail-build: true
+          severity-cutoff: high
+          grype-version: v0.118.0
+          add-cpes-if-none: true
+      - name: Scan installed-build SBOM with Grype
+        if: ${{ !cancelled() && steps.installed-sbom.outcome == 'success' }}
+        env:
+          GRYPE_DISTRO: ubuntu:24.04
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: ${{ runner.temp }}/quickfix-assurance/quickfix-installed.spdx.json
+          output-format: sarif
+          output-file: ${{ runner.temp }}/quickfix-assurance/grype-installed.sarif
+          fail-build: true
+          severity-cutoff: high
+          grype-version: v0.118.0
+          add-cpes-if-none: true
+      - name: Upload assurance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quickfix-assurance-${{ github.sha }}
+          path: ${{ runner.temp }}/quickfix-assurance
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9

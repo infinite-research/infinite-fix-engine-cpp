@@ -38,20 +38,57 @@ using namespace FIX;
 struct SocketConnectorTestStrategy : public SocketConnector::Strategy {
   void onConnect(SocketConnector &, socket_handle) { connect++; }
   void onWrite(SocketConnector &, socket_handle) {}
-  bool onData(SocketConnector &, socket_handle) { return true; }
+  bool onData(SocketConnector &connector, socket_handle socket) {
+    if (dropOnData) {
+      connector.getMonitor().drop(socket);
+    }
+    return keepConnection;
+  }
   void onDisconnect(SocketConnector &, socket_handle) { disconnect++; }
   void onError(SocketConnector &) {}
 
   int connect = 0;
   int disconnect = 0;
+  bool keepConnection = true;
+  bool dropOnData = false;
 };
 
 TEST_CASE("SocketConnectorTests") {
+  SECTION("queued close and failed data dispatch disconnect exactly once") {
+    const std::string closePath = GENERATE("queued", "failed data", "dropped data", "peer error");
+    SocketConnector connector;
+    SocketConnectorTestStrategy strategy;
+    const auto sockets = socket_createpair();
+    REQUIRE(sockets.first != INVALID_SOCKET_HANDLE);
+    REQUIRE(sockets.second != INVALID_SOCKET_HANDLE);
+    REQUIRE(connector.getMonitor().addRead(sockets.second));
+    if (closePath == "queued") {
+      REQUIRE(connector.getMonitor().drop(sockets.second));
+    } else if (closePath == "peer error") {
+      strategy.keepConnection = false;
+      REQUIRE(socket_send(sockets.second, "x", 1) == 1);
+      socket_close(sockets.first);
+    } else {
+      strategy.keepConnection = false;
+      strategy.dropOnData = closePath == "dropped data";
+      REQUIRE(socket_send(sockets.first, "x", 1) == 1);
+    }
+    connector.block(strategy, true);
+    CHECK(strategy.disconnect == (strategy.dropOnData ? 0 : 1));
+    CHECK(connector.getMonitor().numSockets() == 0);
+    connector.block(strategy, true);
+    CHECK(strategy.disconnect == 1);
+    connector.block(strategy, true);
+    CHECK(strategy.disconnect == 1);
+    if (closePath != "peer error") {
+      socket_close(sockets.first);
+    }
+  }
   SECTION("accept") {
     SocketConnector object;
     SocketServer server(0);
-    socket_handle socket = server.add(TestSettings::port, true, true);
-    CHECK(object.connect("127.0.0.1", TestSettings::port, false, 1024, 1024));
+    socket_handle socket = server.add(0, true, true);
+    CHECK(object.connect("127.0.0.1", socket_hostport(socket), false, 1024, 1024));
     CHECK(server.accept(socket));
     server.close();
   }

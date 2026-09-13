@@ -704,6 +704,9 @@ class DateTime(object):
     def getTimeT(self):
         return _quickfix.DateTime_getTimeT(self)
 
+    def getTimePoint(self):
+        return _quickfix.DateTime_getTimePoint(self)
+
     def getTmUtc(self):
         return _quickfix.DateTime_getTmUtc(self)
 
@@ -1269,6 +1272,9 @@ class FieldMap(object):
 
     def calculateTotal(self, *args):
         return _quickfix.FieldMap_calculateTotal(self, *args)
+
+    def calculateLengthAndTotal(self, *args):
+        return _quickfix.FieldMap_calculateLengthAndTotal(self, *args)
 
     def begin(self, *args):
         return _quickfix.FieldMap_begin(self, *args)
@@ -7548,6 +7554,7 @@ CLIENT_CERTIFICATE_FILE = cvar.CLIENT_CERTIFICATE_FILE
 CLIENT_CERTIFICATE_KEY_FILE = cvar.CLIENT_CERTIFICATE_KEY_FILE
 CERTIFICATE_AUTHORITIES_FILE = cvar.CERTIFICATE_AUTHORITIES_FILE
 CERTIFICATE_AUTHORITIES_DIRECTORY = cvar.CERTIFICATE_AUTHORITIES_DIRECTORY
+CERTIFICATE_ACCEPTED_PEER_NAME = cvar.CERTIFICATE_ACCEPTED_PEER_NAME
 CERTIFICATE_REVOCATION_LIST_FILE = cvar.CERTIFICATE_REVOCATION_LIST_FILE
 CERTIFICATE_REVOCATION_LIST_DIRECTORY = cvar.CERTIFICATE_REVOCATION_LIST_DIRECTORY
 CERTIFICATE_VERIFY_LEVEL = cvar.CERTIFICATE_VERIFY_LEVEL
@@ -7780,6 +7787,12 @@ class Session(object):
     def getAllowedRemoteAddresses(self):
         return _quickfix.Session_getAllowedRemoteAddresses(self)
 
+    def getCertificateAcceptedPeerName(self):
+        return _quickfix.Session_getCertificateAcceptedPeerName(self)
+
+    def setCertificateAcceptedPeerName(self, value):
+        return _quickfix.Session_setCertificateAcceptedPeerName(self, value)
+
     def setAllowedRemoteAddresses(self, value):
         return _quickfix.Session_setAllowedRemoteAddresses(self, value)
 
@@ -7791,6 +7804,9 @@ class Session(object):
 
     def send(self, arg2):
         return _quickfix.Session_send(self, arg2)
+
+    def acceptLogon(self, arg2, arg3):
+        return _quickfix.Session_acceptLogon(self, arg2, arg3)
 
     def next(self, *args):
         return _quickfix.Session_next(self, *args)
@@ -7812,6 +7828,9 @@ class Session(object):
 
 # Register Session in _quickfix:
 _quickfix.Session_swigregister(Session)
+
+def redactLogonCredentials(value):
+    return _quickfix.redactLogonCredentials(value)
 class LogFactory(object):
     thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
     __repr__ = _swig_repr

@@ -49,25 +49,25 @@ class MessageCracker : public FIX40::MessageCracker,
                        public FIXT11::MessageCracker {
 public:
   void crack(const Message &message, const SessionID &sessionID) {
-    const FIX::BeginString &beginString = FIELD_GET_REF(message.getHeader(), BeginString);
+    const auto beginString = message.getHeader().getField<BeginString>();
 
     crack(message, sessionID, beginString);
   }
 
   void crack(const Message &message, const SessionID &sessionID, const BeginString &beginString) {
     if (beginString == BeginString_FIX40) {
-      ((FIX40::MessageCracker &)(*this)).crack((const FIX40::Message &)message, sessionID);
+      FIX40::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX41) {
-      ((FIX41::MessageCracker &)(*this)).crack((const FIX41::Message &)message, sessionID);
+      FIX41::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX42) {
-      ((FIX42::MessageCracker &)(*this)).crack((const FIX42::Message &)message, sessionID);
+      FIX42::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX43) {
-      ((FIX43::MessageCracker &)(*this)).crack((const FIX43::Message &)message, sessionID);
+      FIX43::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX44) {
-      ((FIX44::MessageCracker &)(*this)).crack((const FIX44::Message &)message, sessionID);
+      FIX44::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIXT11) {
       if (message.isAdmin()) {
-        ((FIXT11::MessageCracker &)(*this)).crack((const FIXT11::Message &)message, sessionID);
+        FIXT11::MessageCracker::crack(message, sessionID);
       } else {
         ApplVerID applVerID;
         if (!message.getHeader().getFieldIfSet(applVerID)) {
@@ -82,51 +82,51 @@ public:
 
   void crack(const Message &message, const SessionID &sessionID, const ApplVerID &applVerID) {
     if (applVerID == ApplVerID_FIX40) {
-      ((FIX40::MessageCracker &)(*this)).crack((const FIX40::Message &)message, sessionID);
+      FIX40::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX41) {
-      ((FIX41::MessageCracker &)(*this)).crack((const FIX41::Message &)message, sessionID);
+      FIX41::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX42) {
-      ((FIX42::MessageCracker &)(*this)).crack((const FIX42::Message &)message, sessionID);
+      FIX42::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX43) {
-      ((FIX43::MessageCracker &)(*this)).crack((const FIX43::Message &)message, sessionID);
+      FIX43::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX44) {
-      ((FIX44::MessageCracker &)(*this)).crack((const FIX44::Message &)message, sessionID);
+      FIX44::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50) {
-      ((FIX50::MessageCracker &)(*this)).crack((const FIX50::Message &)message, sessionID);
+      FIX50::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50_SP1) {
-      ((FIX50SP1::MessageCracker &)(*this)).crack((const FIX50SP1::Message &)message, sessionID);
+      FIX50SP1::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50_SP2) {
-      ((FIX50SP2::MessageCracker &)(*this)).crack((const FIX50SP2::Message &)message, sessionID);
+      FIX50SP2::MessageCracker::crack(message, sessionID);
     }
   }
 
   void crack(Message &message, const SessionID &sessionID) {
-    const FIX::BeginString &beginString = FIELD_GET_REF(message.getHeader(), BeginString);
+    const auto beginString = message.getHeader().getField<BeginString>();
 
     crack(message, sessionID, beginString);
   }
 
   void crack(Message &message, const SessionID &sessionID, const BeginString &beginString) {
     if (beginString == BeginString_FIX40) {
-      ((FIX40::MessageCracker &)(*this)).crack((FIX40::Message &)message, sessionID);
+      FIX40::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX41) {
-      ((FIX41::MessageCracker &)(*this)).crack((FIX41::Message &)message, sessionID);
+      FIX41::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX42) {
-      ((FIX42::MessageCracker &)(*this)).crack((FIX42::Message &)message, sessionID);
+      FIX42::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX43) {
-      ((FIX43::MessageCracker &)(*this)).crack((FIX43::Message &)message, sessionID);
+      FIX43::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIX44) {
-      ((FIX44::MessageCracker &)(*this)).crack((FIX44::Message &)message, sessionID);
+      FIX44::MessageCracker::crack(message, sessionID);
     } else if (beginString == BeginString_FIXT11) {
       if (message.isAdmin()) {
-        ((FIXT11::MessageCracker &)(*this)).crack((FIXT11::Message &)message, sessionID);
+        FIXT11::MessageCracker::crack(message, sessionID);
       } else {
         ApplVerID applVerID;
         if (!message.getHeader().getFieldIfSet(applVerID)) {
@@ -141,28 +141,28 @@ public:
 
   void crack(Message &message, const SessionID &sessionID, const ApplVerID &applVerID) {
     if (applVerID == ApplVerID_FIX40) {
-      ((FIX40::MessageCracker &)(*this)).crack((FIX40::Message &)message, sessionID);
+      FIX40::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX41) {
-      ((FIX41::MessageCracker &)(*this)).crack((FIX41::Message &)message, sessionID);
+      FIX41::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX42) {
-      ((FIX42::MessageCracker &)(*this)).crack((FIX42::Message &)message, sessionID);
+      FIX42::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX43) {
-      ((FIX43::MessageCracker &)(*this)).crack((FIX43::Message &)message, sessionID);
+      FIX43::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX44) {
-      ((FIX44::MessageCracker &)(*this)).crack((FIX44::Message &)message, sessionID);
+      FIX44::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50) {
-      ((FIX50::MessageCracker &)(*this)).crack((FIX50::Message &)message, sessionID);
+      FIX50::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50_SP1) {
-      ((FIX50SP1::MessageCracker &)(*this)).crack((FIX50SP1::Message &)message, sessionID);
+      FIX50SP1::MessageCracker::crack(message, sessionID);
     }
     if (applVerID == ApplVerID_FIX50_SP2) {
-      ((FIX50SP2::MessageCracker &)(*this)).crack((FIX50SP2::Message &)message, sessionID);
+      FIX50SP2::MessageCracker::crack(message, sessionID);
     }
   }
 };

@@ -117,6 +117,9 @@
 
 #if (HAVE_SSL > 0)
 
+#include <filesystem>
+#include <memory>
+#include <openssl/x509v3.h>
 #include <vector>
 
 #include "Mutex.h"
@@ -670,10 +673,12 @@ int callbackVerify(int ok, X509_STORE_CTX *ctx) {
 int typeofSSLAlgo(X509 *pCert, EVP_PKEY *pKey) {
 
   int t;
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> certificateKey(nullptr, EVP_PKEY_free);
 
   t = SSL_ALGO_UNKNOWN;
   if (pCert != 0) {
-    pKey = X509_get_pubkey(pCert);
+    certificateKey.reset(X509_get_pubkey(pCert));
+    pKey = certificateKey.get();
   }
   if (pKey != 0) {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -698,7 +703,7 @@ int typeofSSLAlgo(X509 *pCert, EVP_PKEY *pKey) {
   return t;
 }
 
-STACK_OF(X509_NAME) * findCAList(const char *cpCAfile, const char *cpCApath) {
+struct stack_st_X509_NAME *findCAList(const char *cpCAfile, const char *cpCApath) {
   STACK_OF(X509_NAME) * skCAList;
   STACK_OF(X509_NAME) * sk;
 #ifndef HAVE_ACE_DIRENT
@@ -939,6 +944,9 @@ long protocolOptions(const char *opt) {
       while ((*w == ' ') || (*w == '\t')) {
         w++;
       }
+      if (w == e) {
+        break;
+      }
       if (*w == '+' || *w == '-') {
         action = *(w++);
       }
@@ -969,6 +977,10 @@ long protocolOptions(const char *opt) {
         thisopt = SSL_PROTOCOL_ALL;
         w += 3 /* strlen("all") */;
       } else {
+        return -1;
+      }
+
+      if (w < e && *w != ' ' && *w != '\t') {
         return -1;
       }
 
@@ -1058,6 +1070,14 @@ SSL_CTX *createSSLContext(bool server, const SessionSettings &settings, std::str
   }
 
   long options = protocolOptions(strOptions.c_str());
+  if (options < 0
+      || !(
+          options
+          & (SSL_PROTOCOL_ALL
+             & ~(SSL_PROTOCOL_SSLV2 | SSL_PROTOCOL_SSLV3 | SSL_PROTOCOL_TLSV1 | SSL_PROTOCOL_TLSV1_1)))) {
+    errStr = "Invalid SSLProtocol: select TLSv1_2 or newer";
+    return 0;
+  }
 
   /* set up the application context */
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L)
@@ -1080,6 +1100,15 @@ SSL_CTX *createSSLContext(bool server, const SessionSettings &settings, std::str
   }
 
   setCtxOptions(ctx, options);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)) {
+    errStr = "Unable to enforce TLS 1.2 minimum";
+    SSL_CTX_free(ctx);
+    return 0;
+  }
+#else
+  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#endif
 
   SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
   if (server) {
@@ -1193,7 +1222,7 @@ bool loadSSLCert(
     return false;
   }
 
-  X509 *X509Cert = readX509(fp, 0, 0, 0);
+  std::unique_ptr<X509, decltype(&X509_free)> X509Cert(readX509(fp, 0, 0, 0), X509_free);
 
   fclose(fp);
 
@@ -1203,11 +1232,11 @@ bool loadSSLCert(
     return false;
   }
 
-  switch (typeofSSLAlgo(X509Cert, 0)) {
+  switch (typeofSSLAlgo(X509Cert.get(), 0)) {
   case SSL_ALGO_RSA:
     log->onEvent("Configuring RSA client certificate");
 
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure RSA client certificate");
       return false;
     }
@@ -1215,7 +1244,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_DSA:
     log->onEvent("Configuring DSA client certificate");
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure DSA client certificate");
       return false;
     }
@@ -1223,7 +1252,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_EC:
     log->onEvent("Configuring EC client certificate");
-    if (SSL_CTX_use_certificate(ctx, X509Cert) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, X509Cert.get()) <= 0) {
       errStr.assign("Unable to configure EC client certificate");
       return false;
     }
@@ -1234,7 +1263,7 @@ bool loadSSLCert(
     return false;
     break;
   }
-  X509_free(X509Cert);
+  X509Cert.reset();
 
   if ((fp = fopen(key.c_str(), "r")) == 0) {
     errStr.assign(key);
@@ -1242,7 +1271,9 @@ bool loadSSLCert(
     return false;
   }
 
-  EVP_PKEY *privateKey = readPrivateKey(fp, 0, cb, passwordCallbackParam);
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> privateKey(
+      readPrivateKey(fp, 0, cb, passwordCallbackParam),
+      EVP_PKEY_free);
 
   fclose(fp);
 
@@ -1252,10 +1283,10 @@ bool loadSSLCert(
     return false;
   }
 
-  switch (typeofSSLAlgo(0, privateKey)) {
+  switch (typeofSSLAlgo(0, privateKey.get())) {
   case SSL_ALGO_RSA:
     log->onEvent("Configuring RSA client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure RSA server private key");
       return false;
     }
@@ -1263,7 +1294,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_DSA:
     log->onEvent("Configuring DSA client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure DSA server private key");
       return false;
     }
@@ -1271,7 +1302,7 @@ bool loadSSLCert(
 
   case SSL_ALGO_EC:
     log->onEvent("Configuring EC client private key");
-    if (SSL_CTX_use_PrivateKey(ctx, privateKey) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, privateKey.get()) <= 0) {
       errStr.assign("Unable to configure EC server private key");
       return false;
     }
@@ -1282,7 +1313,7 @@ bool loadSSLCert(
     return false;
     break;
   }
-  EVP_PKEY_free(privateKey);
+  privateKey.reset();
 
   /* Now we know that a key and cert have been set against
    * the SSL context */
@@ -1319,6 +1350,22 @@ bool loadCAInfo(
 
   log->onEvent("Loading CA info");
 
+  verifyLevel = SSL_CLIENT_VERIFY_NONE;
+  if (settings.get().has(CERTIFICATE_VERIFY_LEVEL)) {
+    const std::string level = settings.get().getString(CERTIFICATE_VERIFY_LEVEL);
+    if (level != "0" && level != "1" && level != "2") {
+      errStr = "CertificateVerifyLevel must be 0, 1, or 2";
+      return false;
+    }
+    verifyLevel = level[0] - '0';
+  }
+
+  const int mode = !server || verifyLevel != SSL_CLIENT_VERIFY_NONE ? SSL_VERIFY_PEER : SSL_VERIFY_NONE;
+  SSL_CTX_set_verify(
+      ctx,
+      mode | (server && verifyLevel == SSL_CLIENT_VERIFY_REQUIRE ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT : 0),
+      nullptr);
+
   std::string caFile;
   if (settings.get().has(CERTIFICATE_AUTHORITIES_FILE)) {
     caFile.assign(settings.get().getString(CERTIFICATE_AUTHORITIES_FILE));
@@ -1330,43 +1377,33 @@ bool loadCAInfo(
   }
 
   if (caFile.empty() && caDir.empty()) {
+    if (settings.get().has(CERTIFICATE_AUTHORITIES_FILE) || settings.get().has(CERTIFICATE_AUTHORITIES_DIRECTORY)
+        || (server && verifyLevel != SSL_CLIENT_VERIFY_NONE)) {
+      errStr = "Certificate verification requires usable certification authorities";
+      return false;
+    }
+    if (!server && !SSL_CTX_set_default_verify_paths(ctx)) {
+      errStr = "Unable to load default certification authorities";
+      return false;
+    }
     return true;
   }
 
-  if (!SSL_CTX_load_verify_locations(ctx, caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())
-      || !SSL_CTX_set_default_verify_paths(ctx)) {
+  if ((!caDir.empty() && !std::filesystem::is_directory(caDir))
+      || !SSL_CTX_load_verify_locations(ctx, caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())) {
     errStr.assign("Unable to configure verify locations for client authentication");
     return false;
   }
 
-  STACK_OF(X509_NAME) * caList;
-  if ((caList = findCAList(caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())) == 0) {
-    errStr.assign(
-        "Unable to determine list of available CA certificates "
-        "for client authentication");
-    return false;
-  }
-  SSL_CTX_set_client_CA_list(ctx, caList);
-
-  if (server) {
-    if (settings.get().has(CERTIFICATE_VERIFY_LEVEL)) {
-      verifyLevel = (settings.get().getInt(CERTIFICATE_VERIFY_LEVEL));
+  if (server && verifyLevel != SSL_CLIENT_VERIFY_NONE) {
+    STACK_OF(X509_NAME) *caList = caFile.empty() ? sk_X509_NAME_new_null() : SSL_load_client_CA_file(caFile.c_str());
+    if (!caList || (!caDir.empty() && !SSL_add_dir_cert_subjects_to_stack(caList, caDir.c_str()))
+        || sk_X509_NAME_num(caList) == 0) {
+      sk_X509_NAME_pop_free(caList, X509_NAME_free);
+      errStr = "Unable to load client certification authorities";
+      return false;
     }
-
-    if (verifyLevel != SSL_CLIENT_VERIFY_NOTSET) {
-      /* configure new state */
-      int cVerify = SSL_VERIFY_NONE;
-      if (verifyLevel == SSL_CLIENT_VERIFY_REQUIRE) {
-        cVerify |= SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-      } else if (verifyLevel == SSL_CLIENT_VERIFY_OPTIONAL) {
-        cVerify |= SSL_VERIFY_PEER;
-      }
-
-      SSL_CTX_set_verify(ctx, cVerify, callbackVerify);
-    }
-  } else {
-    /* Set the certificate verification callback */
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, callbackVerify);
+    SSL_CTX_set_client_CA_list(ctx, caList);
   }
 
   return true;
@@ -1375,11 +1412,7 @@ bool loadCAInfo(
 X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log, std::string &errStr) {
   errStr.erase();
 
-  X509_STORE *revocationStore = 0;
-
   log->onEvent("Loading CRL information");
-
-  errStr.erase();
 
   std::string crlFile;
   if (settings.get().has(CERTIFICATE_REVOCATION_LIST_FILE)) {
@@ -1392,24 +1425,46 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
   }
 
   if (crlFile.empty() && crlDir.empty()) {
-    return revocationStore;
+    if (settings.get().has(CERTIFICATE_REVOCATION_LIST_FILE)
+        || settings.get().has(CERTIFICATE_REVOCATION_LIST_DIRECTORY)) {
+      errStr = "Configured certificate revocation list is empty";
+    }
+    return 0;
   }
 
-#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
-  revocationStore = createX509Store(crlFile.c_str(), crlDir.empty() ? 0 : crlDir.c_str());
-  if (revocationStore == 0) {
-    errStr.assign("Unable to create revocation store");
-  }
-#else
+  // The SSL context owns this store (non-owning result); callers must not free it.
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  if (!store || !X509_STORE_load_locations(store, crlFile.c_str(), crlDir.c_str())) {
+  X509_LOOKUP *lookup = store ? X509_STORE_add_lookup(store, X509_LOOKUP_file()) : nullptr;
+  if (!lookup || (!crlFile.empty() && X509_load_crl_file(lookup, crlFile.c_str(), X509_FILETYPE_PEM) <= 0)
+      || !X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL)) {
     errStr.assign("Unable to create revocation store");
     return 0;
   }
-  X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
-#endif
 
-  return revocationStore;
+  if (!crlDir.empty()) {
+    int loaded = 0;
+    // A general hash-directory lookup would also trust certificates in this
+    // directory. Load only CRLs, identified by OpenSSL's <hash>.r<number> names.
+    for (const auto &entry : std::filesystem::directory_iterator(crlDir)) {
+      const std::string name = entry.path().filename().string();
+      if (name.size() <= 10 || name.substr(8, 2) != ".r"
+          || name.substr(0, 8).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos
+          || name.find_first_not_of("0123456789", 10) != std::string::npos) {
+        continue;
+      }
+      if (X509_load_crl_file(lookup, entry.path().string().c_str(), X509_FILETYPE_PEM) <= 0) {
+        errStr = "Unable to load CRL directory entry";
+        return 0;
+      }
+      ++loaded;
+    }
+    if (!loaded) {
+      errStr = "No CRLs found in configured directory";
+      return 0;
+    }
+  }
+
+  return store;
 }
 
 int doAccept(SSL *ssl, int &result) {
@@ -1422,9 +1477,18 @@ int doAccept(SSL *ssl, int &result) {
 }
 
 int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
+  return acceptSSLConnection(socket, ssl, log, verify, true);
+}
+
+int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bool closeOnFailure) {
+  auto closeSocket = [&]() {
+    if (closeOnFailure) {
+      ssl_socket_close(socket, ssl);
+    }
+  };
   int rc;
   int result = -1;
-  char *subjName = 0;
+  std::unique_ptr<X509, decltype(&X509_free)> peer(nullptr, X509_free);
   time_t timeout = time(0) + 10;
 #ifdef __TOS_AIX__
   int retries = 0;
@@ -1450,7 +1514,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
           log->onEvent("SSL handshake stopped: connection was closed");
         }
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       } else if (ERR_GET_REASON(ERR_peek_error()) == SSL_R_HTTP_REQUEST) {
         /*
@@ -1486,7 +1550,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         } while (rv > 0 && ca[0] != '\012' /*LF*/);
 
         SSL_set_shutdown(ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         ;
         return result;
       } else if (result == SSL_ERROR_SYSCALL) {
@@ -1538,7 +1602,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         }
 #endif
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       } else {
         /*
@@ -1563,7 +1627,7 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
          * - kick away the SSL stuff immediately
          */
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       }
       if (time(0) > timeout) {
@@ -1571,13 +1635,11 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
           log->onEvent("SSL handshake stopped: connection was closed");
         }
         SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-        ssl_socket_close(socket, ssl);
+        closeSocket();
         return result;
       }
       process_sleep(0.01);
     }
-
-    X509 *xs = 0;
 
     /*
      * Check for failed client authentication
@@ -1587,26 +1649,20 @@ int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify) {
         log->onEvent("SSL client authentication failed: ");
       }
       SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-      ssl_socket_close(socket, ssl);
+      closeSocket();
       return result;
     } else {
-      if ((xs = SSL_get_peer_certificate(ssl)) != 0) {
-        subjName = X509_NAME_oneline(X509_get_subject_name(xs), 0, 0);
-      }
+      peer.reset(SSL_get_peer_certificate(ssl));
     }
   }
 
-  if ((verify == SSL_CLIENT_VERIFY_REQUIRE) && subjName == 0) {
+  if ((verify == SSL_CLIENT_VERIFY_REQUIRE) && !peer) {
     if (log) {
       log->onEvent("No acceptable peer certificate available");
     }
     SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
-    ssl_socket_close(socket, ssl);
+    closeSocket();
     result = 2;
-  }
-
-  if (subjName) {
-    free(subjName);
   }
 
   return result;
@@ -1661,8 +1717,7 @@ bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log) {
     if (log) {
       log->onEvent("Failed to set SNI hostname: " + hostname);
     }
-    // Don't fail the connection - SNI is optional
-    return true;
+    return false;
   }
 
   if (log) {
@@ -1670,6 +1725,56 @@ bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log) {
   }
 
   return true;
+}
+
+bool ssl_set_peer_name(SSL *ssl, const std::string &name, Log *log) {
+  if (!ssl || name.empty() || name.find('\0') != std::string::npos) {
+    return false;
+  }
+#if OPENSSL_VERSION_NUMBER < 0x10002000L
+  return false; // This OpenSSL cannot verify a peer's DNS/IP identity.
+#else
+  X509_VERIFY_PARAM *parameters = SSL_get0_param(ssl);
+  unsigned int flags = X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
+#ifdef X509_CHECK_FLAG_NEVER_CHECK_SUBJECT
+  flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+#endif
+  X509_VERIFY_PARAM_set_hostflags(parameters, flags);
+  if (is_ip_address(name)) {
+    const std::string address = name.front() == '[' ? name.substr(1, name.size() - 2) : name;
+    return X509_VERIFY_PARAM_set1_ip_asc(parameters, address.c_str()) == 1;
+  }
+  return X509_VERIFY_PARAM_set1_host(parameters, name.c_str(), name.size()) == 1
+         && ssl_set_sni_hostname(ssl, name, log);
+#endif
+}
+
+bool ssl_peer_matches(SSL *ssl, const std::string &name) {
+  if (name.empty()) {
+    return true;
+  }
+  if (!ssl || !SSL_is_init_finished(ssl) || !(SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER)
+      || SSL_get_verify_result(ssl) != X509_V_OK || name.front() == '.' || name.find('*') != std::string::npos
+      || name.find('\0') != std::string::npos) {
+    return false;
+  }
+#ifndef X509_CHECK_FLAG_NEVER_CHECK_SUBJECT
+  return false; // Exact SAN-only binding requires native OpenSSL support.
+#else
+  std::unique_ptr<X509, decltype(&X509_free)> peer(SSL_get_peer_certificate(ssl), X509_free);
+  if (!peer) {
+    return false;
+  }
+  const std::string address = name.front() == '[' ? name.substr(1, name.size() - 2) : name;
+  const int result = is_ip_address(name) ? X509_check_ip_asc(peer.get(), address.c_str(), 0)
+                                         : X509_check_host(
+                                               peer.get(),
+                                               name.c_str(),
+                                               name.size(),
+                                               X509_CHECK_FLAG_NO_WILDCARDS | X509_CHECK_FLAG_NEVER_CHECK_SUBJECT,
+                                               nullptr);
+  return result == 1;
+#endif
 }
 
 } // namespace FIX

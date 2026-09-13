@@ -46,12 +46,17 @@ public:
     i->second.erase(order);
   }
 
-  Order &find(std::string symbol, Order::Side side, std::string id) {
-    Markets::iterator i = m_markets.find(symbol);
+  Order &find(const std::string &symbol, Order::Side side, const std::string &owner, const std::string &id) {
+    return const_cast<Order &>(static_cast<const OrderMatcher &>(*this).find(symbol, side, owner, id));
+  }
+
+  const Order &find(const std::string &symbol, Order::Side side, const std::string &owner, const std::string &id)
+      const {
+    Markets::const_iterator i = m_markets.find(symbol);
     if (i == m_markets.end()) {
-      throw std::exception();
+      throw std::logic_error("Unknown order");
     }
-    return i->second.find(side, id);
+    return i->second.find(side, owner, id);
   }
 
   bool match(std::string symbol, std::queue<Order> &orders) {

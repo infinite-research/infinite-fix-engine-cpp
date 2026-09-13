@@ -31,14 +31,16 @@
 #include "SessionID.h"
 #include "SessionSettings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #include "strptime.h"
 #include <fstream>
+#include <memory>
 #include <string>
 
 namespace FIX {
 
 const std::string PostgreSQLStoreFactory::DEFAULT_DATABASE = "quickfix";
-const std::string PostgreSQLStoreFactory::DEFAULT_USER = "postgres";
+const std::string PostgreSQLStoreFactory::DEFAULT_USER = "";
 const std::string PostgreSQLStoreFactory::DEFAULT_PASSWORD = "";
 const std::string PostgreSQLStoreFactory::DEFAULT_HOST = "localhost";
 const short PostgreSQLStoreFactory::DEFAULT_PORT = 0;
@@ -49,10 +51,13 @@ PostgreSQLStore::PostgreSQLStore(
     const DatabaseConnectionID &connection,
     PostgreSQLConnectionPool *pool)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(pool),
       m_sessionID(sessionID) {
   m_pConnection = m_pConnectionPool->create(connection);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(m_pConnection); });
   populateCache();
+  connectionGuard.dismiss();
 }
 
 PostgreSQLStore::PostgreSQLStore(
@@ -64,10 +69,13 @@ PostgreSQLStore::PostgreSQLStore(
     const std::string &host,
     short port)
     : m_cache(now),
+      m_pConnection(nullptr),
       m_pConnectionPool(0),
       m_sessionID(sessionID) {
-  m_pConnection = new PostgreSQLConnection(database, user, password, host, port);
+  auto connection = std::make_unique<PostgreSQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.get();
   populateCache();
+  connection.release();
 }
 
 PostgreSQLStore::~PostgreSQLStore() {
@@ -134,6 +142,9 @@ MessageStore *PostgreSQLStoreFactory::create(const UtcTimeStamp &now, const Sess
   } else if (m_useDictionary) {
     return create(now, sessionID, m_dictionary);
   } else {
+    if (m_user.empty()) {
+      throw ConfigError(std::string(POSTGRESQL_STORE_USER) + " must not be empty");
+    }
     DatabaseConnectionID id(m_database, m_user, m_password, m_host, m_port);
     return new PostgreSQLStore(now, sessionID, id, m_connectionPoolPtr.get());
   }
@@ -153,13 +164,12 @@ MessageStore *PostgreSQLStoreFactory::create(
     database = settings.getString(POSTGRESQL_STORE_DATABASE);
   } catch (ConfigError &) {}
 
-  try {
-    user = settings.getString(POSTGRESQL_STORE_USER);
-  } catch (ConfigError &) {}
+  user = settings.getString(POSTGRESQL_STORE_USER);
+  password = settings.getString(POSTGRESQL_STORE_PASSWORD);
 
-  try {
-    password = settings.getString(POSTGRESQL_STORE_PASSWORD);
-  } catch (ConfigError &) {}
+  if (user.empty()) {
+    throw ConfigError(std::string(POSTGRESQL_STORE_USER) + " must not be empty");
+  }
 
   try {
     host = settings.getString(POSTGRESQL_STORE_HOST);
@@ -176,8 +186,8 @@ MessageStore *PostgreSQLStoreFactory::create(
 void PostgreSQLStoreFactory::destroy(MessageStore *pStore) { delete pStore; }
 
 bool PostgreSQLStore::set(SEQNUM msgSeqNum, const std::string &msg) EXCEPT(IOException) {
-  char *msgCopy = new char[(msg.size() * 2) + 1];
-  PQescapeString(msgCopy, msg.c_str(), msg.size());
+  std::string msgCopy((msg.size() * 2) + 1, '\0');
+  msgCopy.resize(PQescapeString(msgCopy.data(), msg.data(), msg.size()));
 
   std::stringstream queryString;
   queryString << "INSERT INTO messages "
@@ -189,12 +199,10 @@ bool PostgreSQLStore::set(SEQNUM msgSeqNum, const std::string &msg) EXCEPT(IOExc
               << "'" << m_sessionID.getSessionQualifier() << "'," << msgSeqNum << ","
               << "'" << msgCopy << "')";
 
-  delete[] msgCopy;
-
   PostgreSQLQuery query(queryString.str());
   if (!m_pConnection->execute(query)) {
     std::stringstream queryString2;
-    queryString2 << "UPDATE messages SET message='" << msg << "' WHERE "
+    queryString2 << "UPDATE messages SET message='" << msgCopy << "' WHERE "
                  << "beginstring=" << "'" << m_sessionID.getBeginString().getValue() << "' and "
                  << "sendercompid=" << "'" << m_sessionID.getSenderCompID().getValue() << "' and "
                  << "targetcompid=" << "'" << m_sessionID.getTargetCompID().getValue() << "' and "

@@ -136,7 +136,18 @@ bool ThreadedSocketConnection::read() {
     }
 
     processStream();
-    return true;
+    return !m_disconnect;
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : m_pLog;
+    if (log) {
+      log->onEvent(redactLogonCredentials(e.what()));
+    }
+    if (m_pSession) {
+      m_pSession->disconnect();
+    } else {
+      disconnect();
+    }
+    return false;
   } catch (SocketRecvFailed &e) {
     if (m_disconnect) {
       return false;
@@ -154,10 +165,7 @@ bool ThreadedSocketConnection::read() {
 }
 
 bool ThreadedSocketConnection::readMessage(std::string &msg) EXCEPT(SocketRecvFailed) {
-  try {
-    return m_parser.readFixMessage(msg);
-  } catch (MessageParseError &) {}
-  return true;
+  return m_parser.readFixMessage(msg);
 }
 
 void ThreadedSocketConnection::processStream() {
@@ -166,11 +174,18 @@ void ThreadedSocketConnection::processStream() {
     if (!m_pSession) {
       if (!setSession(msg)) {
         disconnect();
-        continue;
+        return;
       }
+      if (!m_pSession->receivedLogon()) {
+        return;
+      }
+      continue;
     }
     try {
       m_pSession->next(msg, UtcTimeStamp::now());
+      if (m_disconnect) {
+        return;
+      }
     } catch (InvalidMessage &) {
       if (!m_pSession->isLoggedOn()) {
         disconnect();
@@ -181,47 +196,31 @@ void ThreadedSocketConnection::processStream() {
 }
 
 bool ThreadedSocketConnection::setSession(const std::string &msg) {
-  m_pSession = Session::lookupSession(msg, true);
-  if (!m_pSession) {
+  Session *candidate = Session::lookupSession(msg, true);
+  if (!candidate || identifyType(msg) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+      || (!candidate->getAllowedRemoteAddresses().empty()
+          && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
     if (m_pLog) {
-      m_pLog->onEvent("Session not found for incoming message: " + msg);
-      m_pLog->onIncoming(msg);
+      m_pLog->onEvent("Incoming connection was not admitted");
     }
     return false;
   }
 
-  SessionID sessionID = m_pSession->getSessionID();
-  m_pSession = 0;
+  const SessionID &sessionID = candidate->getSessionID();
 
   // see if the session frees up within 5 seconds
   for (int i = 1; i <= 5; i++) {
     if (!Session::isSessionRegistered(sessionID)) {
-      m_pSession = Session::registerSession(sessionID);
-    }
-    if (m_pSession) {
-      break;
+      if (!candidate->acceptLogon(msg, *this)) {
+        return false;
+      }
+      m_pSession = candidate;
+      return true;
     }
     process_sleep(1);
   }
 
-  if (!m_pSession) {
-    return false;
-  }
-  if (m_sessions.find(m_pSession->getSessionID()) == m_sessions.end()) {
-    return false;
-  }
-
-  if (m_pSession->isAcceptor()) {
-    std::string remote_address = socket_peername(m_socket);
-    if (!m_pSession->getAllowedRemoteAddresses().empty() && !m_pSession->inAllowedRemoteAddresses(remote_address)) {
-      m_pSession->getLog()->onEvent("Deny connections to the acceptor from " + remote_address);
-      return false;
-    }
-    m_pSession->getLog()->onEvent("Allows connections to the acceptor from " + remote_address);
-  }
-
-  m_pSession->setResponder(this);
-  return true;
+  return false;
 }
 
 } // namespace FIX

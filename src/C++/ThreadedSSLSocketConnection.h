@@ -161,6 +161,7 @@ public:
   SSL *sslObject() { return m_ssl; }
 
 private:
+  friend class ThreadedSSLSocketInitiator;
   typedef std::pair<socket_handle, SSL *> SocketKey;
 
   bool readMessage(std::string &msg) EXCEPT(SocketRecvFailed);

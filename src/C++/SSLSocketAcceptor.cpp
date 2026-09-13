@@ -125,6 +125,9 @@
 #include "Session.h"
 #include "Settings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
+
+#include <memory>
 
 namespace FIX {
 
@@ -137,7 +140,7 @@ SSLSocketAcceptor::SSLSocketAcceptor(
     MessageStoreFactory &factory,
     const SessionSettings &settings) EXCEPT(ConfigError)
     : Acceptor(application, factory, settings),
-      m_pServer(0),
+      m_pServer(nullptr),
       m_sslInit(false),
       m_verify(SSL_CLIENT_VERIFY_NOTSET),
       m_ctx(0),
@@ -149,7 +152,7 @@ SSLSocketAcceptor::SSLSocketAcceptor(
     const SessionSettings &settings,
     LogFactory &logFactory) EXCEPT(ConfigError)
     : Acceptor(application, factory, settings, logFactory),
-      m_pServer(0),
+      m_pServer(nullptr),
       m_sslInit(false),
       m_verify(SSL_CLIENT_VERIFY_NOTSET),
       m_ctx(0),
@@ -168,10 +171,21 @@ SSLSocketAcceptor::~SSLSocketAcceptor() {
 }
 
 void SSLSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   std::set<SessionID> sessions = sessionSettings.getSessions();
   for (const SessionID &sessionID : sessions) {
     const Dictionary &settings = sessionSettings.get(sessionID);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -184,28 +198,31 @@ void SSLSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCE
 void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT(RuntimeError) {
   if (!m_sslInit) {
     ssl_init();
+    auto cleanup = sg::make_scope_guard([&]() {
+      if (!m_sslInit) {
+        SSL_CTX_free(m_ctx);
+        m_ctx = nullptr;
+        ssl_term();
+      }
+    });
 
     std::string errStr;
 
     /* set up the application context */
     if ((m_ctx = createSSLContext(true, m_settings, errStr)) == 0) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadSSLCert(m_ctx, true, m_settings, getLog(), SSLSocketAcceptor::passPhraseHandleCB, this, errStr)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadCAInfo(m_ctx, true, m_settings, getLog(), errStr, m_verify)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     m_revocationStore = loadCRLInfo(m_ctx, m_settings, getLog(), errStr);
     if (!m_revocationStore && !errStr.empty()) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
@@ -215,12 +232,14 @@ void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXC
   short port = 0;
 
   try {
-    m_pServer = new SocketServer(1);
+    std::unique_ptr<SocketServer> server(new SocketServer(1));
+    PortToSessions portToSessions;
 
     std::set<SessionID> sessions = sessionSettings.getSessions();
     for (const SessionID &sessionID : sessions) {
       const Dictionary &settings = sessionSettings.get(sessionID);
       port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+      const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
       const bool reuseAddress = settings.has(SOCKET_REUSE_ADDRESS) ? settings.getBool(SOCKET_REUSE_ADDRESS) : true;
 
@@ -230,9 +249,12 @@ void SSLSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXC
 
       const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-      m_portToSessions[port].insert(sessionID);
-      m_pServer->add(port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
+      portToSessions[port].insert(sessionID);
+      server->add(address, port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
     }
+
+    m_portToSessions.swap(portToSessions);
+    m_pServer = std::move(server);
   } catch (SocketException &e) {
     throw RuntimeError(
         "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
@@ -258,9 +280,7 @@ void SSLSocketAcceptor::onStart() {
     }
   }
 
-  m_pServer->close();
-  delete m_pServer;
-  m_pServer = 0;
+  onStop();
 }
 
 bool SSLSocketAcceptor::onPoll() {
@@ -286,10 +306,23 @@ bool SSLSocketAcceptor::onPoll() {
   }
 
   m_pServer->block(*this, true);
+  if (isStopped()) {
+    onStop();
+    return false;
+  }
   return true;
 }
 
-void SSLSocketAcceptor::onStop() {}
+void SSLSocketAcceptor::onStop() {
+  joinStartThread();
+  if (m_pServer && m_pServer->isDispatching()) {
+    return;
+  }
+  while (!m_connections.empty()) {
+    SSLSocketAcceptor::onDisconnect(*m_pServer, m_connections.begin()->first);
+  }
+  m_pServer.reset();
+}
 
 void SSLSocketAcceptor::onConnect(SocketServer &server, socket_handle a, socket_handle s) {
   if (!socket_isValid(s)) {
@@ -312,7 +345,7 @@ void SSLSocketAcceptor::onConnect(SocketServer &server, socket_handle a, socket_
 
   SSLSocketConnection *sconn = new SSLSocketConnection(s, ssl, sessions, &server.getMonitor());
   // SSL accept
-  if (acceptSSLConnection(sconn->getSocket(), sconn->sslObject(), getLog(), m_verify) != 0) {
+  if (acceptSSLConnection(sconn->getSocket(), sconn->sslObject(), getLog(), m_verify, false) != 0) {
     std::stringstream stream;
     stream << "Failed to accept SSL connection from " << socket_peername(s) << " on port " << port;
     if (getLog()) {
@@ -342,7 +375,10 @@ void SSLSocketAcceptor::onWrite(SocketServer &server, socket_handle s) {
   SSLSocketConnection *pSocketConnection = i->second;
 
   if (pSocketConnection->didReadFromSocketRequestToWrite()) {
-    pSocketConnection->read(*this, server);
+    if (!pSocketConnection->read(*this, server)) {
+      onDisconnect(server, s);
+      return;
+    }
   }
 
   if (pSocketConnection->processQueue()) {
@@ -374,7 +410,7 @@ void SSLSocketAcceptor::onDisconnect(SocketServer &, socket_handle s) {
 
   Session *pSession = pSocketConnection->getSession();
   if (pSession) {
-    pSession->disconnect();
+    pSession->disconnectIfConnected();
   }
 
   delete pSocketConnection;

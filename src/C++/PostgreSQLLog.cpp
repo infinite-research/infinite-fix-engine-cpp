@@ -29,29 +29,41 @@
 #include "SessionID.h"
 #include "SessionSettings.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #include "strptime.h"
 #include <fstream>
+#include <memory>
 
 namespace FIX {
 
 const std::string PostgreSQLLogFactory::DEFAULT_DATABASE = "quickfix";
-const std::string PostgreSQLLogFactory::DEFAULT_USER = "postgres";
+const std::string PostgreSQLLogFactory::DEFAULT_USER = "";
 const std::string PostgreSQLLogFactory::DEFAULT_PASSWORD = "";
 const std::string PostgreSQLLogFactory::DEFAULT_HOST = "localhost";
 const short PostgreSQLLogFactory::DEFAULT_PORT = 0;
 
 PostgreSQLLog::PostgreSQLLog(const SessionID &s, const DatabaseConnectionID &d, PostgreSQLConnectionPool *p)
-    : m_pConnectionPool(p) {
+    : m_pConnection(nullptr),
+      m_pConnectionPool(p),
+      m_pSessionID(nullptr) {
   init();
-  m_pSessionID = new SessionID(s);
-  m_pConnection = m_pConnectionPool->create(d);
+  auto ownedSessionID = std::make_unique<SessionID>(s);
+  PostgreSQLConnection *connection = m_pConnectionPool->create(d);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(connection); });
+  m_pConnection = connection;
+  m_pSessionID = ownedSessionID.release();
+  connectionGuard.dismiss();
 }
 
 PostgreSQLLog::PostgreSQLLog(const DatabaseConnectionID &d, PostgreSQLConnectionPool *p)
-    : m_pConnectionPool(p),
+    : m_pConnection(nullptr),
+      m_pConnectionPool(p),
       m_pSessionID(0) {
   init();
-  m_pConnection = m_pConnectionPool->create(d);
+  PostgreSQLConnection *connection = m_pConnectionPool->create(d);
+  auto connectionGuard = sg::make_scope_guard([&]() { m_pConnectionPool->destroy(connection); });
+  m_pConnection = connection;
+  connectionGuard.dismiss();
 }
 
 PostgreSQLLog::PostgreSQLLog(
@@ -61,10 +73,14 @@ PostgreSQLLog::PostgreSQLLog(
     const std::string &password,
     const std::string &host,
     short port)
-    : m_pConnectionPool(0) {
+    : m_pConnection(nullptr),
+      m_pConnectionPool(0),
+      m_pSessionID(nullptr) {
   init();
-  m_pSessionID = new SessionID(s);
-  m_pConnection = new PostgreSQLConnection(database, user, password, host, port);
+  auto ownedSessionID = std::make_unique<SessionID>(s);
+  auto connection = std::make_unique<PostgreSQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.release();
+  m_pSessionID = ownedSessionID.release();
 }
 
 PostgreSQLLog::PostgreSQLLog(
@@ -73,10 +89,12 @@ PostgreSQLLog::PostgreSQLLog(
     const std::string &password,
     const std::string &host,
     short port)
-    : m_pConnectionPool(0),
+    : m_pConnection(nullptr),
+      m_pConnectionPool(0),
       m_pSessionID(0) {
   init();
-  m_pConnection = new PostgreSQLConnection(database, user, password, host, port);
+  auto connection = std::make_unique<PostgreSQLConnection>(database, user, password, host, port);
+  m_pConnection = connection.release();
 }
 
 void PostgreSQLLog::init() {
@@ -103,9 +121,9 @@ Log *PostgreSQLLogFactory::create() {
 
   init(m_settings.get(), database, user, password, host, port);
   DatabaseConnectionID id(database, user, password, host, port);
-  PostgreSQLLog *result = new PostgreSQLLog(id, m_connectionPoolPtr.get());
+  auto result = std::make_unique<PostgreSQLLog>(id, m_connectionPoolPtr.get());
   initLog(m_settings.get(), *result);
-  return result;
+  return result.release();
 }
 
 Log *PostgreSQLLogFactory::create(const SessionID &s) {
@@ -122,9 +140,9 @@ Log *PostgreSQLLogFactory::create(const SessionID &s) {
 
   init(settings, database, user, password, host, port);
   DatabaseConnectionID id(database, user, password, host, port);
-  PostgreSQLLog *result = new PostgreSQLLog(s, id, m_connectionPoolPtr.get());
+  auto result = std::make_unique<PostgreSQLLog>(s, id, m_connectionPoolPtr.get());
   initLog(settings, *result);
-  return result;
+  return result.release();
 }
 
 void PostgreSQLLogFactory::init(
@@ -145,13 +163,8 @@ void PostgreSQLLogFactory::init(
       database = settings.getString(POSTGRESQL_LOG_DATABASE);
     } catch (ConfigError &) {}
 
-    try {
-      user = settings.getString(POSTGRESQL_LOG_USER);
-    } catch (ConfigError &) {}
-
-    try {
-      password = settings.getString(POSTGRESQL_LOG_PASSWORD);
-    } catch (ConfigError &) {}
+    user = settings.getString(POSTGRESQL_LOG_USER);
+    password = settings.getString(POSTGRESQL_LOG_PASSWORD);
 
     try {
       host = settings.getString(POSTGRESQL_LOG_HOST);
@@ -166,6 +179,10 @@ void PostgreSQLLogFactory::init(
     password = m_password;
     host = m_host;
     port = m_port;
+  }
+
+  if (user.empty()) {
+    throw ConfigError(std::string(POSTGRESQL_LOG_USER) + " must not be empty");
   }
 }
 
@@ -229,8 +246,8 @@ void PostgreSQLLog::insert(const std::string &table, const std::string value) {
   char sqlTime[100];
   STRING_SPRINTF(sqlTime, "%d-%02d-%02d %02d:%02d:%02d.%03d", year, month, day, hour, minute, second, millis);
 
-  char *valueCopy = new char[(value.size() * 2) + 1];
-  PQescapeString(valueCopy, value.c_str(), value.size());
+  std::string valueCopy((value.size() * 2) + 1, '\0');
+  valueCopy.resize(PQescapeString(valueCopy.data(), value.data(), value.size()));
 
   std::stringstream queryString;
   queryString << "INSERT INTO " << table << " "
@@ -252,7 +269,6 @@ void PostgreSQLLog::insert(const std::string &table, const std::string value) {
   }
 
   queryString << "'" << valueCopy << "')";
-  delete[] valueCopy;
 
   PostgreSQLQuery query(queryString.str());
   m_pConnection->execute(query);

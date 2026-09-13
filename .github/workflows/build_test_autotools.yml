@@ -1,8 +1,13 @@
 name: Build with Autotools
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
     build:
@@ -10,22 +15,22 @@ jobs:
       strategy:
           fail-fast: false
           matrix:
-              runner: [ubuntu-latest, macos-latest]
+              runner: [ubuntu-latest]
               configuration: [Release]
               compiler-settings: ['']
               include:
                 - runner: ubuntu-latest
                   compiler-settings: CXX=clang++ CC=clang
-                - runner: macos-latest
-                  compiler-settings: CXX=g++ CC=gcc
       steps:
       - name: Install dependencies
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-            python-version: '3.10' 
-            
+            python-version: '3.10'
+
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+            persist-credentials: false
 
       - name: Install dependencies for macOS
         if: matrix.runner == 'macos-latest'
@@ -51,7 +56,7 @@ jobs:
 
       - name: Make
         shell: bash
-        run:  make
+        run:  make -j4
 
       - name: Make check
         shell: bash

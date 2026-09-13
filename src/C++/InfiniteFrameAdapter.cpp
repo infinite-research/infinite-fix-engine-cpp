@@ -468,10 +468,10 @@ bool unsigned32(const CborValue &value) noexcept {
 }
 
 bool weeklyLogonContained(const std::array<CborValue, 50> &fields) noexcept {
-  constexpr std::uint64_t WEEK_SECONDS = UINT64_C(7) * 86400;
   const auto position
       = [&fields](std::size_t day) { return fields[day].number * UINT64_C(86400) + fields[day + 1].number; };
   const auto distance = [](std::uint64_t start, std::uint64_t value) {
+    constexpr std::uint64_t WEEK_SECONDS = UINT64_C(7) * 86400;
     return value >= start ? value - start : WEEK_SECONDS - start + value;
   };
   const auto sessionStart = position(12);
