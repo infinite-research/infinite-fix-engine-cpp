@@ -385,6 +385,8 @@ if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(can
 
 Refactor `Session::verify` with an `invokeCallback` flag or an equivalently small split so `fromAdmin` runs exactly once before `RefreshOnLogon`, `ResetSeqNumFlag`, or `ResetOnLogon` changes state. After authentication, preserve the existing reset-mode sequence rule: do not blindly enable ordinary too-low checks for all SequenceReset messages. Reject every non-Logon while `receivedLogon()` is false.
 
+PR #7 review refinement: a `RejectLogon` still answers with a Logout carrying its text (sent through the candidate transport, stored, one sender sequence number, no `ResetOnDisconnect` for an unauthenticated acceptor candidate). An initiator whose Logon is pending still processes the counterparty's Logout or Reject so the reason reaches `fromAdmin` and the target sequence advances; acceptors and pre-Logon SequenceReset remain refused. Both are recorded in NEWS.
+
 - [ ] **Step 5: Verify valid protocol behavior**
 
 Run: `build-security/lib/ut "SocketConnectionTests,SessionTestCase,AcceptorSessionTestCase,AcceptorT11TestCase" --quickfix-spec-path spec`

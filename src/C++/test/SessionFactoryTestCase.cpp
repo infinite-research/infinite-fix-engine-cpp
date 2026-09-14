@@ -29,6 +29,8 @@
 #include <Session.h>
 #include <SessionFactory.h>
 
+#include "TestHelper.h"
+
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
@@ -99,5 +101,31 @@ TEST_CASE("SessionFactoryTests") {
     settings.setString(HEARTBTINT, "30");
 
     CHECK_THROWS(object.create(sessionID, settings));
+  }
+
+  SECTION("FIXT DefaultApplVerID requires a configured application dictionary") {
+    NullApplication application;
+    MemoryStoreFactory messageStoreFactory;
+    SessionFactory object(application, messageStoreFactory, 0);
+
+    SessionID sessionID("FIXT.1.1", "SENDER", "TARGET");
+    Dictionary settings;
+    settings.setString(CONNECTION_TYPE, "initiator");
+    settings.setString(NON_STOP_SESSION, "Y");
+    settings.setString(HEARTBTINT, "30");
+    settings.setString(TRANSPORT_DATA_DICTIONARY, FIX::TestSettings::pathForSpec("FIXT11"));
+    settings.setString(std::string(APP_DATA_DICTIONARY) + ".FIX.5.0SP2", FIX::TestSettings::pathForSpec("FIX50SP2"));
+
+    // Every inbound message is parsed with the default version's dictionary, so a miss must fail at startup.
+    settings.setString(DEFAULT_APPLVERID, "FIX.5.0");
+    CHECK_THROWS_AS(object.create(sessionID, settings), ConfigError);
+
+    settings.setString(DEFAULT_APPLVERID, "FIX.5.0SP2");
+    object.destroy(object.create(sessionID, settings));
+
+    // Dictionary-free FIXT sessions keep accepting any default version.
+    settings.setString(USE_DATA_DICTIONARY, "N");
+    settings.setString(DEFAULT_APPLVERID, "FIX.5.0");
+    object.destroy(object.create(sessionID, settings));
   }
 }

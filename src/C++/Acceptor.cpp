@@ -49,7 +49,8 @@ Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFa
       m_processing(false),
       m_firstPoll(true),
       m_stop(true),
-      m_stopCleanupPending(false) {
+      m_stopCleanupPending(false),
+      m_stopCleanupOwner(std::thread::id()) {
   initialize();
 }
 
@@ -67,7 +68,8 @@ Acceptor::Acceptor(
       m_processing(false),
       m_firstPoll(true),
       m_stop(true),
-      m_stopCleanupPending(false) {
+      m_stopCleanupPending(false),
+      m_stopCleanupOwner(std::thread::id()) {
   m_pLog = logFactory.create();
   auto logGuard = sg::make_scope_guard([&]() { m_pLogFactory->destroy(m_pLog); });
   initialize();
@@ -119,31 +121,9 @@ Acceptor::~Acceptor() {
   }
 }
 
-Session *Acceptor::getSession(const std::string &msg, Responder &responder) {
-  Message message;
-  if (!message.setStringHeader(msg)) {
-    return 0;
-  }
-
-  try {
-    auto const &beginString = message.getHeader().getField<BeginString>();
-    auto const &clSenderCompID = message.getHeader().getField<SenderCompID>();
-    auto const &clTargetCompID = message.getHeader().getField<TargetCompID>();
-    auto const &msgType = message.getHeader().getField<MsgType>();
-    if (msgType != MsgType_Logon) {
-      return 0;
-    }
-
-    SenderCompID senderCompID(clTargetCompID);
-    TargetCompID targetCompID(clSenderCompID);
-    SessionID sessionID(beginString, senderCompID, targetCompID);
-
-    Sessions::iterator i = m_sessions.find(sessionID);
-    if (i != m_sessions.end()) {
-      i->second->setResponder(&responder);
-      return i->second;
-    }
-  } catch (FieldNotFound &) {}
+Session *Acceptor::getSession(const std::string &, Responder &) {
+  // Attaching a responder here skipped listener membership, AllowedRemoteAddresses, TLS peer-name binding, and
+  // Logon authentication. The symbol stays for ABI compatibility but never admits a peer.
   return 0;
 }
 
@@ -262,8 +242,11 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
     }
     return onPoll();
   } catch (...) {
-    m_stop = true;
-    if (initialized) {
+    if (!initialized) {
+      m_stop = true;
+    } else if (isStopped()) {
+      // Finish a stop requested during the failed dispatch. Otherwise, like Initiator::poll, an application
+      // exception propagates and leaves the acceptor running; the host decides whether to keep polling.
       onStop();
     }
     throw;
@@ -275,6 +258,7 @@ void Acceptor::stop(bool force) {
   if (!lockStopCleanup(cleanupLock)) {
     return;
   }
+  auto owner = sg::make_scope_guard([this]() { m_stopCleanupOwner = std::thread::id(); });
 
   if (isStopped()) {
     completeDeferredStopLocked();
@@ -318,6 +302,7 @@ bool Acceptor::completeDeferredStop() {
   if (!lockStopCleanup(cleanupLock)) {
     return false;
   }
+  auto owner = sg::make_scope_guard([this]() { m_stopCleanupOwner = std::thread::id(); });
   return completeDeferredStopLocked();
 }
 
@@ -332,10 +317,19 @@ bool Acceptor::completeDeferredStopLocked() {
 }
 
 bool Acceptor::lockStopCleanup(std::unique_lock<std::mutex> &lock) {
-  if (activeAcceptor == this) {
-    return lock.try_lock();
+  if (m_stopCleanupOwner.load() == std::this_thread::get_id()) {
+    // A callback dispatched by this thread's own stop cleanup (such as onLogout) re-entered; the outer call finishes.
+    return false;
   }
-  lock.lock();
+  if (activeAcceptor == this) {
+    if (!lock.try_lock()) {
+      return false;
+    }
+  } else {
+    lock.lock();
+  }
+  // Callers clear the owner through a scope guard declared after their lock, so it is released before the mutex.
+  m_stopCleanupOwner = std::this_thread::get_id();
   return true;
 }
 

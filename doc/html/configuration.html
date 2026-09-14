@@ -169,7 +169,9 @@ DataDictionary=somewhere/FIX42.xml
           earlier transport versions. Specifies the default
           application version ID for the session. This can either
           be the ApplVerID enum (see the ApplVerID field) or the
-          BeginString for the default version.</td>
+          BeginString for the default version. When any
+          AppDataDictionary is configured, one must be configured for
+          this version or session creation fails with ConfigError.</td>
 
           <td>FIX.5.0SP2<br>
           FIX.5.0SP1<br>

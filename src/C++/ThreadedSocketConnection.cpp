@@ -98,8 +98,11 @@ bool ThreadedSocketConnection::connect() {
 }
 
 void ThreadedSocketConnection::disconnect() {
-  m_disconnect = true;
-  socket_close(m_socket);
+  // A refused Logon disconnects through the session and again from processStream; close the descriptor once so a
+  // reused descriptor number is never closed on behalf of another owner.
+  if (!m_disconnect.exchange(true)) {
+    socket_close(m_socket);
+  }
 }
 
 bool ThreadedSocketConnection::read() {

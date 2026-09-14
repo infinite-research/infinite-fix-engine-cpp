@@ -25,80 +25,79 @@
 
 #include "../SessionID.h"
 #include "../Exceptions.h"
-#include <utility>
 
 #include "../fix43/Message.h"
-#include "Heartbeat.h"
-#include "TestRequest.h"
-#include "ResendRequest.h"
-#include "Reject.h"
-#include "SequenceReset.h"
-#include "Logout.h"
-#include "IOI.h"
-#include "Advertisement.h"
-#include "ExecutionReport.h"
-#include "OrderCancelReject.h"
-#include "Logon.h"
-#include "News.h"
-#include "Email.h"
-#include "NewOrderSingle.h"
-#include "NewOrderList.h"
-#include "OrderCancelRequest.h"
-#include "OrderCancelReplaceRequest.h"
-#include "OrderStatusRequest.h"
-#include "Allocation.h"
-#include "ListCancelRequest.h"
-#include "ListExecute.h"
-#include "ListStatusRequest.h"
-#include "ListStatus.h"
-#include "AllocationAck.h"
-#include "DontKnowTrade.h"
-#include "QuoteRequest.h"
-#include "Quote.h"
-#include "SettlementInstructions.h"
-#include "MarketDataRequest.h"
-#include "MarketDataSnapshotFullRefresh.h"
-#include "MarketDataIncrementalRefresh.h"
-#include "MarketDataRequestReject.h"
-#include "QuoteCancel.h"
-#include "QuoteStatusRequest.h"
-#include "MassQuoteAcknowledgement.h"
-#include "SecurityDefinitionRequest.h"
-#include "SecurityDefinition.h"
-#include "SecurityStatusRequest.h"
-#include "SecurityStatus.h"
-#include "TradingSessionStatusRequest.h"
-#include "TradingSessionStatus.h"
-#include "MassQuote.h"
-#include "BusinessMessageReject.h"
-#include "BidRequest.h"
-#include "BidResponse.h"
-#include "ListStrikePrice.h"
-#include "XMLnonFIX.h"
-#include "RegistrationInstructions.h"
-#include "RegistrationInstructionsResponse.h"
-#include "OrderMassCancelRequest.h"
-#include "OrderMassCancelReport.h"
-#include "NewOrderCross.h"
-#include "CrossOrderCancelReplaceRequest.h"
-#include "CrossOrderCancelRequest.h"
-#include "SecurityTypeRequest.h"
-#include "SecurityTypes.h"
-#include "SecurityListRequest.h"
-#include "SecurityList.h"
-#include "DerivativeSecurityListRequest.h"
-#include "DerivativeSecurityList.h"
-#include "NewOrderMultileg.h"
-#include "MultilegOrderCancelReplaceRequest.h"
-#include "TradeCaptureReportRequest.h"
-#include "TradeCaptureReport.h"
-#include "OrderMassStatusRequest.h"
-#include "QuoteRequestReject.h"
-#include "RFQRequest.h"
-#include "QuoteStatusReport.h"
 
 namespace FIX43
 {
+  class Heartbeat;
+  class TestRequest;
+  class ResendRequest;
+  class Reject;
+  class SequenceReset;
+  class Logout;
+  class IOI;
+  class Advertisement;
+  class ExecutionReport;
+  class OrderCancelReject;
+  class Logon;
+  class News;
+  class Email;
+  class NewOrderSingle;
+  class NewOrderList;
+  class OrderCancelRequest;
+  class OrderCancelReplaceRequest;
+  class OrderStatusRequest;
+  class Allocation;
+  class ListCancelRequest;
+  class ListExecute;
+  class ListStatusRequest;
+  class ListStatus;
+  class AllocationAck;
+  class DontKnowTrade;
+  class QuoteRequest;
+  class Quote;
+  class SettlementInstructions;
+  class MarketDataRequest;
+  class MarketDataSnapshotFullRefresh;
+  class MarketDataIncrementalRefresh;
+  class MarketDataRequestReject;
+  class QuoteCancel;
+  class QuoteStatusRequest;
+  class MassQuoteAcknowledgement;
+  class SecurityDefinitionRequest;
+  class SecurityDefinition;
+  class SecurityStatusRequest;
+  class SecurityStatus;
+  class TradingSessionStatusRequest;
+  class TradingSessionStatus;
+  class MassQuote;
+  class BusinessMessageReject;
+  class BidRequest;
+  class BidResponse;
+  class ListStrikePrice;
+  class XMLnonFIX;
+  class RegistrationInstructions;
+  class RegistrationInstructionsResponse;
+  class OrderMassCancelRequest;
+  class OrderMassCancelReport;
+  class NewOrderCross;
+  class CrossOrderCancelReplaceRequest;
+  class CrossOrderCancelRequest;
+  class SecurityTypeRequest;
+  class SecurityTypes;
+  class SecurityListRequest;
+  class SecurityList;
+  class DerivativeSecurityListRequest;
+  class DerivativeSecurityList;
+  class NewOrderMultileg;
+  class MultilegOrderCancelReplaceRequest;
+  class TradeCaptureReportRequest;
+  class TradeCaptureReport;
+  class OrderMassStatusRequest;
+  class QuoteRequestReject;
+  class RFQRequest;
+  class QuoteStatusReport;
 
   class MessageCracker
   {
@@ -314,463 +313,23 @@ namespace FIX43
  virtual void onMessage( QuoteStatusReport&, const FIX::SessionID& ) {} 
 
 public:
+  // Defined in the generated MessageCracker.cpp so this header needs only forward declarations.
+
   /// Preserve the version-message entry point while dispatching genuine typed values.
-  void crack( const Message& message, 
-              const FIX::SessionID& sessionID )
-  {
-    crack( static_cast<const FIX::Message&>(message), sessionID );
-  }
+  void crack( const Message& message,
+              const FIX::SessionID& sessionID );
 
   /// Dispatch a generic message without assuming a derived object lifetime.
   void crack( const FIX::Message& message,
-              const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return onMessage( Heartbeat(message), sessionID );
-    
-    if( msgTypeValue == "1" )
-      return onMessage( TestRequest(message), sessionID );
-    
-    if( msgTypeValue == "2" )
-      return onMessage( ResendRequest(message), sessionID );
-    
-    if( msgTypeValue == "3" )
-      return onMessage( Reject(message), sessionID );
-    
-    if( msgTypeValue == "4" )
-      return onMessage( SequenceReset(message), sessionID );
-    
-    if( msgTypeValue == "5" )
-      return onMessage( Logout(message), sessionID );
-    
-    if( msgTypeValue == "6" )
-      return onMessage( IOI(message), sessionID );
-    
-    if( msgTypeValue == "7" )
-      return onMessage( Advertisement(message), sessionID );
-    
-    if( msgTypeValue == "8" )
-      return onMessage( ExecutionReport(message), sessionID );
-    
-    if( msgTypeValue == "9" )
-      return onMessage( OrderCancelReject(message), sessionID );
-    
-    if( msgTypeValue == "A" )
-      return onMessage( Logon(message), sessionID );
-    
-    if( msgTypeValue == "B" )
-      return onMessage( News(message), sessionID );
-    
-    if( msgTypeValue == "C" )
-      return onMessage( Email(message), sessionID );
-    
-    if( msgTypeValue == "D" )
-      return onMessage( NewOrderSingle(message), sessionID );
-    
-    if( msgTypeValue == "E" )
-      return onMessage( NewOrderList(message), sessionID );
-    
-    if( msgTypeValue == "F" )
-      return onMessage( OrderCancelRequest(message), sessionID );
-    
-    if( msgTypeValue == "G" )
-      return onMessage( OrderCancelReplaceRequest(message), sessionID );
-    
-    if( msgTypeValue == "H" )
-      return onMessage( OrderStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "J" )
-      return onMessage( Allocation(message), sessionID );
-    
-    if( msgTypeValue == "K" )
-      return onMessage( ListCancelRequest(message), sessionID );
-    
-    if( msgTypeValue == "L" )
-      return onMessage( ListExecute(message), sessionID );
-    
-    if( msgTypeValue == "M" )
-      return onMessage( ListStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "N" )
-      return onMessage( ListStatus(message), sessionID );
-    
-    if( msgTypeValue == "P" )
-      return onMessage( AllocationAck(message), sessionID );
-    
-    if( msgTypeValue == "Q" )
-      return onMessage( DontKnowTrade(message), sessionID );
-    
-    if( msgTypeValue == "R" )
-      return onMessage( QuoteRequest(message), sessionID );
-    
-    if( msgTypeValue == "S" )
-      return onMessage( Quote(message), sessionID );
-    
-    if( msgTypeValue == "T" )
-      return onMessage( SettlementInstructions(message), sessionID );
-    
-    if( msgTypeValue == "V" )
-      return onMessage( MarketDataRequest(message), sessionID );
-    
-    if( msgTypeValue == "W" )
-      return onMessage( MarketDataSnapshotFullRefresh(message), sessionID );
-    
-    if( msgTypeValue == "X" )
-      return onMessage( MarketDataIncrementalRefresh(message), sessionID );
-    
-    if( msgTypeValue == "Y" )
-      return onMessage( MarketDataRequestReject(message), sessionID );
-    
-    if( msgTypeValue == "Z" )
-      return onMessage( QuoteCancel(message), sessionID );
-    
-    if( msgTypeValue == "a" )
-      return onMessage( QuoteStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "b" )
-      return onMessage( MassQuoteAcknowledgement(message), sessionID );
-    
-    if( msgTypeValue == "c" )
-      return onMessage( SecurityDefinitionRequest(message), sessionID );
-    
-    if( msgTypeValue == "d" )
-      return onMessage( SecurityDefinition(message), sessionID );
-    
-    if( msgTypeValue == "e" )
-      return onMessage( SecurityStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "f" )
-      return onMessage( SecurityStatus(message), sessionID );
-    
-    if( msgTypeValue == "g" )
-      return onMessage( TradingSessionStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "h" )
-      return onMessage( TradingSessionStatus(message), sessionID );
-    
-    if( msgTypeValue == "i" )
-      return onMessage( MassQuote(message), sessionID );
-    
-    if( msgTypeValue == "j" )
-      return onMessage( BusinessMessageReject(message), sessionID );
-    
-    if( msgTypeValue == "k" )
-      return onMessage( BidRequest(message), sessionID );
-    
-    if( msgTypeValue == "l" )
-      return onMessage( BidResponse(message), sessionID );
-    
-    if( msgTypeValue == "m" )
-      return onMessage( ListStrikePrice(message), sessionID );
-    
-    if( msgTypeValue == "n" )
-      return onMessage( XMLnonFIX(message), sessionID );
-    
-    if( msgTypeValue == "o" )
-      return onMessage( RegistrationInstructions(message), sessionID );
-    
-    if( msgTypeValue == "p" )
-      return onMessage( RegistrationInstructionsResponse(message), sessionID );
-    
-    if( msgTypeValue == "q" )
-      return onMessage( OrderMassCancelRequest(message), sessionID );
-    
-    if( msgTypeValue == "r" )
-      return onMessage( OrderMassCancelReport(message), sessionID );
-    
-    if( msgTypeValue == "s" )
-      return onMessage( NewOrderCross(message), sessionID );
-    
-    if( msgTypeValue == "t" )
-      return onMessage( CrossOrderCancelReplaceRequest(message), sessionID );
-    
-    if( msgTypeValue == "u" )
-      return onMessage( CrossOrderCancelRequest(message), sessionID );
-    
-    if( msgTypeValue == "v" )
-      return onMessage( SecurityTypeRequest(message), sessionID );
-    
-    if( msgTypeValue == "w" )
-      return onMessage( SecurityTypes(message), sessionID );
-    
-    if( msgTypeValue == "x" )
-      return onMessage( SecurityListRequest(message), sessionID );
-    
-    if( msgTypeValue == "y" )
-      return onMessage( SecurityList(message), sessionID );
-    
-    if( msgTypeValue == "z" )
-      return onMessage( DerivativeSecurityListRequest(message), sessionID );
-    
-    if( msgTypeValue == "AA" )
-      return onMessage( DerivativeSecurityList(message), sessionID );
-    
-    if( msgTypeValue == "AB" )
-      return onMessage( NewOrderMultileg(message), sessionID );
-    
-    if( msgTypeValue == "AC" )
-      return onMessage( MultilegOrderCancelReplaceRequest(message), sessionID );
-    
-    if( msgTypeValue == "AD" )
-      return onMessage( TradeCaptureReportRequest(message), sessionID );
-    
-    if( msgTypeValue == "AE" )
-      return onMessage( TradeCaptureReport(message), sessionID );
-    
-    if( msgTypeValue == "AF" )
-      return onMessage( OrderMassStatusRequest(message), sessionID );
-    
-    if( msgTypeValue == "AG" )
-      return onMessage( QuoteRequestReject(message), sessionID );
-    
-    if( msgTypeValue == "AH" )
-      return onMessage( RFQRequest(message), sessionID );
-    
-    if( msgTypeValue == "AI" )
-      return onMessage( QuoteStatusReport(message), sessionID );
-    
-    return onMessage( Message(message), sessionID );
-  }
-  
+              const FIX::SessionID& sessionID );
+
   /// Preserve the version-message entry point and mutable callback behavior.
-void crack( Message& message, 
-            const FIX::SessionID& sessionID )
-  {
-    crack( static_cast<FIX::Message&>(message), sessionID );
-  }
+  void crack( Message& message,
+              const FIX::SessionID& sessionID );
 
-  /// Copy callback changes back on both normal return and exception propagation.
-void crack( FIX::Message& message,
-            const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return dispatch<Heartbeat>( message, sessionID );
-    
-    if( msgTypeValue == "1" )
-      return dispatch<TestRequest>( message, sessionID );
-    
-    if( msgTypeValue == "2" )
-      return dispatch<ResendRequest>( message, sessionID );
-    
-    if( msgTypeValue == "3" )
-      return dispatch<Reject>( message, sessionID );
-    
-    if( msgTypeValue == "4" )
-      return dispatch<SequenceReset>( message, sessionID );
-    
-    if( msgTypeValue == "5" )
-      return dispatch<Logout>( message, sessionID );
-    
-    if( msgTypeValue == "6" )
-      return dispatch<IOI>( message, sessionID );
-    
-    if( msgTypeValue == "7" )
-      return dispatch<Advertisement>( message, sessionID );
-    
-    if( msgTypeValue == "8" )
-      return dispatch<ExecutionReport>( message, sessionID );
-    
-    if( msgTypeValue == "9" )
-      return dispatch<OrderCancelReject>( message, sessionID );
-    
-    if( msgTypeValue == "A" )
-      return dispatch<Logon>( message, sessionID );
-    
-    if( msgTypeValue == "B" )
-      return dispatch<News>( message, sessionID );
-    
-    if( msgTypeValue == "C" )
-      return dispatch<Email>( message, sessionID );
-    
-    if( msgTypeValue == "D" )
-      return dispatch<NewOrderSingle>( message, sessionID );
-    
-    if( msgTypeValue == "E" )
-      return dispatch<NewOrderList>( message, sessionID );
-    
-    if( msgTypeValue == "F" )
-      return dispatch<OrderCancelRequest>( message, sessionID );
-    
-    if( msgTypeValue == "G" )
-      return dispatch<OrderCancelReplaceRequest>( message, sessionID );
-    
-    if( msgTypeValue == "H" )
-      return dispatch<OrderStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "J" )
-      return dispatch<Allocation>( message, sessionID );
-    
-    if( msgTypeValue == "K" )
-      return dispatch<ListCancelRequest>( message, sessionID );
-    
-    if( msgTypeValue == "L" )
-      return dispatch<ListExecute>( message, sessionID );
-    
-    if( msgTypeValue == "M" )
-      return dispatch<ListStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "N" )
-      return dispatch<ListStatus>( message, sessionID );
-    
-    if( msgTypeValue == "P" )
-      return dispatch<AllocationAck>( message, sessionID );
-    
-    if( msgTypeValue == "Q" )
-      return dispatch<DontKnowTrade>( message, sessionID );
-    
-    if( msgTypeValue == "R" )
-      return dispatch<QuoteRequest>( message, sessionID );
-    
-    if( msgTypeValue == "S" )
-      return dispatch<Quote>( message, sessionID );
-    
-    if( msgTypeValue == "T" )
-      return dispatch<SettlementInstructions>( message, sessionID );
-    
-    if( msgTypeValue == "V" )
-      return dispatch<MarketDataRequest>( message, sessionID );
-    
-    if( msgTypeValue == "W" )
-      return dispatch<MarketDataSnapshotFullRefresh>( message, sessionID );
-    
-    if( msgTypeValue == "X" )
-      return dispatch<MarketDataIncrementalRefresh>( message, sessionID );
-    
-    if( msgTypeValue == "Y" )
-      return dispatch<MarketDataRequestReject>( message, sessionID );
-    
-    if( msgTypeValue == "Z" )
-      return dispatch<QuoteCancel>( message, sessionID );
-    
-    if( msgTypeValue == "a" )
-      return dispatch<QuoteStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "b" )
-      return dispatch<MassQuoteAcknowledgement>( message, sessionID );
-    
-    if( msgTypeValue == "c" )
-      return dispatch<SecurityDefinitionRequest>( message, sessionID );
-    
-    if( msgTypeValue == "d" )
-      return dispatch<SecurityDefinition>( message, sessionID );
-    
-    if( msgTypeValue == "e" )
-      return dispatch<SecurityStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "f" )
-      return dispatch<SecurityStatus>( message, sessionID );
-    
-    if( msgTypeValue == "g" )
-      return dispatch<TradingSessionStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "h" )
-      return dispatch<TradingSessionStatus>( message, sessionID );
-    
-    if( msgTypeValue == "i" )
-      return dispatch<MassQuote>( message, sessionID );
-    
-    if( msgTypeValue == "j" )
-      return dispatch<BusinessMessageReject>( message, sessionID );
-    
-    if( msgTypeValue == "k" )
-      return dispatch<BidRequest>( message, sessionID );
-    
-    if( msgTypeValue == "l" )
-      return dispatch<BidResponse>( message, sessionID );
-    
-    if( msgTypeValue == "m" )
-      return dispatch<ListStrikePrice>( message, sessionID );
-    
-    if( msgTypeValue == "n" )
-      return dispatch<XMLnonFIX>( message, sessionID );
-    
-    if( msgTypeValue == "o" )
-      return dispatch<RegistrationInstructions>( message, sessionID );
-    
-    if( msgTypeValue == "p" )
-      return dispatch<RegistrationInstructionsResponse>( message, sessionID );
-    
-    if( msgTypeValue == "q" )
-      return dispatch<OrderMassCancelRequest>( message, sessionID );
-    
-    if( msgTypeValue == "r" )
-      return dispatch<OrderMassCancelReport>( message, sessionID );
-    
-    if( msgTypeValue == "s" )
-      return dispatch<NewOrderCross>( message, sessionID );
-    
-    if( msgTypeValue == "t" )
-      return dispatch<CrossOrderCancelReplaceRequest>( message, sessionID );
-    
-    if( msgTypeValue == "u" )
-      return dispatch<CrossOrderCancelRequest>( message, sessionID );
-    
-    if( msgTypeValue == "v" )
-      return dispatch<SecurityTypeRequest>( message, sessionID );
-    
-    if( msgTypeValue == "w" )
-      return dispatch<SecurityTypes>( message, sessionID );
-    
-    if( msgTypeValue == "x" )
-      return dispatch<SecurityListRequest>( message, sessionID );
-    
-    if( msgTypeValue == "y" )
-      return dispatch<SecurityList>( message, sessionID );
-    
-    if( msgTypeValue == "z" )
-      return dispatch<DerivativeSecurityListRequest>( message, sessionID );
-    
-    if( msgTypeValue == "AA" )
-      return dispatch<DerivativeSecurityList>( message, sessionID );
-    
-    if( msgTypeValue == "AB" )
-      return dispatch<NewOrderMultileg>( message, sessionID );
-    
-    if( msgTypeValue == "AC" )
-      return dispatch<MultilegOrderCancelReplaceRequest>( message, sessionID );
-    
-    if( msgTypeValue == "AD" )
-      return dispatch<TradeCaptureReportRequest>( message, sessionID );
-    
-    if( msgTypeValue == "AE" )
-      return dispatch<TradeCaptureReport>( message, sessionID );
-    
-    if( msgTypeValue == "AF" )
-      return dispatch<OrderMassStatusRequest>( message, sessionID );
-    
-    if( msgTypeValue == "AG" )
-      return dispatch<QuoteRequestReject>( message, sessionID );
-    
-    if( msgTypeValue == "AH" )
-      return dispatch<RFQRequest>( message, sessionID );
-    
-    if( msgTypeValue == "AI" )
-      return dispatch<QuoteStatusReport>( message, sessionID );
-    
-    return dispatch<Message>( message, sessionID );
-  }
-
-private:
-  template <typename T>
-  void dispatch( FIX::Message& message, const FIX::SessionID& sessionID )
-  {
-    T typed(message);
-    try {
-      onMessage( typed, sessionID );
-    } catch (...) {
-      message = std::move(typed);
-      throw;
-    }
-    message = std::move(typed);
-  }
+  /// Transfer callback changes back on both normal return and exception propagation.
+  void crack( FIX::Message& message,
+              const FIX::SessionID& sessionID );
 
   };
 }

@@ -272,6 +272,7 @@ private:
   void next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow);
   void next(const Message &, const UtcTimeStamp &, bool queued, bool authenticated);
   bool authenticateLogon(const Message &, const UtcTimeStamp &);
+  void refuseLogon(const std::string &, Responder &, const std::string &reason);
 
   bool send(const std::string &);
   bool sendRaw(Message &, SEQNUM msgSeqNum = 0);
@@ -307,6 +308,7 @@ private:
   }
   bool shouldSendReset();
 
+  bool answersPendingLogon(const MsgType &msgType);
   bool validLogonState(const MsgType &msgType);
   void fromCallback(const MsgType &msgType, const Message &msg, const SessionID &sessionID);
 

@@ -25,15 +25,18 @@
 #endif
 
 #include "TestHelper.h"
+#include <Session.h>
 #include <SocketAcceptor.h>
 #include <ThreadedSocketAcceptor.h>
 #include <Utility.h>
 #include <fix42/Logon.h>
+#include <fix42/NewOrderSingle.h>
 #if HAVE_SSL && !defined(_MSC_VER)
 #include <SSLSocketAcceptor.h>
 #include <ThreadedSSLSocketAcceptor.h>
 #endif
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <future>
 #ifdef __linux__
@@ -190,6 +193,38 @@ std::unique_ptr<Acceptor> listenerAcceptor(
     return std::make_unique<ThreadedSocketAcceptor>(application, stores, settings);
   }
   return std::make_unique<SocketAcceptor>(application, stores, settings);
+}
+
+// A lifecycle deadlock cannot fail an assertion; end the test binary rather than hang the suite.
+template <typename Action> void requireCompletes(Action action, const char *what) {
+  auto done = std::async(std::launch::async, action);
+  if (done.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+    std::fprintf(stderr, "%s did not complete; aborting the test run\n", what);
+    std::_Exit(EXIT_FAILURE);
+  }
+  done.get();
+}
+
+void sendWire(const ListenerSocket &client, const std::string &wire) {
+  REQUIRE(socket_send(client.value, wire.data(), static_cast<int>(wire.size())) == static_cast<int>(wire.size()));
+}
+
+// Connect a plaintext peer to a polled acceptor and complete Logon for the session.
+void logonPolledPeer(Acceptor &acceptor, const ListenerSocket &client, int port, const SessionID &sessionID) {
+  REQUIRE(socket_connect(client.value, "127.0.0.1", port) == 0);
+  FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+  logon.getHeader().set(SenderCompID(sessionID.getTargetCompID()));
+  logon.getHeader().set(TargetCompID(sessionID.getSenderCompID()));
+  logon.getHeader().set(MsgSeqNum(1));
+  logon.getHeader().set(SendingTime::now());
+  sendWire(client, logon.toString());
+  Session *session = Session::lookupSession(sessionID);
+  REQUIRE(session);
+  for (int retry = 0; retry < 2000 && !session->isLoggedOn(); ++retry) {
+    acceptor.poll();
+    process_sleep(0.001);
+  }
+  REQUIRE(session->isLoggedOn());
 }
 } // namespace
 
@@ -428,6 +463,73 @@ TEST_CASE("Threaded acceptor callback stop is an external completion barrier") {
     { ListenerSocket replacement = loopbackListener(port); }
     acceptor->start();
     acceptor->stop(true);
+  });
+}
+
+TEST_CASE("Acceptor stop tolerates re-entry from its own logout callbacks", "[acceptor][review-r3]") {
+  withLoopbackPort([&](int port) {
+    struct Application : TestApplication {
+      Acceptor *acceptor = nullptr;
+      std::atomic<int> logouts{0};
+      void onLogout(const SessionID &) override {
+        ++logouts;
+        acceptor->stop(true);
+      }
+    } application;
+    MemoryStoreFactory stores;
+    SocketAcceptor acceptor(application, stores, listenerSettings({{port, "127.0.0.1"}}));
+    application.acceptor = &acceptor;
+    REQUIRE(acceptor.poll());
+    const SessionID sessionID = *acceptor.getSessions().begin();
+    ListenerSocket client(socket_createConnector());
+    logonPolledPeer(acceptor, client, port, sessionID);
+    // Outside dispatch, stop() disconnects the session on the calling thread, which dispatches onLogout there.
+    requireCompletes([&]() { acceptor.stop(true); }, "Acceptor::stop re-entered from onLogout");
+    CHECK(application.logouts == 1);
+    CHECK(acceptor.isStopped());
+    CHECK_FALSE(Session::lookupSession(sessionID)->isLoggedOn());
+    ListenerSocket replacement = loopbackListener(port);
+  });
+}
+
+TEST_CASE("Acceptor poll keeps running after an application exception", "[acceptor][review-r3]") {
+  withLoopbackPort([&](int port) {
+    struct Application : TestApplication {
+      int calls = 0;
+      void fromApp(const Message &, const SessionID &) override {
+        if (++calls == 1) {
+          throw std::runtime_error("application failure");
+        }
+      }
+    } application;
+    MemoryStoreFactory stores;
+    SocketAcceptor acceptor(application, stores, listenerSettings({{port, "127.0.0.1"}}));
+    REQUIRE(acceptor.poll());
+    const SessionID sessionID = *acceptor.getSessions().begin();
+    ListenerSocket client(socket_createConnector());
+    logonPolledPeer(acceptor, client, port, sessionID);
+    FIX42::NewOrderSingle order;
+    order.getHeader().set(SenderCompID(sessionID.getTargetCompID()));
+    order.getHeader().set(TargetCompID(sessionID.getSenderCompID()));
+    order.getHeader().set(MsgSeqNum(2));
+    order.getHeader().set(SendingTime::now());
+    sendWire(client, order.toString());
+    bool thrown = false;
+    for (int retry = 0; retry < 2000 && !thrown; ++retry) {
+      try {
+        acceptor.poll();
+      } catch (const std::runtime_error &) {
+        thrown = true;
+      }
+      process_sleep(0.001);
+    }
+    REQUIRE(thrown);
+    // Like Initiator::poll, the exception reaches the host without tearing down listeners or sessions.
+    CHECK_FALSE(acceptor.isStopped());
+    CHECK(acceptor.poll());
+    CHECK(Session::lookupSession(sessionID)->isLoggedOn());
+    acceptor.stop(true);
+    ListenerSocket replacement = loopbackListener(port);
   });
 }
 

@@ -25,20 +25,19 @@
 
 #include "../SessionID.h"
 #include "../Exceptions.h"
-#include <utility>
 
 #include "../fixt11/Message.h"
-#include "Heartbeat.h"
-#include "TestRequest.h"
-#include "ResendRequest.h"
-#include "Reject.h"
-#include "SequenceReset.h"
-#include "Logout.h"
-#include "Logon.h"
-#include "XMLnonFIX.h"
 
 namespace FIXT11
 {
+  class Heartbeat;
+  class TestRequest;
+  class ResendRequest;
+  class Reject;
+  class SequenceReset;
+  class Logout;
+  class Logon;
+  class XMLnonFIX;
 
   class MessageCracker
   {
@@ -74,103 +73,23 @@ namespace FIXT11
  virtual void onMessage( XMLnonFIX&, const FIX::SessionID& ) {} 
 
 public:
+  // Defined in the generated MessageCracker.cpp so this header needs only forward declarations.
+
   /// Preserve the version-message entry point while dispatching genuine typed values.
-  void crack( const Message& message, 
-              const FIX::SessionID& sessionID )
-  {
-    crack( static_cast<const FIX::Message&>(message), sessionID );
-  }
+  void crack( const Message& message,
+              const FIX::SessionID& sessionID );
 
   /// Dispatch a generic message without assuming a derived object lifetime.
   void crack( const FIX::Message& message,
-              const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return onMessage( Heartbeat(message), sessionID );
-    
-    if( msgTypeValue == "1" )
-      return onMessage( TestRequest(message), sessionID );
-    
-    if( msgTypeValue == "2" )
-      return onMessage( ResendRequest(message), sessionID );
-    
-    if( msgTypeValue == "3" )
-      return onMessage( Reject(message), sessionID );
-    
-    if( msgTypeValue == "4" )
-      return onMessage( SequenceReset(message), sessionID );
-    
-    if( msgTypeValue == "5" )
-      return onMessage( Logout(message), sessionID );
-    
-    if( msgTypeValue == "A" )
-      return onMessage( Logon(message), sessionID );
-    
-    if( msgTypeValue == "n" )
-      return onMessage( XMLnonFIX(message), sessionID );
-    
-    return onMessage( Message(message), sessionID );
-  }
-  
+              const FIX::SessionID& sessionID );
+
   /// Preserve the version-message entry point and mutable callback behavior.
-void crack( Message& message, 
-            const FIX::SessionID& sessionID )
-  {
-    crack( static_cast<FIX::Message&>(message), sessionID );
-  }
+  void crack( Message& message,
+              const FIX::SessionID& sessionID );
 
-  /// Copy callback changes back on both normal return and exception propagation.
-void crack( FIX::Message& message,
-            const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return dispatch<Heartbeat>( message, sessionID );
-    
-    if( msgTypeValue == "1" )
-      return dispatch<TestRequest>( message, sessionID );
-    
-    if( msgTypeValue == "2" )
-      return dispatch<ResendRequest>( message, sessionID );
-    
-    if( msgTypeValue == "3" )
-      return dispatch<Reject>( message, sessionID );
-    
-    if( msgTypeValue == "4" )
-      return dispatch<SequenceReset>( message, sessionID );
-    
-    if( msgTypeValue == "5" )
-      return dispatch<Logout>( message, sessionID );
-    
-    if( msgTypeValue == "A" )
-      return dispatch<Logon>( message, sessionID );
-    
-    if( msgTypeValue == "n" )
-      return dispatch<XMLnonFIX>( message, sessionID );
-    
-    return dispatch<Message>( message, sessionID );
-  }
-
-private:
-  template <typename T>
-  void dispatch( FIX::Message& message, const FIX::SessionID& sessionID )
-  {
-    T typed(message);
-    try {
-      onMessage( typed, sessionID );
-    } catch (...) {
-      message = std::move(typed);
-      throw;
-    }
-    message = std::move(typed);
-  }
+  /// Transfer callback changes back on both normal return and exception propagation.
+  void crack( FIX::Message& message,
+              const FIX::SessionID& sessionID );
 
   };
 }

@@ -39,6 +39,10 @@
 #include <fix42/NewOrderSingle.h>
 #include <fix42/SequenceReset.h>
 #include <set>
+#ifndef _MSC_VER
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #if HAVE_SSL
 #include <SSLSocketAcceptor.h>
 #include <SSLSocketConnection.h>
@@ -65,6 +69,42 @@ TEST_CASE("threaded TLS constructors tolerate invalid sockets", "[socket][ssl]")
     CHECK(connection.getSocket() == INVALID_SOCKET_HANDLE);
     CHECK(connection.getSession() == nullptr);
   }
+}
+#endif
+
+#ifndef _MSC_VER
+TEST_CASE("threaded connections close their descriptor once", "[socket][review-r3]") {
+#if HAVE_SSL
+  const bool tls = GENERATE(false, true);
+#else
+  const bool tls = false;
+#endif
+  CAPTURE(tls);
+  const auto sockets = socket_createpair();
+  REQUIRE(sockets.first != INVALID_SOCKET_HANDLE);
+  REQUIRE(sockets.second != INVALID_SOCKET_HANDLE);
+  const socket_handle descriptor = sockets.second;
+  // A refused Logon disconnects through Session::disconnect and again from processStream. Reuse the closed
+  // descriptor number in between, as a concurrent accept or log open would, and require the reuse to survive.
+  const auto exercise = [&](auto &connection) {
+    connection.disconnect();
+    REQUIRE(fcntl(descriptor, F_GETFD) == -1);
+    REQUIRE(dup2(sockets.first, descriptor) == descriptor);
+    connection.disconnect();
+    CHECK(fcntl(descriptor, F_GETFD) != -1);
+  };
+#if HAVE_SSL
+  if (tls) {
+    ThreadedSSLSocketConnection connection(descriptor, nullptr, {}, nullptr);
+    exercise(connection);
+  } else
+#endif
+  {
+    ThreadedSocketConnection connection(descriptor, {}, nullptr);
+    exercise(connection);
+  }
+  socket_close(descriptor);
+  socket_close(sockets.first);
 }
 #endif
 
@@ -274,15 +314,18 @@ TEST_CASE("connection admission preserves rejected session state", "[admission]"
         application.authenticationCalls
         == (reason == "established-reject" ? 2 : ((reason == "authentication" || admitted) ? 1 : 0)));
     CHECK(application.appCalls == 0);
-    CHECK(application.outgoingCalls == (admitted ? 1 : 0));
+    // RejectLogon answers with a Logout carrying the reason; it consumes one sender number and nothing else.
+    const bool refused = reason == "authentication" || reason == "established-reject";
+    CHECK(application.outgoingCalls == (admitted ? 1 : 0) + (refused ? 1 : 0));
     CHECK(application.logonCalls == (admitted ? 1 : 0));
-    CHECK(session->getExpectedSenderNum() == (admitted ? 2 : 7));
+    CHECK(session->getExpectedSenderNum() == (admitted ? 2 : 7) + (refused ? 1 : 0));
     CHECK(session->getExpectedTargetNum() == (admitted ? 2 : 9));
     session->disconnect();
     CHECK(application.disconnectCalls == (admitted ? 0 : 1));
     if (established) {
       application.reject = false;
       application.expectedRegistered = false;
+      application.expectedSender = refused ? 3 : 2;
       REQUIRE(session->acceptLogon(logon.toString(), application));
       CHECK(session->isLoggedOn());
       CHECK(session->getExpectedTargetNum() == 2);
@@ -292,8 +335,10 @@ TEST_CASE("connection admission preserves rejected session state", "[admission]"
     }
   }
   FileStore reopened(UtcTimeStamp::now(), "store", id);
-  CHECK(reopened.getNextSenderMsgSeqNum() == (admitted ? 2 : 11));
-  CHECK(reopened.getNextTargetMsgSeqNum() == (admitted ? 2 : 13));
+  // A refused Logon persists its Logout from the cached 7/9 state: no RefreshOnLogon (11/13) and no reset (1/1).
+  const bool refusedBeforeAdmission = reason == "authentication";
+  CHECK(reopened.getNextSenderMsgSeqNum() == (admitted ? 2 : (refusedBeforeAdmission ? 8 : 11)));
+  CHECK(reopened.getNextTargetMsgSeqNum() == (admitted ? 2 : (refusedBeforeAdmission ? 9 : 13)));
 }
 
 TEST_CASE("SocketConnectionTests") {

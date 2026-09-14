@@ -335,10 +335,24 @@ bool Session::authenticateLogon(const Message &logon, const UtcTimeStamp &now) {
     }
     fromCallback(MsgType(MsgType_Logon), logon, m_sessionID);
     return true;
+  } catch (RejectLogon &) {
+    // The application refused the Logon; callers answer with a Logout carrying the reason.
+    throw;
   } catch (std::exception &e) {
     m_state.onEvent(e.what());
     return false;
   }
+}
+
+void Session::refuseLogon(const std::string &wire, Responder &responder, const std::string &reason) {
+  // Answer through the candidate transport without registering, refreshing, or preparing a new session period.
+  Responder *previousResponder = m_pResponder;
+  auto restore = sg::make_scope_guard([&]() { m_pResponder = previousResponder; });
+  m_pResponder = &responder;
+  m_state.onIncoming(wire);
+  m_state.onEvent(reason);
+  generateLogout(reason);
+  disconnect(false);
 }
 
 bool Session::acceptLogon(const std::string &wire, Responder &responder) {
@@ -348,6 +362,8 @@ bool Session::acceptLogon(const std::string &wire, Responder &responder) {
   }
   const auto now = UtcTimeStamp::now();
   Message logon;
+  bool rejected = false;
+  std::string rejection;
   try {
     const DataDictionary &dictionary = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
     logon = Message(wire, dictionary, m_validateLengthAndChecksum);
@@ -355,6 +371,9 @@ bool Session::acceptLogon(const std::string &wire, Responder &responder) {
     if (!authenticateLogon(logon, now)) {
       return false;
     }
+  } catch (RejectLogon &e) {
+    rejected = true;
+    rejection = e.what();
   } catch (std::exception &e) {
     m_state.onEvent(e.what());
     return false;
@@ -362,17 +381,15 @@ bool Session::acceptLogon(const std::string &wire, Responder &responder) {
   Responder *previousResponder = m_pResponder;
   bool registered = false;
   try {
+    if (rejected) {
+      refuseLogon(wire, responder, rejection);
+      return false;
+    }
     if (m_sessionID.isFIXT() && logon.isSetField(FIELD::DefaultApplVerID)) {
       try {
         m_dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(logon.getField<DefaultApplVerID>()));
       } catch (DataDictionaryNotFound &e) {
-        // Send the protocol rejection without refreshing or preparing a new session period.
-        m_pResponder = &responder;
-        m_state.onIncoming(wire);
-        m_state.onEvent(e.what());
-        generateLogout(e.what());
-        disconnect(false);
-        m_pResponder = previousResponder;
+        refuseLogon(wire, responder, e.what());
         return false;
       }
     }
@@ -652,6 +669,7 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
   for (i = messages.begin(); i != messages.end(); ++i) {
     appMessageJustSent = false;
+    bool resendable = true;
     std::unique_ptr<FIX::Message> pMsg;
     std::string strMsgType;
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
@@ -670,20 +688,31 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
         applVerID = m_senderDefaultApplVerID;
       }
 
-      const DataDictionary &applicationDD = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
-      if (strMsgType.empty()) {
-        pMsg.reset(new Message(*i, sessionDD, applicationDD, m_validateLengthAndChecksum));
-      } else {
+      const DataDictionary *applicationDD = nullptr;
+      try {
+        applicationDD = &m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
+      } catch (DataDictionaryNotFound &e) {
+        // The stored message's version is no longer configured. Gap-fill it: a Logout here would repeat on every
+        // reconnect because the counterparty must re-request the same range.
+        m_state.onEvent(
+            "Gap filling stored message " + msg.getHeader().getField(FIELD::MsgSeqNum) + ": " + e.what()
+            + " for ApplVerID " + e.version);
+        resendable = false;
+        pMsg.reset(new Message(msg));
+      }
+      if (applicationDD && strMsgType.empty()) {
+        pMsg.reset(new Message(*i, sessionDD, *applicationDD, m_validateLengthAndChecksum));
+      } else if (applicationDD) {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
-        const message_order &messageOrder = applicationDD.getMessageOrderedFields(strMsgType);
+        const message_order &messageOrder = applicationDD->getMessageOrderedFields(strMsgType);
         pMsg.reset(new Message(
             headerOrder,
             trailerOrder,
             messageOrder,
             *i,
             sessionDD,
-            applicationDD,
+            *applicationDD,
             m_validateLengthAndChecksum));
       }
     } else {
@@ -706,7 +735,7 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
       begin = current;
     }
 
-    if (Message::isAdminMsgType(msgType)) {
+    if (!resendable || Message::isAdminMsgType(msgType)) {
       if (!begin) {
         begin = msgSeqNum;
       }
@@ -1311,9 +1340,14 @@ bool Session::shouldSendReset() {
          && (getExpectedSenderNum() == 1) && (getExpectedTargetNum() == 1);
 }
 
+bool Session::answersPendingLogon(const MsgType &msgType) {
+  // An initiator's Logon may be refused by the counterparty's Logout or Reject before any Logon arrives.
+  return m_state.sentLogon() && (msgType == MsgType_Logout || msgType == MsgType_Reject);
+}
+
 bool Session::validLogonState(const MsgType &msgType) {
   if (msgType != MsgType_Logon && !m_state.receivedLogon()) {
-    return false;
+    return answersPendingLogon(msgType);
   }
   if ((msgType == MsgType_Logon && m_state.sentReset()) || (m_state.receivedReset())) {
     return true;
@@ -1480,7 +1514,7 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued,
     MsgType msgType;
     BeginString beginString;
     header.getField(msgType);
-    if (msgType != MsgType_Logon && !receivedLogon()) {
+    if (msgType != MsgType_Logon && !receivedLogon() && !answersPendingLogon(msgType)) {
       if (sentLogon()) {
         disconnect();
       } else if (m_pResponder) {
@@ -1620,7 +1654,8 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued,
   } catch (RejectLogon &e) {
     m_state.onEvent(e.what());
     generateLogout(e.what());
-    disconnect();
+    // An unauthenticated acceptor candidate must not trigger ResetOnDisconnect.
+    disconnect((receivedLogon() || sentLogon()) && m_resetOnDisconnect);
   } catch (UnsupportedVersion &) {
     if (header.getField(FIELD::MsgType) == MsgType_Logout) {
       nextLogout(message, now);

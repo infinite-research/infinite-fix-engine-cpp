@@ -32,9 +32,11 @@
 #include "MessageStore.h"
 #include "Responder.h"
 #include "SessionSettings.h"
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 
 namespace FIX {
 class Client;
@@ -75,6 +77,11 @@ public:
   /// Check to see if any sessions are currently logged on
   bool isLoggedOn() const;
 
+  /**
+   * @deprecated Always returns null and never attaches the responder, because it bypassed connection admission.
+   * Custom transports look up the candidate with Session::lookupSession(msg, true), enforce listener membership and
+   * AllowedRemoteAddresses, then call Session::acceptLogon. Removal is deferred to the next ABI-major release.
+   */
   Session *getSession(const std::string &msg, Responder &);
 
   const std::set<SessionID> &getSessions() const { return m_sessionIDs; }
@@ -138,6 +145,8 @@ private:
   std::atomic<bool> m_stop;
   std::atomic<bool> m_stopCleanupPending;
   std::mutex m_stopCleanupMutex;
+  /// Thread holding m_stopCleanupMutex, so callbacks it dispatches can re-enter stop() without self-deadlock.
+  std::atomic<std::thread::id> m_stopCleanupOwner;
 };
 /*! @} */
 } // namespace FIX

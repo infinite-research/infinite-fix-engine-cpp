@@ -382,6 +382,8 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
         "old-protocol",
         "crl-missing",
         "crl-empty-directory",
+        "crl-missing-directory",
+        "crl-directory-file",
         "ca-missing",
         "ca-empty");
     CAPTURE(server, scenario);
@@ -407,6 +409,12 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
     if (scenario == "crl-empty-directory") {
       config.setString(CERTIFICATE_REVOCATION_LIST_DIRECTORY, certificate("empty"));
     }
+    if (scenario == "crl-missing-directory") {
+      config.setString(CERTIFICATE_REVOCATION_LIST_DIRECTORY, certificate("missing-directory"));
+    }
+    if (scenario == "crl-directory-file") {
+      config.setString(CERTIFICATE_REVOCATION_LIST_DIRECTORY, certificate("ca.crl"));
+    }
     if (scenario == "ca-missing") {
       config.setString(CERTIFICATE_AUTHORITIES_FILE, certificate("missing.crt"));
     }
@@ -416,7 +424,8 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
     }
     const auto settings = settingsFor(server, SessionID("FIX.4.2", "TLS-STARTUP", "PEER"), 0, config);
     const auto exercise = [&](auto &transport) {
-      CHECK_THROWS(transport.start());
+      // Startup failures surface as the documented ConfigError/RuntimeError, never as std::filesystem_error.
+      CHECK_THROWS_AS(transport.start(), FIX::Exception);
       transport.stop(true);
     };
     if (server && threaded) {

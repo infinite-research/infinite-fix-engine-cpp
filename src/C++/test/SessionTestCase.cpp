@@ -739,22 +739,26 @@ TEST_CASE("TLS write retry releases both connection owners", "[tls][write-retry]
 }
 #endif
 
-TEST_CASE("rejected first initiator response allows immediate reconnect", "[admission][review-r2]") {
-  const std::string type = GENERATE("A", "4", "5");
+TEST_CASE("initiator handles the counterparty's first response to its Logon", "[admission][review-r3]") {
+  // A=Logon refused by fromAdmin, 5=counterparty Logout, 3=counterparty Reject, 4=SequenceReset (never admissible).
+  const std::string type = GENERATE("A", "5", "3", "4");
   CAPTURE(type);
   struct Application : NullApplication, Responder {
-    void fromAdmin(const Message &, const SessionID &) override {
-      ++authentications;
-      throw RejectLogon();
+    void fromAdmin(const Message &message, const SessionID &) override {
+      received.push_back(message.getHeader().getField(FIELD::MsgType));
+      if (received.back() == MsgType_Logon) {
+        throw RejectLogon("credentials refused");
+      }
     }
     void onLogout(const SessionID &) override { ++logouts; }
     bool send(const std::string &wire) override {
-      CHECK(identifyType(wire) == MsgType_Logon);
-      ++sent;
+      sent.emplace_back(wire, false);
       return true;
     }
     void disconnect() override { ++disconnections; }
-    int authentications = 0, logouts = 0, sent = 0, disconnections = 0;
+    std::vector<std::string> received;
+    std::vector<Message> sent;
+    int logouts = 0, disconnections = 0;
   } application;
   MemoryStoreFactory stores;
   DataDictionaryProvider dictionaries;
@@ -773,28 +777,91 @@ TEST_CASE("rejected first initiator response allows immediate reconnect", "[admi
   session.next(now);
   REQUIRE(session.sentLogon());
   REQUIRE_FALSE(session.receivedLogon());
-  REQUIRE(application.sent == 1);
+  REQUIRE(application.sent.size() == 1);
   FIX42::Logon response(EncryptMethod(0), HeartBtInt(30));
   response.getHeader().setField(MsgType(type));
   response.getHeader().setField(SenderCompID("PEER"));
   response.getHeader().setField(TargetCompID("INITIATOR-RECONNECT"));
   response.getHeader().setField(SendingTime(now));
   response.getHeader().setField(MsgSeqNum(1));
+  if (type == "5") {
+    response.setField(Text("invalid password"));
+  } else if (type == "3") {
+    response.setField(RefSeqNum(1));
+  } else if (type == "4") {
+    response.setField(NewSeqNo(50));
+  }
   session.next(response, now);
+
+  const bool reply = type == "A" || type == "5";
+  const bool admissible = type != "4";
+  // The application sees the counterparty's answer, including the reason carried by a Logout or Reject.
+  CHECK(application.received == (admissible ? std::vector<std::string>{type} : std::vector<std::string>{}));
+  // A consumed Logout or Reject advances the target sequence so reconnect does not trigger a ResendRequest.
+  CHECK(session.getExpectedTargetNum() == (type == "5" || type == "3" ? 2 : 1));
+  CHECK(session.getExpectedSenderNum() == (reply ? 3 : 2));
+  REQUIRE(application.sent.size() == (reply ? 2 : 1));
+  if (reply) {
+    const Message &logout = application.sent.back();
+    CHECK(logout.getHeader().getField(FIELD::MsgType) == MsgType_Logout);
+    CHECK(logout.getHeader().getField(FIELD::MsgSeqNum) == "2");
+    if (type == "A") {
+      CHECK(logout.getField(FIELD::Text) == "Rejected Logon Attempt: credentials refused");
+    } else {
+      CHECK_FALSE(logout.isSetField(FIELD::Text));
+    }
+  }
+  if (type == "3") {
+    // A session-level Reject leaves the initiator waiting for the Logon response or its timeout.
+    CHECK(session.sentLogon());
+    CHECK(SessionTestAccess::responder(session) == &application);
+    CHECK(application.disconnections == 0);
+    CHECK(application.logouts == 0);
+    session.disconnect();
+    return;
+  }
   CHECK_FALSE(session.sentLogon());
   CHECK_FALSE(session.receivedLogon());
   CHECK(SessionTestAccess::responder(session) == nullptr);
   CHECK(application.logouts == 1);
   CHECK(application.disconnections == 1);
-  CHECK(application.authentications == (type == "A" ? 1 : 0));
-  CHECK(session.getExpectedSenderNum() == 2);
-  CHECK(session.getExpectedTargetNum() == 1);
   session.setResponder(&application);
   session.next(now);
   CHECK(session.sentLogon());
-  CHECK(application.sent == 2);
+  CHECK(application.sent.size() == (reply ? 3 : 2));
+  CHECK(application.sent.back().getHeader().getField(FIELD::MsgType) == MsgType_Logon);
   CHECK(application.logouts == 1);
   session.disconnect();
+}
+
+TEST_CASE("Acceptor getSession by message never bypasses admission", "[admission][review-r3]") {
+  struct TestResponder : Responder {
+    bool send(const std::string &) override { return true; }
+    void disconnect() override {}
+  } responder;
+  NullApplication application;
+  MemoryStoreFactory stores;
+  const SessionID id("FIX.4.2", "GETSESSION", "PEER");
+  Dictionary config;
+  config.setString(CONNECTION_TYPE, "acceptor");
+  config.setString(START_TIME, "00:00:00");
+  config.setString(END_TIME, "00:00:00");
+  config.setBool(USE_DATA_DICTIONARY, false);
+  config.setInt(SOCKET_ACCEPT_PORT, 0);
+  SessionSettings settings;
+  settings.set(id, config);
+  SocketAcceptor acceptor(application, stores, settings);
+  Session *session = acceptor.getSession(id);
+  REQUIRE(session);
+  FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
+  logon.getHeader().setField(SenderCompID("PEER"));
+  logon.getHeader().setField(TargetCompID("GETSESSION"));
+  logon.getHeader().setField(MsgSeqNum(1));
+  logon.getHeader().setField(SendingTime(UtcTimeStamp::now()));
+  CHECK(acceptor.getSession(logon.toString(), responder) == nullptr);
+  CHECK(SessionTestAccess::responder(*session) == nullptr);
+  CHECK_FALSE(Session::isSessionRegistered(id));
+  CHECK_FALSE(session->receivedLogon());
 }
 
 TEST_CASE("first authenticated Logon after session rollover stays connected", "[admission][review-r1]") {
@@ -978,9 +1045,13 @@ TEST_CASE("unauthenticated messages preserve persisted session state", "[admissi
     }
     void fromApp(const Message &, const SessionID &) override { ++appCalls; }
     void toAdmin(Message &, const SessionID &) override { ++outgoingCalls; }
-    bool send(const std::string &) override { return true; }
+    bool send(const std::string &wire) override {
+      sent.emplace_back(wire, false);
+      return true;
+    }
     void disconnect() override {}
     Session *session = nullptr;
+    std::vector<Message> sent;
     int authenticationCalls = 0, appCalls = 0, outgoingCalls = 0;
   } application;
   SessionID id("FIX.4.2", "AUTHENTICATION", "PEER");
@@ -1024,17 +1095,28 @@ TEST_CASE("unauthenticated messages preserve persisted session state", "[admissi
       message.setField(NewSeqNo(50));
     }
     session.next(message, now);
-    CHECK(application.authenticationCalls == (type == "A" ? 1 : 0));
+    const bool logon = type == "A";
+    CHECK(application.authenticationCalls == (logon ? 1 : 0));
     CHECK(application.appCalls == 0);
-    CHECK(application.outgoingCalls == 0);
-    CHECK(session.getExpectedSenderNum() == 7);
+    // RejectLogon is answered with a Logout carrying the reason; nothing else is sent before authentication.
+    CHECK(application.outgoingCalls == (logon ? 1 : 0));
+    REQUIRE(application.sent.size() == (logon ? 1U : 0U));
+    if (logon) {
+      const Message &logout = application.sent.front();
+      CHECK(logout.getHeader().getField(FIELD::MsgType) == MsgType_Logout);
+      CHECK(logout.getHeader().getField(FIELD::MsgSeqNum) == "7");
+      CHECK(logout.getField(FIELD::Text) == "Rejected Logon Attempt");
+    }
+    // Neither the ResetSeqNumFlag reset nor RefreshOnLogon ran; only the Logout consumed a sender number.
+    CHECK(session.getExpectedSenderNum() == (logon ? 8 : 7));
     CHECK(session.getExpectedTargetNum() == 9);
-    CHECK(SessionTestAccess::responder(session) == responder);
+    CHECK(SessionTestAccess::responder(session) == (logon ? nullptr : responder));
     CHECK_FALSE(Session::isSessionRegistered(id));
   }
   FileStore reopened(now, "store", id);
-  CHECK(reopened.getNextSenderMsgSeqNum() == (refreshOnLogon ? 11 : 7));
-  CHECK(reopened.getNextTargetMsgSeqNum() == (refreshOnLogon ? 13 : 9));
+  const bool persistedLogout = type == "A";
+  CHECK(reopened.getNextSenderMsgSeqNum() == (persistedLogout ? 8 : (refreshOnLogon ? 11 : 7)));
+  CHECK(reopened.getNextTargetMsgSeqNum() == (persistedLogout ? 9 : (refreshOnLogon ? 13 : 9)));
 }
 
 namespace {
@@ -1950,14 +2032,22 @@ TEST_CASE_METHOD(
     CHECK(output.back().getHeader().getField<MsgType>() == MsgType_Reject);
     CHECK(output.back().getField<SessionRejectReason>() == 18);
   }
-  SECTION("stored unsupported application version disconnects on resend") {
+  SECTION("stored unsupported application version is gap filled on resend") {
     REQUIRE(object->send(order));
     object->setDataDictionaryProvider(onlyFIX50);
-    output.clear();
-    CHECK_NOTHROW(object->next(createT11ResendRequest("ISLD", "TW", 2, 2, 2), now));
-    CHECK(disconnected == 1);
-    REQUIRE(output.size() == 1);
-    CHECK(output.front().getHeader().getField<MsgType>() == MsgType_Logout);
+    // A Logout here would recur on every reconnect, because the counterparty must re-request the same range.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      output.clear();
+      CHECK_NOTHROW(object->next(createT11ResendRequest("ISLD", "TW", 2 + attempt, 2, 2), now));
+      CHECK(disconnected == 0);
+      CHECK(object->isLoggedOn());
+      REQUIRE(output.size() == 1);
+      const Message &gapFill = output.front();
+      CHECK(gapFill.getHeader().getField<MsgType>() == MsgType_SequenceReset);
+      CHECK(gapFill.getHeader().getField<MsgSeqNum>() == 2);
+      CHECK(gapFill.getField<GapFillFlag>());
+      CHECK(gapFill.getField<NewSeqNo>() == 3);
+    }
   }
   SECTION("unconfigured local parse dictionary cannot escape the receive loop") {
     object->setSenderDefaultApplVerID(ApplVerID(ApplVerID_FIX44));

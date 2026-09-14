@@ -120,8 +120,12 @@ sudo make install
       <code>FIX::Trailer&amp;</code> accessors. The <code>set/get/isSet/getIfSet</code>
       convenience methods accept any field class. Version Header/Trailer classes
       and their nested group names remain available for standalone use.</li>
-      <li>Crackers construct genuine typed callback objects. Mutable callback
-      changes are transferred back on return and when a callback throws. Callback
+      <li>Crackers deliver genuine typed callback objects. A message that already
+      has the target type is passed to the callback itself, without a copy.
+      Otherwise a const callback receives a typed copy, and a mutable callback
+      receives a typed object that takes over the caller's content, so the
+      caller's message is empty while the callback runs. Mutable callback changes
+      are transferred back on return and when a callback throws. Callback
       references are valid only during the callback; retaining them is unsupported.
       If transferring changes itself throws, that exception propagates normally.</li>
     </ul>

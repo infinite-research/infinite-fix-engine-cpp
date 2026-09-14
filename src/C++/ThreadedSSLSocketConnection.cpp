@@ -209,8 +209,11 @@ bool ThreadedSSLSocketConnection::send(const std::string &message) {
 bool ThreadedSSLSocketConnection::connect() { return socket_connect(getSocket(), m_address.c_str(), m_port) >= 0; }
 
 void ThreadedSSLSocketConnection::disconnect() {
-  m_disconnect = true;
-  ssl_socket_close(m_socket, m_ssl);
+  // A refused Logon disconnects through the session and again from processStream; close the descriptor once so a
+  // reused descriptor number is never closed on behalf of another owner.
+  if (!m_disconnect.exchange(true)) {
+    ssl_socket_close(m_socket, m_ssl);
+  }
 }
 
 bool ThreadedSSLSocketConnection::read() {

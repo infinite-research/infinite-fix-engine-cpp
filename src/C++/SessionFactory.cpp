@@ -62,6 +62,14 @@ Session *SessionFactory::create(const SessionID &sessionID, const Dictionary &se
   if (useDataDictionary) {
     if (sessionID.isFIXT()) {
       processFixtDataDictionaries(sessionID, settings, dataDictionaryProvider);
+      // Every inbound message is parsed with the DefaultApplVerID dictionary; fail at startup, not per message.
+      try {
+        dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(defaultApplVerID));
+      } catch (DataDictionaryNotFound &) {
+        throw ConfigError(
+            std::string(DEFAULT_APPLVERID) + " " + settings.getString(DEFAULT_APPLVERID) + " has no configured "
+            + APP_DATA_DICTIONARY);
+      }
     } else {
       processFixDataDictionary(sessionID, settings, dataDictionaryProvider);
     }

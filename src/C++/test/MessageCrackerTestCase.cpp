@@ -36,7 +36,10 @@
 #include <fix50sp1/NewOrderSingle.h>
 #include <fix50sp2/NewOrderSingle.h>
 #include <fixt11/Logon.h>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <typeinfo>
 #include <utility>
 
 namespace {
@@ -116,6 +119,85 @@ template <typename Cracker, typename Input, typename Typed> void checkCracker() 
     message.getGroup(1, group);
     CHECK(group.getField(FIX::FIELD::PartyID) == "party");
   }
+}
+
+template <typename Cracker, typename Typed> void checkTypedIdentity() {
+  struct Callback : Cracker {
+    const void *constSeen = nullptr;
+    const void *mutableSeen = nullptr;
+    void onMessage(const Typed &message, const FIX::SessionID &) override { constSeen = &message; }
+    void onMessage(Typed &message, const FIX::SessionID &) override {
+      mutableSeen = &message;
+      message.setField(FIX::Symbol("IBM"));
+    }
+  } cracker;
+  Typed message;
+  message.setField(FIX::Symbol("MSFT"));
+  const FIX::SessionID sessionID("FIX.4.2", "sender", "target");
+  SECTION("typed reference") {
+    cracker.crack(std::as_const(message), sessionID);
+    cracker.crack(message, sessionID);
+  }
+  SECTION("generic reference to a typed object") {
+    cracker.crack(static_cast<const FIX::Message &>(message), sessionID);
+    cracker.crack(static_cast<FIX::Message &>(message), sessionID);
+  }
+  CHECK(cracker.constSeen == &message);
+  CHECK(cracker.mutableSeen == &message);
+  CHECK(message.getField(FIX::FIELD::Symbol) == "IBM");
+}
+
+template <typename Cracker, typename Typed> void checkGenericWriteBack() {
+  struct Callback : Cracker {
+    const FIX::Message *caller = nullptr;
+    const FIX::FieldMap *callerGroup = nullptr;
+    bool shouldThrow = false;
+    int called = 0;
+    void onMessage(Typed &message, const FIX::SessionID &) override {
+      ++called;
+      CHECK(typeid(message) == typeid(Typed));
+      CHECK(static_cast<const FIX::Message *>(&message) != caller);
+      CHECK(message.getField(FIX::FIELD::Symbol) == "MSFT");
+      CHECK(message.getHeader().getField(FIX::FIELD::SenderCompID) == "sender");
+      REQUIRE(message.groupCount(453) == 1);
+      // The caller's content is lent to the typed message, not deep-copied.
+      CHECK(&message.getGroupRef(1, 453) == callerGroup);
+      message.setField(FIX::Symbol("IBM"));
+      message.getHeader().setField(FIX::SenderCompID("changed"));
+      message.getTrailer().setField(FIX::CheckSum(123));
+      if (shouldThrow) {
+        throw std::runtime_error("callback failure");
+      }
+    }
+  } cracker;
+  FIX::Message message = Typed();
+  message.getHeader().setField(FIX::SenderCompID("sender"));
+  message.setField(FIX::Symbol("MSFT"));
+  message.setField(FIX::Account("untouched"));
+  FIX::Group party(453, 448);
+  party.setField(FIX::PartyID("party"));
+  message.addGroup(party);
+  cracker.caller = &message;
+  cracker.callerGroup = &message.getGroupRef(1, 453);
+  const std::string beginString = message.getHeader().getField(FIX::FIELD::BeginString);
+  const FIX::SessionID sessionID("FIX.4.2", "sender", "target");
+
+  cracker.shouldThrow = GENERATE(false, true);
+  if (cracker.shouldThrow) {
+    CHECK_THROWS_WITH(cracker.crack(message, sessionID), "callback failure");
+  } else {
+    CHECK_NOTHROW(cracker.crack(message, sessionID));
+  }
+  CHECK(cracker.called == 1);
+  CHECK(message.getField(FIX::FIELD::Symbol) == "IBM");
+  CHECK(message.getHeader().getField(FIX::FIELD::SenderCompID) == "changed");
+  CHECK(message.getTrailer().getField(FIX::FIELD::CheckSum) == "123");
+  CHECK(message.getField(FIX::FIELD::Account) == "untouched");
+  CHECK(message.getHeader().getField(FIX::FIELD::BeginString) == beginString);
+  CHECK(message.getHeader().getField(FIX::FIELD::MsgType) == Typed::MsgType().getString());
+  REQUIRE(message.groupCount(453) == 1);
+  CHECK(&message.getGroupRef(1, 453) == cracker.callerGroup);
+  CHECK(message.getGroupRef(1, 453).getField(FIX::FIELD::PartyID) == "party");
 }
 } // namespace
 
@@ -210,5 +292,114 @@ TEST_CASE("MessageCrackerTests") {
     message.getHeader().setField(FIX::MsgType("D"));
     CHECK_THROWS_AS(cracker.crack(std::as_const(message), sessionID), FIX::UnsupportedMessageType);
     CHECK_NOTHROW(cracker.crack(message, sessionID));
+  }
+}
+
+TEST_CASE("MessageCrackerTypedIdentityTests") {
+  SECTION("common FIX 4.2") { checkTypedIdentity<FIX::MessageCracker, FIX42::NewOrderSingle>(); }
+  SECTION("common FIX 5.0 SP2 application version") {
+    checkTypedIdentity<FIX::MessageCracker, FIX50SP2::NewOrderSingle>();
+  }
+  SECTION("common FIXT admin") { checkTypedIdentity<FIX::MessageCracker, FIXT11::Logon>(); }
+  SECTION("generated FIX 4.0") { checkTypedIdentity<FIX40::MessageCracker, FIX40::NewOrderSingle>(); }
+  SECTION("generated FIX 4.4") { checkTypedIdentity<FIX44::MessageCracker, FIX44::NewOrderSingle>(); }
+  SECTION("generated FIX 5.0 SP2") { checkTypedIdentity<FIX50SP2::MessageCracker, FIX50SP2::NewOrderSingle>(); }
+  SECTION("generated FIXT 1.1") { checkTypedIdentity<FIXT11::MessageCracker, FIXT11::Logon>(); }
+}
+
+TEST_CASE("MessageCrackerGenericWriteBackTests") {
+  SECTION("common FIX 4.2") { checkGenericWriteBack<FIX::MessageCracker, FIX42::NewOrderSingle>(); }
+  SECTION("common FIX 5.0 SP2 application version") {
+    checkGenericWriteBack<FIX::MessageCracker, FIX50SP2::NewOrderSingle>();
+  }
+  SECTION("common FIXT admin") { checkGenericWriteBack<FIX::MessageCracker, FIXT11::Logon>(); }
+  SECTION("generated FIX 4.1") { checkGenericWriteBack<FIX41::MessageCracker, FIX41::NewOrderSingle>(); }
+  SECTION("generated FIX 4.3") { checkGenericWriteBack<FIX43::MessageCracker, FIX43::NewOrderSingle>(); }
+  SECTION("generated FIX 5.0") { checkGenericWriteBack<FIX50::MessageCracker, FIX50::NewOrderSingle>(); }
+  SECTION("generated FIX 5.0 SP1") { checkGenericWriteBack<FIX50SP1::MessageCracker, FIX50SP1::NewOrderSingle>(); }
+}
+
+TEST_CASE("MessageCrackerUnknownTypeFallbackTests") {
+  struct Callback : FIX::MessageCracker {
+    const void *constSeen = nullptr;
+    const void *mutableSeen = nullptr;
+    int constCalls = 0;
+    int mutableCalls = 0;
+    bool shouldThrow = false;
+    void onMessage(const FIX42::Message &message, const FIX::SessionID &) override {
+      ++constCalls;
+      constSeen = &message;
+      CHECK(typeid(message) == typeid(FIX42::Message));
+      CHECK(message.getHeader().getField(FIX::FIELD::MsgType) == "ZZ");
+    }
+    void onMessage(FIX42::Message &message, const FIX::SessionID &) override {
+      ++mutableCalls;
+      mutableSeen = &message;
+      CHECK(typeid(message) == typeid(FIX42::Message));
+      message.setField(FIX::Text("seen"));
+      if (shouldThrow) {
+        throw FIX::UnsupportedMessageType();
+      }
+    }
+  } cracker;
+  const FIX::SessionID sessionID("FIX.4.2", "sender", "target");
+
+  SECTION("generic message") {
+    FIX::Message message;
+    message.getHeader().setField(FIX::BeginString("FIX.4.2"));
+    message.getHeader().setField(FIX::MsgType("ZZ"));
+    message.setField(FIX::Symbol("MSFT"));
+
+    cracker.crack(std::as_const(message), sessionID);
+    CHECK(cracker.constCalls == 1);
+    CHECK(cracker.constSeen != &message);
+    CHECK_FALSE(message.isSetField(FIX::FIELD::Text));
+
+    cracker.shouldThrow = GENERATE(false, true);
+    if (cracker.shouldThrow) {
+      CHECK_THROWS_AS(cracker.crack(message, sessionID), FIX::UnsupportedMessageType);
+    } else {
+      CHECK_NOTHROW(cracker.crack(message, sessionID));
+    }
+    CHECK(cracker.mutableCalls == 1);
+    CHECK(cracker.mutableSeen != &message);
+    CHECK(message.getField(FIX::FIELD::Text) == "seen");
+    CHECK(message.getField(FIX::FIELD::Symbol) == "MSFT");
+    CHECK(message.getHeader().getField(FIX::FIELD::MsgType) == "ZZ");
+  }
+
+  SECTION("version message is delivered as the same object") {
+    FIX42::Message message(FIX::MsgType("ZZ"));
+    cracker.crack(std::as_const(message), sessionID);
+    cracker.crack(message, sessionID);
+    CHECK(cracker.constCalls == 1);
+    CHECK(cracker.mutableCalls == 1);
+    CHECK(cracker.constSeen == &message);
+    CHECK(cracker.mutableSeen == &message);
+    CHECK(message.getField(FIX::FIELD::Text) == "seen");
+  }
+
+  SECTION("generated cracker") {
+    struct VersionCallback : FIX42::MessageCracker {
+      int constCalls = 0;
+      int mutableCalls = 0;
+      void onMessage(const FIX42::Message &message, const FIX::SessionID &) override {
+        ++constCalls;
+        CHECK(typeid(message) == typeid(FIX42::Message));
+      }
+      void onMessage(FIX42::Message &message, const FIX::SessionID &) override {
+        ++mutableCalls;
+        CHECK(typeid(message) == typeid(FIX42::Message));
+        message.setField(FIX::Text("seen"));
+      }
+    } versionCracker;
+    FIX::Message message;
+    message.getHeader().setField(FIX::BeginString("FIX.4.2"));
+    message.getHeader().setField(FIX::MsgType("ZZ"));
+    versionCracker.crack(std::as_const(message), sessionID);
+    versionCracker.crack(message, sessionID);
+    CHECK(versionCracker.constCalls == 1);
+    CHECK(versionCracker.mutableCalls == 1);
+    CHECK(message.getField(FIX::FIELD::Text) == "seen");
   }
 }

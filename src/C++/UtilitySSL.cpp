@@ -1389,7 +1389,8 @@ bool loadCAInfo(
     return true;
   }
 
-  if ((!caDir.empty() && !std::filesystem::is_directory(caDir))
+  std::error_code caDirError;
+  if ((!caDir.empty() && !std::filesystem::is_directory(caDir, caDirError))
       || !SSL_CTX_load_verify_locations(ctx, caFile.empty() ? 0 : caFile.c_str(), caDir.empty() ? 0 : caDir.c_str())) {
     errStr.assign("Unable to configure verify locations for client authentication");
     return false;
@@ -1445,18 +1446,25 @@ X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log,
     int loaded = 0;
     // A general hash-directory lookup would also trust certificates in this
     // directory. Load only CRLs, identified by OpenSSL's <hash>.r<number> names.
-    for (const auto &entry : std::filesystem::directory_iterator(crlDir)) {
-      const std::string name = entry.path().filename().string();
+    // Directory errors are reported through errStr (and so RuntimeError), never as std::filesystem exceptions.
+    std::error_code error;
+    for (std::filesystem::directory_iterator entry(crlDir, error), end; !error && entry != end;
+         entry.increment(error)) {
+      const std::string name = entry->path().filename().string();
       if (name.size() <= 10 || name.substr(8, 2) != ".r"
           || name.substr(0, 8).find_first_not_of("0123456789abcdefABCDEF") != std::string::npos
           || name.find_first_not_of("0123456789", 10) != std::string::npos) {
         continue;
       }
-      if (X509_load_crl_file(lookup, entry.path().string().c_str(), X509_FILETYPE_PEM) <= 0) {
+      if (X509_load_crl_file(lookup, entry->path().string().c_str(), X509_FILETYPE_PEM) <= 0) {
         errStr = "Unable to load CRL directory entry";
         return 0;
       }
       ++loaded;
+    }
+    if (error) {
+      errStr = "Unable to read CRL directory " + crlDir + " (" + error.message() + ")";
+      return 0;
     }
     if (!loaded) {
       errStr = "No CRLs found in configured directory";
