@@ -2,16 +2,26 @@ name: Build assurance
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Full assurance or only native platform coverage (excludes CodeQL and sanitizer reruns)
+        type: choice
+        required: true
+        default: full
+        options:
+          - full
+          - platform-gaps
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope }}
   cancel-in-progress: true
 
 jobs:
   unit-default:
+    if: inputs.scope != 'platform-gaps'
     name: unit-default
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -31,6 +41,7 @@ jobs:
           ctest --test-dir build-assurance-default --output-on-failure
 
   unit-tls:
+    if: inputs.scope != 'platform-gaps'
     name: unit-tls
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -54,6 +65,7 @@ jobs:
           ctest --test-dir build-assurance-tls --output-on-failure
 
   sanitizers:
+    if: inputs.scope != 'platform-gaps'
     name: sanitizers
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -107,18 +119,20 @@ jobs:
         run: sh test/runut.sh "FileLogTests"
 
   codeql-and-sbom:
-    name: codeql-and-sbom
+    name: ${{ inputs.scope == 'platform-gaps' && 'Linux inventory and performance (no CodeQL)' || 'codeql-and-sbom' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: ${{ inputs.scope == 'platform-gaps' && 60 || 360 }}
     steps:
       - name: Checkout candidate snapshot
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set generated-PKI-only secret-scan exclusion
+        if: inputs.scope != 'platform-gaps'
         shell: bash
         run: printf '%s\n' '(^|/)test-runtime/certs/' > .trufflehog-exclude-paths
       - name: Scan committed source for secrets
+        if: inputs.scope != 'platform-gaps'
         uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c # v3.97.4
         with:
           path: ./
@@ -127,8 +141,15 @@ jobs:
       - name: Prepare evidence directory
         shell: bash
         run: |
-          rm .trufflehog-exclude-paths
           mkdir -p "$RUNNER_TEMP/quickfix-assurance"
+          if [ -f .trufflehog-exclude-paths ]; then rm .trufflehog-exclude-paths; fi
+          {
+            git rev-parse HEAD
+            printf 'scope=%s\n' "$VALIDATION_SCOPE"
+            uname -a
+          } > "$RUNNER_TEMP/quickfix-assurance/candidate-and-scope.txt"
+        env:
+          VALIDATION_SCOPE: ${{ inputs.scope }}
       - name: Generate source SPDX JSON
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
@@ -150,6 +171,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libssl-dev
       - name: Initialize CodeQL
+        if: inputs.scope != 'platform-gaps'
         uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           languages: c-cpp
@@ -170,7 +192,16 @@ jobs:
           set -o pipefail
           cmake --build build-assurance-evidence --parallel 1 \
             2>&1 | tee "$RUNNER_TEMP/quickfix-assurance/build.log"
+      - name: Check portable TLS fixtures and transport
+        if: inputs.scope == 'platform-gaps'
+        shell: bash
+        run: |
+          ulimit -c 0
+          ctest --test-dir build-assurance-evidence -R '^quickfix_tls_transport$' \
+            --no-tests=error --output-on-failure \
+            --output-junit "$RUNNER_TEMP/quickfix-assurance/tls-transport.xml"
       - name: Analyze with CodeQL without remote upload
+        if: inputs.scope != 'platform-gaps'
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           output: ${{ runner.temp }}/quickfix-assurance/codeql
@@ -265,8 +296,46 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: quickfix-assurance-${{ github.sha }}
+          name: quickfix-assurance-${{ github.sha }}-${{ inputs.scope }}
           path: ${{ runner.temp }}/quickfix-assurance
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
+
+  windows-tls-transport:
+    name: Windows MSVC TLS transport
+    if: inputs.scope == 'platform-gaps'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      OPENSSL_ROOT_DIR: C:/Program Files/OpenSSL
+    steps:
+      - name: Checkout candidate snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record candidate and tools
+        shell: pwsh
+        run: |
+          git rev-parse HEAD
+          cmake --version
+          & "$env:OPENSSL_ROOT_DIR/bin/openssl.exe" version -a
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:OPENSSL_ROOT_DIR/bin" >> $env:GITHUB_PATH
+      - name: Configure MSVC TLS tests
+        run: cmake -S . -B build-windows-tls -G "Visual Studio 17 2022" -A x64 -DHAVE_SSL=ON -DQUICKFIX_EXAMPLES=OFF
+      - name: Build unit target
+        run: cmake --build build-windows-tls --config Release --parallel 2 --target ut
+      - name: Run TLS transport tests (must not be empty)
+        run: ctest --test-dir build-windows-tls -C Release -R '^quickfix_tls_transport$' --no-tests=error --output-on-failure --output-junit tls-transport.xml
+      - name: Retain TLS test evidence (no generated credentials)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quickfix-windows-tls-${{ github.sha }}
+          path: |
+            build-windows-tls/tls-transport.xml
+            build-windows-tls/Testing/Temporary/LastTest.log
+            build-windows-tls/CMakeCache.txt
+          if-no-files-found: error
+          retention-days: 14

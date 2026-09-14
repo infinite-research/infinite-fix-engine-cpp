@@ -77,10 +77,15 @@ if (QUICKFIX_TESTS)
   list(APPEND ut_SOURCES ${PROJECT_SOURCE_DIR}/src/C++/test/TLSVerificationTestCase.cpp)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
-  if(HAVE_SSL AND NOT WIN32)
+  if(HAVE_SSL)
+    find_program(QUICKFIX_TEST_SHELL NAMES sh HINTS "$ENV{ProgramFiles}/Git/bin")
+    if(NOT QUICKFIX_TEST_SHELL)
+      message(FATAL_ERROR "TLS tests require sh (Git for Windows provides it) to generate disposable PKI")
+    endif()
     add_custom_command(
       OUTPUT ${CMAKE_BINARY_DIR}/test-runtime/certs/server.crt
-      COMMAND sh ${PROJECT_SOURCE_DIR}/test/generate-test-pki.sh
+      COMMAND ${CMAKE_COMMAND} -E env MSYS_NO_PATHCONV=1
+                 ${QUICKFIX_TEST_SHELL} ${PROJECT_SOURCE_DIR}/test/generate-test-pki.sh
                  ${CMAKE_BINARY_DIR}/test-runtime/certs
       DEPENDS ${PROJECT_SOURCE_DIR}/test/generate-test-pki.sh
       VERBATIM)
@@ -167,7 +172,7 @@ if (QUICKFIX_TESTS)
   endif()
   add_quickfix_unit_test(quickfix_unit)
 
-  if(HAVE_SSL AND NOT WIN32)
+  if(HAVE_SSL)
     add_quickfix_unit_test(quickfix_tls_transport "TLSVerificationTests")
     set_tests_properties(quickfix_tls_transport PROPERTIES LABELS "network;tls" RUN_SERIAL TRUE TIMEOUT 180)
   endif()

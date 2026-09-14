@@ -61,5 +61,13 @@ openssl x509 -req -in client.csr -CA unrelated.crt -CAkey unrelated.key -set_ser
 openssl ca -batch -config ca.cnf -cert unrelated.crt -keyfile unrelated.key -gencrl -out unrelated.crl 2>/dev/null
 mkdir crl-directory
 cp ca.crl unrelated.crl unrelated.crt crl-directory/
-openssl rehash crl-directory
+# Native Windows OpenSSL has no rehash command; name the three known fixtures directly.
+ca_hash=$(openssl crl -in ca.crl -hash -noout)
+unrelated_hash=$(openssl crl -in unrelated.crl -hash -noout)
+ca_hash=$(printf '%s' "$ca_hash" | tr -d '\r')
+unrelated_hash=$(printf '%s' "$unrelated_hash" | tr -d '\r')
+test "$ca_hash" != "$unrelated_hash"
+cp ca.crl "crl-directory/$ca_hash.r0"
+cp unrelated.crl "crl-directory/$unrelated_hash.r0"
+cp unrelated.crt "crl-directory/$unrelated_hash.0"
 echo 'Generated disposable two-day test PKI'

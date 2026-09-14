@@ -17,8 +17,12 @@
 **
 ****************************************************************************/
 
+#ifdef _MSC_VER
+#include "stdafx.h"
+#else
 #include "config.h"
-#if HAVE_SSL && !defined(_MSC_VER)
+#endif
+#if HAVE_SSL
 #include "catch_amalgamated.hpp"
 #include <Application.h>
 #include <MessageStore.h>
@@ -59,9 +63,17 @@ struct Socket {
 };
 
 void timeout(socket_handle socket) {
+#ifdef _MSC_VER
+  DWORD interval = 2000;
+  REQUIRE(
+      setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&interval), sizeof(interval)) == 0);
+  REQUIRE(
+      setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&interval), sizeof(interval)) == 0);
+#else
   timeval interval{2, 0};
   REQUIRE(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &interval, sizeof(interval)) == 0);
   REQUIRE(setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &interval, sizeof(interval)) == 0);
+#endif
 }
 
 int portOf(socket_handle socket) {
@@ -134,6 +146,14 @@ SessionSettings settingsFor(bool server, const SessionID &id, int port, Dictiona
   return settings;
 }
 
+int setEnvironment(const char *name, const char *value) {
+#ifdef _MSC_VER
+  return _putenv_s(name, value ? value : "");
+#else
+  return value ? setenv(name, value, 1) : unsetenv(name);
+#endif
+}
+
 // Set the process-local OpenSSL defaults to a disposable unrelated root. This proves
 // that explicitly configured private trust does not silently include default roots.
 struct DefaultTrust {
@@ -141,20 +161,12 @@ struct DefaultTrust {
   const char *oldDir = getenv("SSL_CERT_DIR");
   std::string file = oldFile ? oldFile : "", dir = oldDir ? oldDir : "";
   DefaultTrust() {
-    setenv("SSL_CERT_FILE", certificate("unrelated.crt").c_str(), 1);
-    setenv("SSL_CERT_DIR", certificate("empty").c_str(), 1);
+    REQUIRE(setEnvironment("SSL_CERT_FILE", certificate("unrelated.crt").c_str()) == 0);
+    REQUIRE(setEnvironment("SSL_CERT_DIR", certificate("empty").c_str()) == 0);
   }
   ~DefaultTrust() {
-    if (oldFile) {
-      setenv("SSL_CERT_FILE", file.c_str(), 1);
-    } else {
-      unsetenv("SSL_CERT_FILE");
-    }
-    if (oldDir) {
-      setenv("SSL_CERT_DIR", dir.c_str(), 1);
-    } else {
-      unsetenv("SSL_CERT_DIR");
-    }
+    CHECK(setEnvironment("SSL_CERT_FILE", oldFile ? file.c_str() : nullptr) == 0);
+    CHECK(setEnvironment("SSL_CERT_DIR", oldDir ? dir.c_str() : nullptr) == 0);
   }
 };
 } // namespace
@@ -235,12 +247,12 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
     REQUIRE(socket.value != INVALID_SOCKET_HANDLE);
     timeout(socket.value);
     Secure ssl(SSL_new(context.get()), SSL_free);
-    REQUIRE(SSL_set_fd(ssl.get(), socket.value) == 1);
+    REQUIRE(SSL_set_fd(ssl.get(), static_cast<int>(socket.value)) == 1);
     const int handshake = SSL_accept(ssl.get());
     char buffer[4096];
     const int bytes = handshake == 1 ? SSL_read(ssl.get(), buffer, sizeof(buffer)) : -1;
     SSL_set_quiet_shutdown(ssl.get(), 1);
-    shutdown(socket.value, SHUT_RDWR);
+    shutdown(socket.value, 2);
     CHECK(waitFor(disconnected));
     initiator->stop(true);
     CHECK((bytes > 0) == accepted);
@@ -331,7 +343,7 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
     timeout(socket.value);
     REQUIRE(socket_connect(socket.value, "127.0.0.1", port) >= 0);
     Secure ssl(SSL_new(context.get()), SSL_free);
-    REQUIRE(SSL_set_fd(ssl.get(), socket.value) == 1);
+    REQUIRE(SSL_set_fd(ssl.get(), static_cast<int>(socket.value)) == 1);
     int bytes = -1;
     if (SSL_connect(ssl.get()) == 1) {
       FIX42::Logon logon(EncryptMethod(0), HeartBtInt(30));
@@ -354,7 +366,7 @@ TEST_CASE("TLSVerificationTests", "[tls]") {
       CHECK(session->getExpectedTargetNum() == 9);
     }
     CHECK_FALSE(application.prematureRegistration);
-    shutdown(socket.value, SHUT_RDWR);
+    shutdown(socket.value, 2);
     CHECK(waitFor([&]() { return !Session::isSessionRegistered(id); }));
     acceptor->stop(true);
     CHECK_FALSE(Session::isSessionRegistered(id));

@@ -181,6 +181,13 @@ default and TLS Release unit suites, ASan+UBSan registered tests, a focused
 TSan run for `FileLogTests`, a secret scan limited to generated-PKI
 exclusions, CodeQL analysis without upload, SPDX SBOM generation for source
 and installed trees, Grype scans, and retention of the evidence bundle.
+The default `full` dispatch retains all of these checks. A `platform-gaps`
+dispatch runs only native Ubuntu build/install, inventory, Grype and performance
+evidence plus Windows/MSVC TLS transport tests. Its result is supplemental
+platform evidence, not a CodeQL, secret-scan or sanitizer pass. Windows TLS
+tests use the existing disposable-PKI script through Git for Windows `sh`;
+OpenSSL must be on the test build's PATH. Production builds without tests do
+not require that shell.
 `tools/complete_sbom.py` completes the original Syft SPDX inputs with
 hash-verified vendored libraries and, for the Ubuntu TLS assurance build,
 the package-manager identities of every resolved linked library. Missing
