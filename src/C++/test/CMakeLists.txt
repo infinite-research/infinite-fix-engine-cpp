@@ -78,6 +78,10 @@ if (QUICKFIX_TESTS)
 
   add_executable(ut ut.cpp ${ut_SOURCES})
   if(HAVE_SSL)
+    if(MSVC)
+      # OpenSSL's Windows BIO layer resolves this bridge from the executable.
+      target_sources(ut PRIVATE "${OPENSSL_INCLUDE_DIR}/openssl/applink.c")
+    endif()
     find_program(QUICKFIX_TEST_SHELL NAMES sh HINTS "$ENV{ProgramFiles}/Git/bin")
     if(NOT QUICKFIX_TEST_SHELL)
       message(FATAL_ERROR "TLS tests require sh (Git for Windows provides it) to generate disposable PKI")

@@ -184,7 +184,9 @@ and installed trees, Grype scans, and retention of the evidence bundle.
 The default `full` dispatch retains all of these checks. A `platform-gaps`
 dispatch runs only native Ubuntu build/install, inventory, Grype and performance
 evidence plus Windows/MSVC TLS transport tests. Its result is supplemental
-platform evidence, not a CodeQL, secret-scan or sanitizer pass. Windows TLS
+platform evidence, not a CodeQL, secret-scan or sanitizer pass. A `windows-tls`
+dispatch runs only Windows TLS and the remaining registered Windows checks,
+without canceling or repeating a running Linux evidence job. Windows TLS
 tests use the existing disposable-PKI script through Git for Windows `sh`;
 OpenSSL must be on the test build's PATH. Production builds without tests do
 not require that shell.
