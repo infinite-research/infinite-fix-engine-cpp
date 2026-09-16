@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Full assurance or only native platform coverage (excludes CodeQL and sanitizer reruns)
+        description: Full suite, assurance-only, or native platform coverage
         type: choice
         required: true
         default: full
         options:
           - full
+          - assurance-only
           - platform-gaps
           - windows-tls
 
@@ -22,7 +23,7 @@ concurrency:
 
 jobs:
   unit-default:
-    if: inputs.scope != 'platform-gaps' && inputs.scope != 'windows-tls'
+    if: inputs.scope == 'full'
     name: unit-default
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -42,7 +43,7 @@ jobs:
           ctest --test-dir build-assurance-default --output-on-failure
 
   unit-tls:
-    if: inputs.scope != 'platform-gaps' && inputs.scope != 'windows-tls'
+    if: inputs.scope == 'full'
     name: unit-tls
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -66,7 +67,7 @@ jobs:
           ctest --test-dir build-assurance-tls --output-on-failure
 
   sanitizers:
-    if: inputs.scope != 'platform-gaps' && inputs.scope != 'windows-tls'
+    if: inputs.scope == 'full'
     name: sanitizers
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -206,6 +207,8 @@ jobs:
         if: inputs.scope != 'platform-gaps'
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
+          # Reduce concurrent query memory pressure without dropping queries.
+          threads: 1
           output: ${{ runner.temp }}/quickfix-assurance/codeql
           upload: never
           upload-database: false

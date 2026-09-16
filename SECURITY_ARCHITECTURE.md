@@ -185,7 +185,14 @@ default and TLS Release unit suites, ASan+UBSan registered tests, a focused
 TSan run for `FileLogTests`, a secret scan limited to generated-PKI
 exclusions, CodeQL analysis without upload, SPDX SBOM generation for source
 and installed trees, Grype scans, and retention of the evidence bundle.
-The default `full` dispatch retains all of these checks. A `platform-gaps`
+The default `full` dispatch retains all of these checks. An `assurance-only`
+dispatch runs the existing CodeQL/SBOM job, including secret scanning,
+build/install inventory, Grype and performance evidence, without repeating
+unit, sanitizer or Windows jobs. CodeQL analysis uses one worker to reduce
+concurrent memory pressure while retaining the full `security-and-quality`
+query suite; this does not guarantee completion on a memory-limited runner.
+An assurance-only pass must be combined with separately recorded platform
+validation and is not a standalone full-suite pass. A `platform-gaps`
 dispatch runs only native Ubuntu build/install, inventory, Grype and performance
 evidence plus Windows/MSVC TLS transport tests. Its result is supplemental
 platform evidence, not a CodeQL, secret-scan or sanitizer pass. A `windows-tls`

@@ -972,6 +972,20 @@ jobs:
 
 Pin checkout, CodeQL, upload, and SBOM actions by full SHA. Use separate TSan execution for `FileLogTests`; never combine ASan and TSan. Enable secret scanning with an allowlist limited to generated test-PKI paths after Task 13.
 
+**Approved assurance retry amendment (2026-09-16):** Magnus authorized a
+workflow-only commit/push and targeted retry after run `35043102320` exhausted
+CodeQL Java heap memory on `7d805f97`. Add `assurance-only` dispatch and lower
+analysis concurrency to one thread; preserve `full`, the complete
+`security-and-quality` query suite, pinned actions, read-only permissions,
+failure gates, runner size, and time limits. Product behavior and all C++
+invariants are **PRESERVE**; risk is R3 because this changes assurance controls.
+Validate YAML, every dispatch mode and unchanged source/build/test bytes before
+push, then verify the exact retry SHA, executed jobs and retained reports.
+Existing Windows/Linux passes remain attributed to their tested SHA; this is
+not a new runtime or release approval. Rollback is a revert of this CI/docs-only
+amendment. If the retry fails, retain its evidence and request a decision before
+further edits, reruns, runner upgrades or scope changes.
+
 - [ ] **Step 3: Make acceptance/performance exit status real**
 
 Register or invoke plaintext nonthreaded/threaded acceptance modes explicitly; add Task 7's TLS transport test rather than assuming `HAVE_SSL=ON` exercises sockets. Fix `test/runpt.sh` to retain both invocation statuses, run `pt` from `test-runtime` with `--quickfix-spec-path`, and compare repeated medians without a noisy single-run percentage gate.
