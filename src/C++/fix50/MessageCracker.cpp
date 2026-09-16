@@ -1,0 +1,572 @@
+/* -*- C++ -*- */
+
+/****************************************************************************
+** Copyright (c) 2001-2014
+**
+** This file is part of the QuickFIX FIX Engine
+**
+** This file may be distributed under the terms of the quickfixengine.org
+** license as defined by quickfixengine.org and appearing in the file
+** LICENSE included in the packaging of this file.
+**
+** This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
+** WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+**
+** See http://www.quickfixengine.org/LICENSE for licensing information.
+**
+** Contact ask@quickfixengine.org if any conditions of this licensing are
+** not clear to you.
+**
+****************************************************************************/
+
+#ifdef _MSC_VER
+#include "stdafx.h"
+#else
+#include "config.h"
+#endif
+
+#include "MessageCracker.h"
+
+#include <utility>
+
+#include "IOI.h"
+#include "Advertisement.h"
+#include "ExecutionReport.h"
+#include "OrderCancelReject.h"
+#include "News.h"
+#include "Email.h"
+#include "NewOrderSingle.h"
+#include "NewOrderList.h"
+#include "OrderCancelRequest.h"
+#include "OrderCancelReplaceRequest.h"
+#include "OrderStatusRequest.h"
+#include "AllocationInstruction.h"
+#include "ListCancelRequest.h"
+#include "ListExecute.h"
+#include "ListStatusRequest.h"
+#include "ListStatus.h"
+#include "AllocationInstructionAck.h"
+#include "DontKnowTrade.h"
+#include "QuoteRequest.h"
+#include "Quote.h"
+#include "SettlementInstructions.h"
+#include "MarketDataRequest.h"
+#include "MarketDataSnapshotFullRefresh.h"
+#include "MarketDataIncrementalRefresh.h"
+#include "MarketDataRequestReject.h"
+#include "QuoteCancel.h"
+#include "QuoteStatusRequest.h"
+#include "MassQuoteAcknowledgement.h"
+#include "SecurityDefinitionRequest.h"
+#include "SecurityDefinition.h"
+#include "SecurityStatusRequest.h"
+#include "SecurityStatus.h"
+#include "TradingSessionStatusRequest.h"
+#include "TradingSessionStatus.h"
+#include "MassQuote.h"
+#include "BusinessMessageReject.h"
+#include "BidRequest.h"
+#include "BidResponse.h"
+#include "ListStrikePrice.h"
+#include "RegistrationInstructions.h"
+#include "RegistrationInstructionsResponse.h"
+#include "OrderMassCancelRequest.h"
+#include "OrderMassCancelReport.h"
+#include "NewOrderCross.h"
+#include "CrossOrderCancelReplaceRequest.h"
+#include "CrossOrderCancelRequest.h"
+#include "SecurityTypeRequest.h"
+#include "SecurityTypes.h"
+#include "SecurityListRequest.h"
+#include "SecurityList.h"
+#include "DerivativeSecurityListRequest.h"
+#include "DerivativeSecurityList.h"
+#include "NewOrderMultileg.h"
+#include "MultilegOrderCancelReplace.h"
+#include "TradeCaptureReportRequest.h"
+#include "TradeCaptureReport.h"
+#include "OrderMassStatusRequest.h"
+#include "QuoteRequestReject.h"
+#include "RFQRequest.h"
+#include "QuoteStatusReport.h"
+#include "QuoteResponse.h"
+#include "Confirmation.h"
+#include "PositionMaintenanceRequest.h"
+#include "PositionMaintenanceReport.h"
+#include "RequestForPositions.h"
+#include "RequestForPositionsAck.h"
+#include "PositionReport.h"
+#include "TradeCaptureReportRequestAck.h"
+#include "TradeCaptureReportAck.h"
+#include "AllocationReport.h"
+#include "AllocationReportAck.h"
+#include "ConfirmationAck.h"
+#include "SettlementInstructionRequest.h"
+#include "AssignmentReport.h"
+#include "CollateralRequest.h"
+#include "CollateralAssignment.h"
+#include "CollateralResponse.h"
+#include "CollateralReport.h"
+#include "CollateralInquiry.h"
+#include "NetworkCounterpartySystemStatusRequest.h"
+#include "NetworkCounterpartySystemStatusResponse.h"
+#include "UserRequest.h"
+#include "UserResponse.h"
+#include "CollateralInquiryAck.h"
+#include "ConfirmationRequest.h"
+#include "ContraryIntentionReport.h"
+#include "SecurityDefinitionUpdateReport.h"
+#include "SecurityListUpdateReport.h"
+#include "AdjustedPositionReport.h"
+#include "AllocationInstructionAlert.h"
+#include "ExecutionAcknowledgement.h"
+#include "TradingSessionList.h"
+#include "TradingSessionListRequest.h"
+
+namespace FIX50
+{
+  namespace
+  {
+    /// Deliver a genuine T to the const callback.
+    template <typename T>
+    void crackConst( MessageCracker& cracker, const FIX::Message& message, const FIX::SessionID& sessionID )
+    {
+      if( const T* typed = dynamic_cast<const T*>( &message ) )
+      {
+        cracker.onMessage( *typed, sessionID );
+        return;
+      }
+      // Viewing an object that is not a T as a T is undefined behaviour, so one copy is unavoidable here.
+      cracker.onMessage( T( message ), sessionID );
+    }
+
+    /// Deliver a genuine T to the mutable callback without copying the caller's content.
+    template <typename T>
+    void crackMutable( MessageCracker& cracker, FIX::Message& message, const FIX::SessionID& sessionID )
+    {
+      if( T* typed = dynamic_cast<T*>( &message ) )
+      {
+        cracker.onMessage( *typed, sessionID );
+        return;
+      }
+      // Lend the caller's content to an empty T and move it back on return and on exception.
+      T typed{ FIX::Message() };
+      FIX::Message& content = typed;
+      content = std::move( message );
+      try
+      {
+        cracker.onMessage( typed, sessionID );
+      }
+      catch( ... )
+      {
+        message = std::move( content );
+        throw;
+      }
+      message = std::move( content );
+    }
+  }
+
+  void MessageCracker::crack( const Message& message,
+                              const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<const FIX::Message&>( message ), sessionID );
+  }
+
+  void MessageCracker::crack( const FIX::Message& message,
+                              const FIX::SessionID& sessionID )
+  {
+    const std::string& msgTypeValue
+      = message.getHeader().getField( FIX::FIELD::MsgType );
+
+    if( msgTypeValue == "6" )
+      return crackConst<IOI>( *this, message, sessionID );
+    if( msgTypeValue == "7" )
+      return crackConst<Advertisement>( *this, message, sessionID );
+    if( msgTypeValue == "8" )
+      return crackConst<ExecutionReport>( *this, message, sessionID );
+    if( msgTypeValue == "9" )
+      return crackConst<OrderCancelReject>( *this, message, sessionID );
+    if( msgTypeValue == "B" )
+      return crackConst<News>( *this, message, sessionID );
+    if( msgTypeValue == "C" )
+      return crackConst<Email>( *this, message, sessionID );
+    if( msgTypeValue == "D" )
+      return crackConst<NewOrderSingle>( *this, message, sessionID );
+    if( msgTypeValue == "E" )
+      return crackConst<NewOrderList>( *this, message, sessionID );
+    if( msgTypeValue == "F" )
+      return crackConst<OrderCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "G" )
+      return crackConst<OrderCancelReplaceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "H" )
+      return crackConst<OrderStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "J" )
+      return crackConst<AllocationInstruction>( *this, message, sessionID );
+    if( msgTypeValue == "K" )
+      return crackConst<ListCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "L" )
+      return crackConst<ListExecute>( *this, message, sessionID );
+    if( msgTypeValue == "M" )
+      return crackConst<ListStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "N" )
+      return crackConst<ListStatus>( *this, message, sessionID );
+    if( msgTypeValue == "P" )
+      return crackConst<AllocationInstructionAck>( *this, message, sessionID );
+    if( msgTypeValue == "Q" )
+      return crackConst<DontKnowTrade>( *this, message, sessionID );
+    if( msgTypeValue == "R" )
+      return crackConst<QuoteRequest>( *this, message, sessionID );
+    if( msgTypeValue == "S" )
+      return crackConst<Quote>( *this, message, sessionID );
+    if( msgTypeValue == "T" )
+      return crackConst<SettlementInstructions>( *this, message, sessionID );
+    if( msgTypeValue == "V" )
+      return crackConst<MarketDataRequest>( *this, message, sessionID );
+    if( msgTypeValue == "W" )
+      return crackConst<MarketDataSnapshotFullRefresh>( *this, message, sessionID );
+    if( msgTypeValue == "X" )
+      return crackConst<MarketDataIncrementalRefresh>( *this, message, sessionID );
+    if( msgTypeValue == "Y" )
+      return crackConst<MarketDataRequestReject>( *this, message, sessionID );
+    if( msgTypeValue == "Z" )
+      return crackConst<QuoteCancel>( *this, message, sessionID );
+    if( msgTypeValue == "a" )
+      return crackConst<QuoteStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "b" )
+      return crackConst<MassQuoteAcknowledgement>( *this, message, sessionID );
+    if( msgTypeValue == "c" )
+      return crackConst<SecurityDefinitionRequest>( *this, message, sessionID );
+    if( msgTypeValue == "d" )
+      return crackConst<SecurityDefinition>( *this, message, sessionID );
+    if( msgTypeValue == "e" )
+      return crackConst<SecurityStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "f" )
+      return crackConst<SecurityStatus>( *this, message, sessionID );
+    if( msgTypeValue == "g" )
+      return crackConst<TradingSessionStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "h" )
+      return crackConst<TradingSessionStatus>( *this, message, sessionID );
+    if( msgTypeValue == "i" )
+      return crackConst<MassQuote>( *this, message, sessionID );
+    if( msgTypeValue == "j" )
+      return crackConst<BusinessMessageReject>( *this, message, sessionID );
+    if( msgTypeValue == "k" )
+      return crackConst<BidRequest>( *this, message, sessionID );
+    if( msgTypeValue == "l" )
+      return crackConst<BidResponse>( *this, message, sessionID );
+    if( msgTypeValue == "m" )
+      return crackConst<ListStrikePrice>( *this, message, sessionID );
+    if( msgTypeValue == "o" )
+      return crackConst<RegistrationInstructions>( *this, message, sessionID );
+    if( msgTypeValue == "p" )
+      return crackConst<RegistrationInstructionsResponse>( *this, message, sessionID );
+    if( msgTypeValue == "q" )
+      return crackConst<OrderMassCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "r" )
+      return crackConst<OrderMassCancelReport>( *this, message, sessionID );
+    if( msgTypeValue == "s" )
+      return crackConst<NewOrderCross>( *this, message, sessionID );
+    if( msgTypeValue == "t" )
+      return crackConst<CrossOrderCancelReplaceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "u" )
+      return crackConst<CrossOrderCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "v" )
+      return crackConst<SecurityTypeRequest>( *this, message, sessionID );
+    if( msgTypeValue == "w" )
+      return crackConst<SecurityTypes>( *this, message, sessionID );
+    if( msgTypeValue == "x" )
+      return crackConst<SecurityListRequest>( *this, message, sessionID );
+    if( msgTypeValue == "y" )
+      return crackConst<SecurityList>( *this, message, sessionID );
+    if( msgTypeValue == "z" )
+      return crackConst<DerivativeSecurityListRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AA" )
+      return crackConst<DerivativeSecurityList>( *this, message, sessionID );
+    if( msgTypeValue == "AB" )
+      return crackConst<NewOrderMultileg>( *this, message, sessionID );
+    if( msgTypeValue == "AC" )
+      return crackConst<MultilegOrderCancelReplace>( *this, message, sessionID );
+    if( msgTypeValue == "AD" )
+      return crackConst<TradeCaptureReportRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AE" )
+      return crackConst<TradeCaptureReport>( *this, message, sessionID );
+    if( msgTypeValue == "AF" )
+      return crackConst<OrderMassStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AG" )
+      return crackConst<QuoteRequestReject>( *this, message, sessionID );
+    if( msgTypeValue == "AH" )
+      return crackConst<RFQRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AI" )
+      return crackConst<QuoteStatusReport>( *this, message, sessionID );
+    if( msgTypeValue == "AJ" )
+      return crackConst<QuoteResponse>( *this, message, sessionID );
+    if( msgTypeValue == "AK" )
+      return crackConst<Confirmation>( *this, message, sessionID );
+    if( msgTypeValue == "AL" )
+      return crackConst<PositionMaintenanceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AM" )
+      return crackConst<PositionMaintenanceReport>( *this, message, sessionID );
+    if( msgTypeValue == "AN" )
+      return crackConst<RequestForPositions>( *this, message, sessionID );
+    if( msgTypeValue == "AO" )
+      return crackConst<RequestForPositionsAck>( *this, message, sessionID );
+    if( msgTypeValue == "AP" )
+      return crackConst<PositionReport>( *this, message, sessionID );
+    if( msgTypeValue == "AQ" )
+      return crackConst<TradeCaptureReportRequestAck>( *this, message, sessionID );
+    if( msgTypeValue == "AR" )
+      return crackConst<TradeCaptureReportAck>( *this, message, sessionID );
+    if( msgTypeValue == "AS" )
+      return crackConst<AllocationReport>( *this, message, sessionID );
+    if( msgTypeValue == "AT" )
+      return crackConst<AllocationReportAck>( *this, message, sessionID );
+    if( msgTypeValue == "AU" )
+      return crackConst<ConfirmationAck>( *this, message, sessionID );
+    if( msgTypeValue == "AV" )
+      return crackConst<SettlementInstructionRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AW" )
+      return crackConst<AssignmentReport>( *this, message, sessionID );
+    if( msgTypeValue == "AX" )
+      return crackConst<CollateralRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AY" )
+      return crackConst<CollateralAssignment>( *this, message, sessionID );
+    if( msgTypeValue == "AZ" )
+      return crackConst<CollateralResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BA" )
+      return crackConst<CollateralReport>( *this, message, sessionID );
+    if( msgTypeValue == "BB" )
+      return crackConst<CollateralInquiry>( *this, message, sessionID );
+    if( msgTypeValue == "BC" )
+      return crackConst<NetworkCounterpartySystemStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BD" )
+      return crackConst<NetworkCounterpartySystemStatusResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BE" )
+      return crackConst<UserRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BF" )
+      return crackConst<UserResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BG" )
+      return crackConst<CollateralInquiryAck>( *this, message, sessionID );
+    if( msgTypeValue == "BH" )
+      return crackConst<ConfirmationRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BO" )
+      return crackConst<ContraryIntentionReport>( *this, message, sessionID );
+    if( msgTypeValue == "BP" )
+      return crackConst<SecurityDefinitionUpdateReport>( *this, message, sessionID );
+    if( msgTypeValue == "BK" )
+      return crackConst<SecurityListUpdateReport>( *this, message, sessionID );
+    if( msgTypeValue == "BL" )
+      return crackConst<AdjustedPositionReport>( *this, message, sessionID );
+    if( msgTypeValue == "BM" )
+      return crackConst<AllocationInstructionAlert>( *this, message, sessionID );
+    if( msgTypeValue == "BN" )
+      return crackConst<ExecutionAcknowledgement>( *this, message, sessionID );
+    if( msgTypeValue == "BJ" )
+      return crackConst<TradingSessionList>( *this, message, sessionID );
+    if( msgTypeValue == "BI" )
+      return crackConst<TradingSessionListRequest>( *this, message, sessionID );
+
+    return crackConst<Message>( *this, message, sessionID );
+  }
+
+  void MessageCracker::crack( Message& message,
+                              const FIX::SessionID& sessionID )
+  {
+    crack( static_cast<FIX::Message&>( message ), sessionID );
+  }
+
+  void MessageCracker::crack( FIX::Message& message,
+                              const FIX::SessionID& sessionID )
+  {
+    const std::string& msgTypeValue
+      = message.getHeader().getField( FIX::FIELD::MsgType );
+
+    if( msgTypeValue == "6" )
+      return crackMutable<IOI>( *this, message, sessionID );
+    if( msgTypeValue == "7" )
+      return crackMutable<Advertisement>( *this, message, sessionID );
+    if( msgTypeValue == "8" )
+      return crackMutable<ExecutionReport>( *this, message, sessionID );
+    if( msgTypeValue == "9" )
+      return crackMutable<OrderCancelReject>( *this, message, sessionID );
+    if( msgTypeValue == "B" )
+      return crackMutable<News>( *this, message, sessionID );
+    if( msgTypeValue == "C" )
+      return crackMutable<Email>( *this, message, sessionID );
+    if( msgTypeValue == "D" )
+      return crackMutable<NewOrderSingle>( *this, message, sessionID );
+    if( msgTypeValue == "E" )
+      return crackMutable<NewOrderList>( *this, message, sessionID );
+    if( msgTypeValue == "F" )
+      return crackMutable<OrderCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "G" )
+      return crackMutable<OrderCancelReplaceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "H" )
+      return crackMutable<OrderStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "J" )
+      return crackMutable<AllocationInstruction>( *this, message, sessionID );
+    if( msgTypeValue == "K" )
+      return crackMutable<ListCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "L" )
+      return crackMutable<ListExecute>( *this, message, sessionID );
+    if( msgTypeValue == "M" )
+      return crackMutable<ListStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "N" )
+      return crackMutable<ListStatus>( *this, message, sessionID );
+    if( msgTypeValue == "P" )
+      return crackMutable<AllocationInstructionAck>( *this, message, sessionID );
+    if( msgTypeValue == "Q" )
+      return crackMutable<DontKnowTrade>( *this, message, sessionID );
+    if( msgTypeValue == "R" )
+      return crackMutable<QuoteRequest>( *this, message, sessionID );
+    if( msgTypeValue == "S" )
+      return crackMutable<Quote>( *this, message, sessionID );
+    if( msgTypeValue == "T" )
+      return crackMutable<SettlementInstructions>( *this, message, sessionID );
+    if( msgTypeValue == "V" )
+      return crackMutable<MarketDataRequest>( *this, message, sessionID );
+    if( msgTypeValue == "W" )
+      return crackMutable<MarketDataSnapshotFullRefresh>( *this, message, sessionID );
+    if( msgTypeValue == "X" )
+      return crackMutable<MarketDataIncrementalRefresh>( *this, message, sessionID );
+    if( msgTypeValue == "Y" )
+      return crackMutable<MarketDataRequestReject>( *this, message, sessionID );
+    if( msgTypeValue == "Z" )
+      return crackMutable<QuoteCancel>( *this, message, sessionID );
+    if( msgTypeValue == "a" )
+      return crackMutable<QuoteStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "b" )
+      return crackMutable<MassQuoteAcknowledgement>( *this, message, sessionID );
+    if( msgTypeValue == "c" )
+      return crackMutable<SecurityDefinitionRequest>( *this, message, sessionID );
+    if( msgTypeValue == "d" )
+      return crackMutable<SecurityDefinition>( *this, message, sessionID );
+    if( msgTypeValue == "e" )
+      return crackMutable<SecurityStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "f" )
+      return crackMutable<SecurityStatus>( *this, message, sessionID );
+    if( msgTypeValue == "g" )
+      return crackMutable<TradingSessionStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "h" )
+      return crackMutable<TradingSessionStatus>( *this, message, sessionID );
+    if( msgTypeValue == "i" )
+      return crackMutable<MassQuote>( *this, message, sessionID );
+    if( msgTypeValue == "j" )
+      return crackMutable<BusinessMessageReject>( *this, message, sessionID );
+    if( msgTypeValue == "k" )
+      return crackMutable<BidRequest>( *this, message, sessionID );
+    if( msgTypeValue == "l" )
+      return crackMutable<BidResponse>( *this, message, sessionID );
+    if( msgTypeValue == "m" )
+      return crackMutable<ListStrikePrice>( *this, message, sessionID );
+    if( msgTypeValue == "o" )
+      return crackMutable<RegistrationInstructions>( *this, message, sessionID );
+    if( msgTypeValue == "p" )
+      return crackMutable<RegistrationInstructionsResponse>( *this, message, sessionID );
+    if( msgTypeValue == "q" )
+      return crackMutable<OrderMassCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "r" )
+      return crackMutable<OrderMassCancelReport>( *this, message, sessionID );
+    if( msgTypeValue == "s" )
+      return crackMutable<NewOrderCross>( *this, message, sessionID );
+    if( msgTypeValue == "t" )
+      return crackMutable<CrossOrderCancelReplaceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "u" )
+      return crackMutable<CrossOrderCancelRequest>( *this, message, sessionID );
+    if( msgTypeValue == "v" )
+      return crackMutable<SecurityTypeRequest>( *this, message, sessionID );
+    if( msgTypeValue == "w" )
+      return crackMutable<SecurityTypes>( *this, message, sessionID );
+    if( msgTypeValue == "x" )
+      return crackMutable<SecurityListRequest>( *this, message, sessionID );
+    if( msgTypeValue == "y" )
+      return crackMutable<SecurityList>( *this, message, sessionID );
+    if( msgTypeValue == "z" )
+      return crackMutable<DerivativeSecurityListRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AA" )
+      return crackMutable<DerivativeSecurityList>( *this, message, sessionID );
+    if( msgTypeValue == "AB" )
+      return crackMutable<NewOrderMultileg>( *this, message, sessionID );
+    if( msgTypeValue == "AC" )
+      return crackMutable<MultilegOrderCancelReplace>( *this, message, sessionID );
+    if( msgTypeValue == "AD" )
+      return crackMutable<TradeCaptureReportRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AE" )
+      return crackMutable<TradeCaptureReport>( *this, message, sessionID );
+    if( msgTypeValue == "AF" )
+      return crackMutable<OrderMassStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AG" )
+      return crackMutable<QuoteRequestReject>( *this, message, sessionID );
+    if( msgTypeValue == "AH" )
+      return crackMutable<RFQRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AI" )
+      return crackMutable<QuoteStatusReport>( *this, message, sessionID );
+    if( msgTypeValue == "AJ" )
+      return crackMutable<QuoteResponse>( *this, message, sessionID );
+    if( msgTypeValue == "AK" )
+      return crackMutable<Confirmation>( *this, message, sessionID );
+    if( msgTypeValue == "AL" )
+      return crackMutable<PositionMaintenanceRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AM" )
+      return crackMutable<PositionMaintenanceReport>( *this, message, sessionID );
+    if( msgTypeValue == "AN" )
+      return crackMutable<RequestForPositions>( *this, message, sessionID );
+    if( msgTypeValue == "AO" )
+      return crackMutable<RequestForPositionsAck>( *this, message, sessionID );
+    if( msgTypeValue == "AP" )
+      return crackMutable<PositionReport>( *this, message, sessionID );
+    if( msgTypeValue == "AQ" )
+      return crackMutable<TradeCaptureReportRequestAck>( *this, message, sessionID );
+    if( msgTypeValue == "AR" )
+      return crackMutable<TradeCaptureReportAck>( *this, message, sessionID );
+    if( msgTypeValue == "AS" )
+      return crackMutable<AllocationReport>( *this, message, sessionID );
+    if( msgTypeValue == "AT" )
+      return crackMutable<AllocationReportAck>( *this, message, sessionID );
+    if( msgTypeValue == "AU" )
+      return crackMutable<ConfirmationAck>( *this, message, sessionID );
+    if( msgTypeValue == "AV" )
+      return crackMutable<SettlementInstructionRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AW" )
+      return crackMutable<AssignmentReport>( *this, message, sessionID );
+    if( msgTypeValue == "AX" )
+      return crackMutable<CollateralRequest>( *this, message, sessionID );
+    if( msgTypeValue == "AY" )
+      return crackMutable<CollateralAssignment>( *this, message, sessionID );
+    if( msgTypeValue == "AZ" )
+      return crackMutable<CollateralResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BA" )
+      return crackMutable<CollateralReport>( *this, message, sessionID );
+    if( msgTypeValue == "BB" )
+      return crackMutable<CollateralInquiry>( *this, message, sessionID );
+    if( msgTypeValue == "BC" )
+      return crackMutable<NetworkCounterpartySystemStatusRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BD" )
+      return crackMutable<NetworkCounterpartySystemStatusResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BE" )
+      return crackMutable<UserRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BF" )
+      return crackMutable<UserResponse>( *this, message, sessionID );
+    if( msgTypeValue == "BG" )
+      return crackMutable<CollateralInquiryAck>( *this, message, sessionID );
+    if( msgTypeValue == "BH" )
+      return crackMutable<ConfirmationRequest>( *this, message, sessionID );
+    if( msgTypeValue == "BO" )
+      return crackMutable<ContraryIntentionReport>( *this, message, sessionID );
+    if( msgTypeValue == "BP" )
+      return crackMutable<SecurityDefinitionUpdateReport>( *this, message, sessionID );
+    if( msgTypeValue == "BK" )
+      return crackMutable<SecurityListUpdateReport>( *this, message, sessionID );
+    if( msgTypeValue == "BL" )
+      return crackMutable<AdjustedPositionReport>( *this, message, sessionID );
+    if( msgTypeValue == "BM" )
+      return crackMutable<AllocationInstructionAlert>( *this, message, sessionID );
+    if( msgTypeValue == "BN" )
+      return crackMutable<ExecutionAcknowledgement>( *this, message, sessionID );
+    if( msgTypeValue == "BJ" )
+      return crackMutable<TradingSessionList>( *this, message, sessionID );
+    if( msgTypeValue == "BI" )
+      return crackMutable<TradingSessionListRequest>( *this, message, sessionID );
+
+    return crackMutable<Message>( *this, message, sessionID );
+  }
+}

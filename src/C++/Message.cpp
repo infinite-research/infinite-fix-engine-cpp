@@ -610,15 +610,19 @@ FIX::FieldBase Message::extractField(
 
     try {
       const FieldBase &fieldLength = location->reverse_find(lenField);
-      soh = valueStart + IntConvertor::convert(fieldLength.getString());
+      int dataLength = 0;
+      if (!IntConvertor::convert(fieldLength.getString(), dataLength) || dataLength < 0
+          || static_cast<std::size_t>(dataLength) >= static_cast<std::size_t>(std::distance(valueStart, strEnd))) {
+        throw InvalidMessage("Invalid data length for field " + IntConvertor::convert(field));
+      }
+      soh = valueStart + dataLength;
+      if (*soh != '\001') {
+        throw InvalidMessage("SOH not found at declared end of data field " + IntConvertor::convert(field));
+      }
     } catch (FieldNotFound &) {
       throw InvalidMessage(
           std::string("Data length field ") + IntConvertor::convert(lenField)
           + std::string(" was not found for data field ") + IntConvertor::convert(field));
-    } catch (FieldConvertError &e) {
-      throw InvalidMessage(
-          std::string("Unable to determine SOH for data field ") + IntConvertor::convert(field) + std::string(": ")
-          + e.what());
     }
   }
 

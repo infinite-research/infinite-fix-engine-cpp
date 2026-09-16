@@ -119,11 +119,11 @@ void FileLog::init(std::string path, std::string backupPath, const std::string &
   m_messagesFileName = m_fullPrefix + "messages.current.log";
   m_eventFileName = m_fullPrefix + "event.current.log";
 
-  m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::app);
+  m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::app | std::ios::binary);
   if (!m_messages.is_open()) {
     throw ConfigError("Could not open messages file: " + m_messagesFileName);
   }
-  m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::app);
+  m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::app | std::ios::binary);
   if (!m_event.is_open()) {
     throw ConfigError("Could not open event file: " + m_eventFileName);
   }
@@ -135,14 +135,16 @@ FileLog::~FileLog() {
 }
 
 void FileLog::clear() {
+  Locker locker(m_mutex);
   m_messages.close();
   m_event.close();
 
-  m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::trunc);
-  m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::trunc);
+  m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
+  m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
 }
 
 void FileLog::backup() {
+  Locker locker(m_mutex);
   m_messages.close();
   m_event.close();
 
@@ -159,8 +161,8 @@ void FileLog::backup() {
     if (messagesLogFile == NULL && eventLogFile == NULL) {
       file_rename(m_messagesFileName.c_str(), messagesFileName.str().c_str());
       file_rename(m_eventFileName.c_str(), eventFileName.str().c_str());
-      m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::trunc);
-      m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::trunc);
+      m_messages.open(m_messagesFileName.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
+      m_event.open(m_eventFileName.c_str(), std::ios::out | std::ios::trunc | std::ios::binary);
       return;
     }
 
@@ -171,6 +173,42 @@ void FileLog::backup() {
       file_fclose(eventLogFile);
     }
   }
+}
+
+void FileLog::onIncoming(const std::string &value) {
+  Locker locker(m_mutex);
+  write(m_messages, value);
+}
+
+void FileLog::onOutgoing(const std::string &value) {
+  Locker locker(m_mutex);
+  write(m_messages, value);
+}
+
+void FileLog::onEvent(const std::string &value) {
+  Locker locker(m_mutex);
+  write(m_event, value);
+}
+
+void FileLog::write(std::ofstream &stream, const std::string &value) {
+  stream << UtcTimeStampConvertor::convert(UtcTimeStamp::now(), 9) << " : ";
+  for (char character : value) {
+    switch (character) {
+    case '\\':
+      stream << "\\\\";
+      break;
+    case '\r':
+      stream << "\\r";
+      break;
+    case '\n':
+      stream << "\\n";
+      break;
+    default:
+      stream.put(character);
+    }
+  }
+  stream.put('\n');
+  stream.flush();
 }
 
 } // namespace FIX

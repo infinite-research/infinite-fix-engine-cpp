@@ -123,6 +123,7 @@
 #include "Settings.h"
 #include "ThreadedSSLSocketInitiator.h"
 #include "UtilitySSL.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 
@@ -199,6 +200,13 @@ void ThreadedSSLSocketInitiator::onInitialize(const SessionSettings &settings) E
   }
 
   ssl_init();
+  auto cleanup = sg::make_scope_guard([&]() {
+    if (!m_sslInit) {
+      SSL_CTX_free(m_ctx);
+      m_ctx = nullptr;
+      ssl_term();
+    }
+  });
 
   std::string errStr;
 
@@ -209,12 +217,10 @@ void ThreadedSSLSocketInitiator::onInitialize(const SessionSettings &settings) E
 
   if (m_cert && m_key) {
     if (SSL_CTX_use_certificate(m_ctx, m_cert) < 1) {
-      ssl_term();
       throw RuntimeError("Failed to set certificate");
     }
 
     if (SSL_CTX_use_RSAPrivateKey(m_ctx, m_key) <= 0) {
-      ssl_term();
       throw RuntimeError("Failed to set key");
     }
   } else if (!loadSSLCert(
@@ -225,13 +231,16 @@ void ThreadedSSLSocketInitiator::onInitialize(const SessionSettings &settings) E
                  ThreadedSSLSocketInitiator::passwordHandleCB,
                  this,
                  errStr)) {
-    ssl_term();
     throw RuntimeError(errStr);
   }
 
   int verifyLevel;
   if (!loadCAInfo(m_ctx, false, settings, getLog(), errStr, verifyLevel)) {
-    ssl_term();
+    throw RuntimeError(errStr);
+  }
+
+  loadCRLInfo(m_ctx, settings, getLog(), errStr);
+  if (!errStr.empty()) {
     throw RuntimeError(errStr);
   }
 
@@ -330,7 +339,12 @@ void ThreadedSSLSocketInitiator::doConnect(const SessionID &s, const Dictionary 
     SSL_set_bio(ssl, sbio, sbio);
 
     // Set SNI hostname for TLS connections
-    ssl_set_sni_hostname(ssl, host.address, log);
+    if (!ssl_set_peer_name(ssl, host.address, log)) {
+      log->onEvent("Unable to configure TLS peer name verification");
+      SSL_free(ssl);
+      setDisconnected(s);
+      return;
+    }
 
     ThreadedSSLSocketConnection *pConnection
         = new ThreadedSSLSocketConnection(s, socket, ssl, host.address, host.port, getLog());
@@ -396,7 +410,7 @@ THREAD_PROC ThreadedSSLSocketInitiator::socketThread(void *p) {
 
   // Do the SSL handshake.
   int rc = SSL_connect(pConnection->sslObject());
-  if (rc <= 0) {
+  if (rc <= 0 || SSL_get_verify_result(pConnection->sslObject()) != X509_V_OK) {
     int err = SSL_get_error(pConnection->sslObject(), rc);
     pInitiator->getLog()->onEvent("SSL_connect failed with SSL error " + IntConvertor::convert(err));
     pConnection->disconnect();
@@ -407,6 +421,7 @@ THREAD_PROC ThreadedSSLSocketInitiator::socketThread(void *p) {
     return 0;
   }
 
+  pInitiator->getSession(sessionID, *pConnection);
   pInitiator->setConnected(sessionID);
   pInitiator->getLog()->onEvent("Connection succeeded");
 

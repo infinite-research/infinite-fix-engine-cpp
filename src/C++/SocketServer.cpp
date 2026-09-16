@@ -26,6 +26,7 @@
 #include "Exceptions.h"
 #include "SocketServer.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 #ifndef _MSC_VER
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -35,6 +36,13 @@
 #include <exception>
 
 namespace FIX {
+namespace {
+struct ServerDispatch {
+  const SocketServer *server;
+  ServerDispatch *previous;
+};
+thread_local ServerDispatch *activeDispatch = nullptr;
+} // namespace
 /// Handles events from SocketMonitor for server connections.
 class ServerWrapper : public SocketMonitor::Strategy {
 public:
@@ -79,14 +87,49 @@ SocketServer::SocketServer(int timeout)
 
 socket_handle SocketServer::add(int port, bool reuse, bool noDelay, int sendBufSize, int rcvBufSize)
     EXCEPT(SocketException &) {
-  if (m_portToInfo.find(port) != m_portToInfo.end()) {
-    return m_portToInfo[port].m_socket;
+  return add("", port, reuse, noDelay, sendBufSize, rcvBufSize);
+}
+
+socket_handle SocketServer::add(
+    const std::string &value,
+    int port,
+    bool reuse,
+    bool noDelay,
+    int sendBufSize,
+    int rcvBufSize) EXCEPT(SocketException &) {
+  const unsigned long requested = value.empty() ? INADDR_ANY : inet_addr(value.c_str());
+  if (requested == INADDR_NONE) {
+    throw SocketException("Invalid numeric IPv4 accept address: " + value);
   }
 
-  socket_handle socket = socket_createAcceptor(port, reuse);
+  const auto found = m_portToInfo.find(port);
+  if (found != m_portToInfo.end()) {
+    sockaddr_in bound{};
+    socklen_t size = sizeof(bound);
+    if (getsockname(found->second.m_socket, reinterpret_cast<sockaddr *>(&bound), &size) != 0) {
+      throw SocketException();
+    }
+    if (bound.sin_addr.s_addr != requested) {
+      throw SocketException("Sessions sharing a port must use the same accept address");
+    }
+    return found->second.m_socket;
+  }
+
+  socket_handle socket = socket_createAcceptor(value, port, reuse);
   if (socket == INVALID_SOCKET_HANDLE) {
     throw SocketException();
   }
+  bool socketMapped = false;
+  bool portMapped = false;
+  auto cleanup = sg::make_scope_guard([&]() {
+    if (portMapped) {
+      m_portToInfo.erase(port);
+    }
+    if (socketMapped) {
+      m_socketToInfo.erase(socket);
+    }
+    socket_close(socket);
+  });
   if (noDelay) {
     socket_setsockopt(socket, TCP_NODELAY);
   }
@@ -96,11 +139,19 @@ socket_handle SocketServer::add(int port, bool reuse, bool noDelay, int sendBufS
   if (rcvBufSize) {
     socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
   }
-  m_monitor.addRead(socket);
-
   SocketInfo info(socket, port, noDelay, sendBufSize, rcvBufSize);
-  m_socketToInfo[socket] = info;
-  m_portToInfo[port] = info;
+  socketMapped = m_socketToInfo.emplace(socket, info).second;
+  if (!socketMapped) {
+    throw SocketException("Accept socket is already registered");
+  }
+  portMapped = m_portToInfo.emplace(port, info).second;
+  if (!portMapped) {
+    throw SocketException("Accept port is already registered");
+  }
+  if (!m_monitor.addRead(socket)) {
+    throw SocketException("Unable to monitor accept socket");
+  }
+  cleanup.dismiss();
   return socket;
 }
 
@@ -125,13 +176,16 @@ socket_handle SocketServer::accept(socket_handle socket) {
 
 void SocketServer::close() {
   for (const SocketToInfo::value_type &socketWithInfo : m_socketToInfo) {
-    socket_handle socket = socketWithInfo.first;
-    socket_close(socket);
-    socket_invalidate(socket);
+    m_monitor.drop(socketWithInfo.first, false);
   }
+  m_socketToInfo.clear();
+  m_portToInfo.clear();
 }
 
 bool SocketServer::block(Strategy &strategy, bool poll, double timeout) {
+  if (m_socketToInfo.empty()) {
+    return false;
+  }
   std::set<socket_handle> sockets;
   for (const SocketToInfo::value_type &socketWithInfo : m_socketToInfo) {
     if (!socket_isValid(socketWithInfo.first)) {
@@ -141,8 +195,20 @@ bool SocketServer::block(Strategy &strategy, bool poll, double timeout) {
   }
 
   ServerWrapper wrapper(sockets, *this, strategy);
+  ServerDispatch dispatch{this, activeDispatch};
+  activeDispatch = &dispatch;
+  auto guard = sg::make_scope_guard([&]() { activeDispatch = dispatch.previous; });
   m_monitor.block(wrapper, poll, timeout);
   return true;
+}
+
+bool SocketServer::isDispatching() const {
+  for (auto dispatch = activeDispatch; dispatch; dispatch = dispatch->previous) {
+    if (dispatch->server == this) {
+      return true;
+    }
+  }
+  return false;
 }
 
 int SocketServer::socketToPort(socket_handle socket) {

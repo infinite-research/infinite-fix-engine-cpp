@@ -150,7 +150,7 @@ SSLSocketConnection::SSLSocketConnection(
     : m_socket(socket),
       m_ssl(ssl),
       m_sendLength(0),
-      m_pSession(initiator.getSession(sessionID, *this)),
+      m_pSession(initiator.getSession(sessionID)),
       m_pMonitor(pMonitor) {
 #ifdef _MSC_VER
   FD_ZERO(&m_fds);
@@ -164,7 +164,9 @@ SSLSocketConnection::~SSLSocketConnection() {
     Session::unregisterSession(m_pSession->getSessionID());
   }
 
-  ssl_socket_close(m_socket, m_ssl);
+  if (!m_pMonitor || m_pMonitor->release(m_socket)) {
+    ssl_socket_close(m_socket, m_ssl);
+  }
 
   SSL_free(m_ssl);
 }
@@ -258,6 +260,10 @@ bool SSLSocketConnection::read(SocketConnector &connector) {
   try {
     readFromSocket();
     readMessages(connector.getMonitor());
+  } catch (MessageParseError &e) {
+    m_pSession->getLog()->onEvent(e.what());
+    connector.getMonitor().drop(m_socket);
+    return false;
   } catch (SocketRecvFailed &e) {
     m_pSession->getLog()->onEvent(e.what());
     return false;
@@ -292,32 +298,36 @@ bool SSLSocketConnection::read(SSLSocketAcceptor &acceptor, SocketServer &server
         }
       }
 
-      m_pSession = Session::lookupSession(message, true);
-      if (!isValidSession()) {
-        m_pSession = 0;
+      Session *candidate = Session::lookupSession(message, true);
+      if (!candidate || identifyType(message) != MsgType_Logon || m_sessions.count(candidate->getSessionID()) == 0
+          || Session::isSessionRegistered(candidate->getSessionID())
+          || !ssl_peer_matches(m_ssl, candidate->getCertificateAcceptedPeerName())
+          || (!candidate->getAllowedRemoteAddresses().empty()
+              && !candidate->inAllowedRemoteAddresses(socket_peername(m_socket)))) {
         if (acceptor.getLog()) {
-          acceptor.getLog()->onEvent("Session not found for incoming message: " + message);
-          acceptor.getLog()->onIncoming(message);
+          acceptor.getLog()->onEvent("Incoming connection was not admitted");
         }
-      }
-      if (m_pSession) {
-        m_pSession = acceptor.getSession(message, *this);
-      }
-      if (m_pSession) {
-        m_pSession->next(message, UtcTimeStamp::now());
-      }
-      if (!m_pSession) {
         server.getMonitor().drop(m_socket);
         return false;
       }
+      if (!candidate->acceptLogon(message, *this)) {
+        server.getMonitor().drop(m_socket);
+        return false;
+      }
+      m_pSession = candidate;
 
-      Session::registerSession(m_pSession->getSessionID());
       return true;
     } else {
       readFromSocket();
       readMessages(server.getMonitor());
       return true;
     }
+  } catch (MessageParseError &e) {
+    Log *log = m_pSession ? m_pSession->getLog() : acceptor.getLog();
+    if (log) {
+      log->onEvent(redactLogonCredentials(e.what()));
+    }
+    server.getMonitor().drop(m_socket);
   } catch (SocketRecvFailed &e) {
     if (m_pSession) {
       m_pSession->getLog()->onEvent(e.what());
@@ -327,17 +337,6 @@ bool SSLSocketConnection::read(SSLSocketAcceptor &acceptor, SocketServer &server
     server.getMonitor().drop(m_socket);
   }
   return false;
-}
-
-bool SSLSocketConnection::isValidSession() {
-  if (m_pSession == 0) {
-    return false;
-  }
-  SessionID sessionID = m_pSession->getSessionID();
-  if (Session::isSessionRegistered(sessionID)) {
-    return false;
-  }
-  return !(m_sessions.find(sessionID) == m_sessions.end());
 }
 
 void SSLSocketConnection::readFromSocket() EXCEPT(SocketRecvFailed) {
@@ -399,12 +398,7 @@ bool SSLSocketConnection::didReadFromSocketRequestToWrite() const {
   return m_readFromSocketNeedsToWriteData;
 }
 
-bool SSLSocketConnection::readMessage(std::string &message) {
-  try {
-    return m_parser.readFixMessage(message);
-  } catch (MessageParseError &) {}
-  return true;
-}
+bool SSLSocketConnection::readMessage(std::string &message) { return m_parser.readFixMessage(message); }
 
 void SSLSocketConnection::readMessages(SocketMonitor &socketMonitor) {
   if (!m_pSession) {
@@ -415,9 +409,13 @@ void SSLSocketConnection::readMessages(SocketMonitor &socketMonitor) {
   while (readMessage(message)) {
     try {
       m_pSession->next(message, UtcTimeStamp::now());
+      if (!m_pSession->receivedLogon()) {
+        return;
+      }
     } catch (InvalidMessage &) {
       if (!m_pSession->isLoggedOn()) {
         socketMonitor.drop(m_socket);
+        return;
       }
     }
   }

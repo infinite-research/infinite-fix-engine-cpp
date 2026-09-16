@@ -363,7 +363,6 @@ namespace FIX50
         };
       };
       FIELD_SET(*this, FIX::LegRefID);
-      FIELD_SET(*this, FIX::LegPrice);
       FIELD_SET(*this, FIX::LegSettlType);
       FIELD_SET(*this, FIX::LegSettlDate);
       FIELD_SET(*this, FIX::LegLastPx);

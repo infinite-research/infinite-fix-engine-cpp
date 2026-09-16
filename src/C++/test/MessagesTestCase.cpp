@@ -299,6 +299,84 @@ TEST_CASE("MessageTests") {
     CHECK_THROWS_AS(object.setString(str, true, &dataDictionary), InvalidMessage);
   }
 
+  SECTION("setStringWithDataFieldBoundaryLengths") {
+    const DataDictionary sessionDictionary(FIX::TestSettings::pathForSpec("FIX42"));
+    const auto rawLogon = [](const std::string &length, const std::string &data) {
+      FIX42::Logon message(EncryptMethod(0), HeartBtInt(30));
+      RawDataLength dataLength;
+      dataLength.setString(length);
+      RawData rawData;
+      rawData.setValue(data);
+      message.set(dataLength);
+      message.set(rawData);
+      return message.toString();
+    };
+    const auto signedLogon = [](const std::string &length, const std::string &data) {
+      FIX42::Logon message(EncryptMethod(0), HeartBtInt(30));
+      SignatureLength dataLength;
+      dataLength.setString(length);
+      Signature signature;
+      signature.setValue(data);
+      message.getTrailer().setField(dataLength);
+      message.getTrailer().setField(signature);
+      return message.toString();
+    };
+
+    for (const std::string &length : {"-1", "x", "2147483647"}) {
+      INFO(length);
+      CHECK_THROWS_AS(FIX::Message(rawLogon(length, "a"), sessionDictionary, false), InvalidMessage);
+      CHECK_THROWS_AS(FIX::Message(signedLogon(length, "a"), sessionDictionary, false), InvalidMessage);
+    }
+
+    const std::string truncatedData("a\001b", 3);
+    std::string rawDataWithoutTerminator = rawLogon("4", truncatedData);
+    rawDataWithoutTerminator.resize(rawDataWithoutTerminator.find("96=") + 3 + truncatedData.size());
+    CHECK_THROWS_AS(FIX::Message(rawDataWithoutTerminator, sessionDictionary, false), InvalidMessage);
+
+    std::string signatureWithoutTerminator = signedLogon("4", truncatedData);
+    signatureWithoutTerminator.resize(signatureWithoutTerminator.find("89=") + 3 + truncatedData.size());
+    CHECK_THROWS_AS(FIX::Message(signatureWithoutTerminator, sessionDictionary, false), InvalidMessage);
+
+    rawDataWithoutTerminator = rawLogon("3", truncatedData);
+    rawDataWithoutTerminator.resize(rawDataWithoutTerminator.find("96=") + 3 + truncatedData.size());
+    CHECK_THROWS_WITH(
+        FIX::Message(rawDataWithoutTerminator, sessionDictionary, false),
+        Catch::Matchers::ContainsSubstring("Invalid data length for field 96"));
+
+    signatureWithoutTerminator = signedLogon("3", truncatedData);
+    signatureWithoutTerminator.resize(signatureWithoutTerminator.find("89=") + 3 + truncatedData.size());
+    CHECK_THROWS_WITH(
+        FIX::Message(signatureWithoutTerminator, sessionDictionary, false),
+        Catch::Matchers::ContainsSubstring("Invalid data length for field 89"));
+
+    std::string wrongRawDataBoundary = rawLogon("3", "abc");
+    wrongRawDataBoundary[wrongRawDataBoundary.find("96=abc") + 6] = 'x';
+    CHECK_THROWS_AS(FIX::Message(wrongRawDataBoundary, sessionDictionary, false), InvalidMessage);
+
+    std::string wrongSignatureBoundary = signedLogon("3", "abc");
+    wrongSignatureBoundary[wrongSignatureBoundary.find("89=abc") + 6] = 'x';
+    CHECK_THROWS_AS(FIX::Message(wrongSignatureBoundary, sessionDictionary, false), InvalidMessage);
+
+    const std::string binaryData("a\001b\000c", 5);
+    FIX::Message parsedRawData(rawLogon("5", binaryData), sessionDictionary, true);
+    RawData rawData;
+    parsedRawData.getField(rawData);
+    CHECK(rawData.getValue() == binaryData);
+
+    FIX::Message parsedZeroLengthData(rawLogon("0", ""), sessionDictionary, true);
+    parsedZeroLengthData.getField(rawData);
+    CHECK(rawData.getValue().empty());
+
+    FIX::Message parsedSignature(signedLogon("5", binaryData), sessionDictionary, true);
+    Signature signature;
+    parsedSignature.getTrailer().getField(signature);
+    CHECK(signature.getValue() == binaryData);
+
+    const std::string groupedData = "8=FIX.4.2\0019=54\00135=i\001117=1\001296=1\001302=A\001"
+                                    "311=DELL\001364=10\001365=DELL\001COMP\001\00110=152\001";
+    CHECK_NOTHROW(FIX::Message(groupedData, sessionDictionary, true));
+  }
+
   SECTION("copy") {
     FIX::Message object;
     FIX::MDReqID mdReqID("MARKETDATAID");

@@ -27,6 +27,7 @@
 #include "quickfix/Session.h"
 
 #include "quickfix/fix42/ExecutionReport.h"
+#include "quickfix/fix42/OrderCancelReject.h"
 
 void Application::onLogon(const FIX::SessionID &sessionID) {}
 
@@ -37,9 +38,9 @@ void Application::fromApp(const FIX::Message &message, const FIX::SessionID &ses
   crack(message, sessionID);
 }
 
-void Application::onMessage(const FIX42::NewOrderSingle &message, const FIX::SessionID &) {
-  FIX::SenderCompID senderCompID;
-  FIX::TargetCompID targetCompID;
+void Application::onMessage(const FIX42::NewOrderSingle &message, const FIX::SessionID &sessionID) {
+  const FIX::SenderCompID senderCompID(sessionID.getTargetCompID().getValue());
+  const FIX::TargetCompID targetCompID(sessionID.getSenderCompID().getValue());
   FIX::ClOrdID clOrdID;
   FIX::Symbol symbol;
   FIX::Side side;
@@ -48,8 +49,6 @@ void Application::onMessage(const FIX42::NewOrderSingle &message, const FIX::Ses
   FIX::OrderQty orderQty;
   FIX::TimeInForce timeInForce(FIX::TimeInForce_DAY);
 
-  message.getHeader().get(senderCompID);
-  message.getHeader().get(targetCompID);
   message.get(clOrdID);
   message.get(symbol);
   message.get(side);
@@ -65,7 +64,15 @@ void Application::onMessage(const FIX42::NewOrderSingle &message, const FIX::Ses
       throw std::logic_error("Unsupported TIF, use Day");
     }
 
-    Order order(clOrdID, symbol, senderCompID, targetCompID, convert(side), convert(ordType), price, (long)orderQty);
+    Order order(
+        clOrdID,
+        symbol,
+        senderCompID,
+        targetCompID,
+        convert(side),
+        convert(ordType),
+        price.getValue(),
+        orderQty.getValue());
 
     processOrder(order);
   } catch (std::exception &e) {
@@ -73,18 +80,22 @@ void Application::onMessage(const FIX42::NewOrderSingle &message, const FIX::Ses
   }
 }
 
-void Application::onMessage(const FIX42::OrderCancelRequest &message, const FIX::SessionID &) {
+void Application::onMessage(const FIX42::OrderCancelRequest &message, const FIX::SessionID &sessionID) {
   FIX::OrigClOrdID origClOrdID;
+  FIX::ClOrdID clOrdID;
   FIX::Symbol symbol;
   FIX::Side side;
 
   message.get(origClOrdID);
+  message.get(clOrdID);
   message.get(symbol);
   message.get(side);
 
   try {
-    processCancel(origClOrdID, symbol, convert(side));
-  } catch (std::exception &) {}
+    processCancel(origClOrdID, symbol, convert(side), sessionID.getTargetCompID().getValue());
+  } catch (const std::exception &) {
+    rejectCancel(sessionID, clOrdID, origClOrdID);
+  }
 }
 
 void Application::onMessage(const FIX42::MarketDataRequest &message, const FIX::SessionID &) {
@@ -172,6 +183,24 @@ void Application::rejectOrder(
   } catch (FIX::SessionNotFound &) {}
 }
 
+void Application::rejectCancel(
+    const FIX::SessionID &sessionID,
+    const FIX::ClOrdID &clOrdID,
+    const FIX::OrigClOrdID &origClOrdID) {
+  FIX42::OrderCancelReject reject(
+      FIX::OrderID(origClOrdID.getValue()),
+      clOrdID,
+      origClOrdID,
+      FIX::OrdStatus(FIX::OrdStatus_REJECTED),
+      FIX::CxlRejResponseTo(FIX::CxlRejResponseTo_ORDER_CANCEL_REQUEST));
+  reject.set(FIX::CxlRejReason(FIX::CxlRejReason_UNKNOWN_ORDER));
+  reject.set(FIX::Text("Unknown order"));
+
+  try {
+    FIX::Session::sendToTarget(reject, sessionID.getSenderCompID(), sessionID.getTargetCompID());
+  } catch (FIX::SessionNotFound &) {}
+}
+
 void Application::processOrder(const Order &order) {
   if (m_orderMatcher.insert(order)) {
     acceptOrder(order);
@@ -188,8 +217,12 @@ void Application::processOrder(const Order &order) {
   }
 }
 
-void Application::processCancel(const std::string &id, const std::string &symbol, Order::Side side) {
-  Order &order = m_orderMatcher.find(symbol, side, id);
+void Application::processCancel(
+    const std::string &id,
+    const std::string &symbol,
+    Order::Side side,
+    const std::string &owner) {
+  Order &order = m_orderMatcher.find(symbol, side, owner, id);
   order.cancel();
   cancelOrder(order);
   m_orderMatcher.erase(order);

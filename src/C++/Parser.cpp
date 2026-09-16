@@ -29,6 +29,15 @@
 #include <algorithm>
 
 namespace FIX {
+void Parser::addToStream(const char *str, size_t len) EXCEPT(MessageParseError) {
+  // ponytail: 16 MiB bounds unauthenticated buffering; add a transport setting only if production frames need it.
+  if (m_buffer.size() > MAX_BUFFER_BYTES || len > MAX_BUFFER_BYTES - m_buffer.size()) {
+    m_buffer.clear();
+    throw MessageParseError("FIX frame exceeds 16 MiB");
+  }
+  m_buffer.append(str, len);
+}
+
 bool Parser::extractLength(int &length, std::string::size_type &pos, const std::string &buffer)
     EXCEPT(MessageParseError) {
   if (!buffer.size()) {
@@ -57,53 +66,56 @@ bool Parser::extractLength(int &length, std::string::size_type &pos, const std::
   }
 
   pos = endPos + 1;
+  // Leave room for the checksum field (10=ddd<SOH>) before adding the body length.
+  if (pos > MAX_BUFFER_BYTES - 7 || static_cast<std::size_t>(length) > MAX_BUFFER_BYTES - 7 - pos) {
+    throw MessageParseError("FIX frame exceeds 16 MiB");
+  }
   return true;
 }
 
 bool Parser::readFixMessage(std::string &str) EXCEPT(MessageParseError) {
-  std::string::size_type pos = 0;
-
-  if (m_buffer.length() < 2) {
-    return false;
-  }
-  pos = m_buffer.find("8=");
-  if (pos == std::string::npos) {
-    return false;
-  }
-  m_buffer.erase(0, pos);
-
-  int length = 0;
-
   try {
-    if (extractLength(length, pos, m_buffer)) {
+    do {
+      if (m_buffer.length() < 2) {
+        break;
+      }
+      std::string::size_type pos = m_buffer.find("8=");
+      if (pos == std::string::npos) {
+        break;
+      }
+      m_buffer.erase(0, pos);
+
+      int length = 0;
+      if (!extractLength(length, pos, m_buffer)) {
+        break;
+      }
       pos += length;
       if (m_buffer.size() < pos) {
-        return false;
+        break;
       }
 
       pos = m_buffer.find("\00110=", pos - 1);
       if (pos == std::string::npos) {
-        return false;
+        break;
       }
       pos += 4;
       pos = m_buffer.find("\001", pos);
       if (pos == std::string::npos) {
-        return false;
+        break;
       }
       pos += 1;
 
       str.assign(m_buffer, 0, pos);
       m_buffer.erase(0, pos);
       return true;
-    }
-  } catch (MessageParseError &e) {
-    if (length > 0) {
-      m_buffer.erase(0, pos + length);
-    } else {
-      m_buffer.erase();
-    }
+    } while (false);
 
-    throw e;
+    if (m_buffer.size() == MAX_BUFFER_BYTES) {
+      throw MessageParseError("Incomplete FIX frame at 16 MiB limit");
+    }
+  } catch (MessageParseError &) {
+    m_buffer.clear();
+    throw;
   }
 
   return false;

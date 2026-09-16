@@ -13,7 +13,7 @@ end
 
 RbConfig::MAKEFILE_CONFIG['CXX'] = ENV['CXX'] if ENV['CXX']
 
-additional_flags = ' -Wno-deprecated-declarations -Wno-deprecated -Wno-uninitialized -Wno-unused-but-set-variable -Wno-inconsistent-missing-override -Wno-register'
+additional_flags = ' -Wno-deprecated-declarations -Wno-deprecated -Wno-unused-but-set-variable -Wno-inconsistent-missing-override -Wno-register'
 $CFLAGS << additional_flags
 $CXXFLAGS << additional_flags
 

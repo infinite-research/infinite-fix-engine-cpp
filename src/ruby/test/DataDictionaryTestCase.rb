@@ -1,4 +1,6 @@
 require 'quickfix_ruby'
+require 'open3'
+require 'rbconfig'
 require 'test/unit'
 
 class TooHigh < Quickfix::StringField
@@ -16,6 +18,105 @@ class DataDictionaryTestCase < Test::Unit::TestCase
 	def setup
 		@object = Quickfix::DataDictionary.new()
 		assert_not_nil( @object )
+	end
+
+	def assert_binding_subprocess(source)
+		load_path = $LOAD_PATH.map { |path| File.expand_path(path) }.join(File::PATH_SEPARATOR)
+		stdout, stderr, status = Open3.capture3({ 'RUBYLIB' => load_path }, RbConfig.ruby, '-e', source)
+		assert(status.success?, stdout + stderr)
+	end
+
+	def test_getGroup_missing_message_is_safe
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			group = Quickfix::DataDictionary.new
+			group.addMsgType('group')
+			dictionary.addGroup('A', 100, 101, group)
+			output = Quickfix::DataDictionary.new
+			output.addMsgType('unchanged')
+			10_000.times do
+				raise unless dictionary._getGroup('Z', 100, 7, output).nil?
+				raise unless output.isMsgType('unchanged')
+			end
+		RUBY
+	end
+
+	def test_getGroup_missing_tag_is_safe
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			group = Quickfix::DataDictionary.new
+			group.addMsgType('group')
+			dictionary.addGroup('A', 100, 101, group)
+			output = Quickfix::DataDictionary.new
+			output.addMsgType('unchanged')
+			10_000.times do
+				raise unless dictionary._getGroup('A', 999, 7, output).nil?
+				raise unless output.isMsgType('unchanged')
+			end
+		RUBY
+	end
+
+	def test_getGroup_wrong_output_type_raises
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			group = Quickfix::DataDictionary.new
+			group.addMsgType('group')
+			dictionary.addGroup('A', 100, 101, group)
+			10_000.times do
+				begin
+					dictionary._getGroup('A', 100, 0, Object.new)
+					raise 'wrong output type was accepted'
+				rescue TypeError
+				end
+			end
+			output = Quickfix::DataDictionary.new
+			raise unless dictionary._getGroup('A', 100, 0, output) == 101
+			raise unless output.isMsgType('group')
+		RUBY
+	end
+
+	def test_string_reference_placeholder_rejects_wrong_type
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			dictionary.addFieldName(1, 'Account')
+			begin
+				dictionary._getFieldName(1, Object.new)
+				raise 'wrong string reference placeholder was accepted'
+			rescue TypeError
+			end
+		RUBY
+	end
+
+	def test_int_reference_placeholder_rejects_wrong_type
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			dictionary.addFieldName(1, 'Account')
+			begin
+				dictionary._getFieldTag('Account', Object.new)
+				raise 'wrong int reference placeholder was accepted'
+			rescue TypeError
+			end
+		RUBY
+	end
+
+	def test_getGroup_public_nil_and_success_shapes
+		assert_binding_subprocess(<<~'RUBY')
+			require 'quickfix_ruby'
+			dictionary = Quickfix::DataDictionary.new
+			group = Quickfix::DataDictionary.new
+			group.addMsgType('group')
+			dictionary.addGroup('A', 100, 101, group)
+			raise unless dictionary.getGroup('Z', 100).nil?
+			raise unless dictionary.getGroup('A', 999).nil?
+			result = dictionary.getGroup('A', 100)
+			raise unless result[0] == 101
+			raise unless result[1].isMsgType('group')
+		RUBY
 	end
 
 	def test_addMsgType

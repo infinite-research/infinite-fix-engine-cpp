@@ -27,6 +27,8 @@
 #include "TestHelper.h"
 
 #include "catch_amalgamated.hpp"
+#include <Utility.h>
+#include <scope_guard.hpp>
 
 int main(int argc, char **argv) {
   std::string quickfixConfigFile;
@@ -44,5 +46,7 @@ int main(int argc, char **argv) {
                     "user")["--quickfix-spec-path"]("QuickFIX spec path");
   session.cli(newCli);
 
+  FIX::socket_init();
+  auto socketCleanup = sg::make_scope_guard([]() { FIX::socket_term(); });
   return session.run(argc, argv);
 }

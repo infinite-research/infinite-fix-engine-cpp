@@ -26,13 +26,65 @@
 
 #include "TestHelper.h"
 #include <SocketServer.h>
+#include <Utility.h>
 #ifdef _MSC_VER
 #include <stdlib.h>
+#endif
+#ifdef __linux__
+#include <filesystem>
 #endif
 
 #include "catch_amalgamated.hpp"
 
 using namespace FIX;
+
+namespace {
+struct TestSocket {
+  explicit TestSocket(socket_handle value)
+      : value(value) {}
+  ~TestSocket() { socket_close(value); }
+
+  socket_handle value;
+};
+
+unsigned long boundAddress(socket_handle socket) {
+  sockaddr_in address{};
+  socklen_t size = sizeof(address);
+  REQUIRE(getsockname(socket, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+  return address.sin_addr.s_addr;
+}
+
+template <typename Scenario> void withLoopbackPort(Scenario scenario) {
+#ifdef _MSC_VER
+  const std::string addressInUse = error_wsaerror(WSAEADDRINUSE);
+#else
+  int addressInUseCode = EADDRINUSE;
+  const std::string addressInUse = error_strerror(addressInUseCode);
+#endif
+  for (int attempt = 0; attempt < 10; ++attempt) {
+    TestSocket reservation(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(reservation.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(reservation.value);
+    socket_close(reservation.value);
+    reservation.value = INVALID_SOCKET_HANDLE;
+    try {
+      scenario(port);
+      return;
+    } catch (const SocketException &error) {
+      if (attempt == 9 || std::string(error.what()).find(addressInUse) == std::string::npos) {
+        throw;
+      }
+    }
+  }
+}
+
+#ifdef __linux__
+size_t openDescriptors() {
+  return static_cast<size_t>(
+      std::distance(std::filesystem::directory_iterator("/proc/self/fd"), std::filesystem::directory_iterator{}));
+}
+#endif
+} // namespace
 
 struct SocketServerTestStrategy : public SocketServer::Strategy {
   void onConnect(SocketServer &, socket_handle accept, socket_handle socket) {
@@ -69,6 +121,77 @@ struct SocketServerTestStrategy : public SocketServer::Strategy {
 
 TEST_CASE("SocketServerTests") {
   SocketServerTestStrategy strategy;
+
+  SECTION("listener address") {
+    TestSocket wildcard(socket_createAcceptor(0, true));
+    REQUIRE(wildcard.value != INVALID_SOCKET_HANDLE);
+    CHECK(boundAddress(wildcard.value) == INADDR_ANY);
+
+    TestSocket loopback(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(loopback.value != INVALID_SOCKET_HANDLE);
+    CHECK(boundAddress(loopback.value) == inet_addr("127.0.0.1"));
+
+    TestSocket invalid(socket_createAcceptor("localhost", 0, true));
+    CHECK(invalid.value == INVALID_SOCKET_HANDLE);
+  }
+
+#ifdef _MSC_VER
+  SECTION("Windows listener ownership is exclusive") {
+    const bool reuse = GENERATE(false, true);
+    CAPTURE(reuse);
+    TestSocket listener(socket_createAcceptor("127.0.0.1", 0, reuse));
+    REQUIRE(listener.value != INVALID_SOCKET_HANDLE);
+
+    TestSocket challenger(socket_createConnector());
+    REQUIRE(challenger.value != INVALID_SOCKET_HANDLE);
+    const BOOL option = TRUE;
+    REQUIRE(
+        ::setsockopt(
+            challenger.value,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            reinterpret_cast<const char *>(&option),
+            sizeof(option))
+        != SET_SOCK_OPT_ERROR);
+    const int bindResult = socket_bind(challenger.value, "127.0.0.1", socket_hostport(listener.value));
+    const int bindError = bindResult == BIND_SOCKET_ERROR ? WSAGetLastError() : 0;
+    CHECK(bindResult == BIND_SOCKET_ERROR);
+    CHECK((bindError == WSAEACCES || bindError == WSAEADDRINUSE));
+  }
+#endif
+
+  SECTION("listener reuse requires the same address") {
+    SocketServer wildcardObject(0);
+    const socket_handle wildcardListener = wildcardObject.add(0, true);
+    CHECK(wildcardObject.add("0.0.0.0", 0, true) == wildcardListener);
+
+    TestSocket reserved(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(reserved.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(reserved.value);
+    socket_close(reserved.value);
+    reserved.value = INVALID_SOCKET_HANDLE;
+
+    SocketServer object(0);
+    const socket_handle listener = object.add("127.0.0.1", port, true);
+    CHECK(object.add("127.0.0.1", port, true) == listener);
+    CHECK_THROWS_AS(object.add("0.0.0.0", port, true), SocketException);
+  }
+
+#ifdef __linux__
+  SECTION("failed bind does not leak descriptors or replace the socket error") {
+    TestSocket occupied(socket_createAcceptor("127.0.0.1", 0, true));
+    REQUIRE(occupied.value != INVALID_SOCKET_HANDLE);
+    const int port = socket_hostport(occupied.value);
+    const size_t descriptors = openDescriptors();
+
+    for (int attempt = 0; attempt < 10000; ++attempt) {
+      errno = 0;
+      CHECK(socket_createAcceptor("127.0.0.1", port, true) == INVALID_SOCKET_HANDLE);
+      CHECK(errno == EADDRINUSE);
+    }
+    CHECK(openDescriptors() == descriptors);
+  }
+#endif
 
   SECTION("accept") {
     SocketServer object(0);
@@ -144,5 +267,21 @@ TEST_CASE("SocketServerTests") {
     object.add(0, true, true);
     object.close();
     object.block(strategy);
+  }
+
+  SECTION("close and destruction preserve a replacement listener") {
+    withLoopbackPort([](int secondaryPort) {
+      auto server = std::make_unique<SocketServer>(0);
+      const socket_handle listener = server->add(0, true);
+      const int port = socket_hostport(listener);
+      server->add("127.0.0.1", secondaryPort, true);
+      CHECK(server->numConnections() == 0U);
+      server->close();
+      CHECK(server->numConnections() == 0U);
+      TestSocket replacement(socket_createAcceptor("127.0.0.1", port, true));
+      REQUIRE(replacement.value != INVALID_SOCKET_HANDLE);
+      server.reset();
+      CHECK(boundAddress(replacement.value) == inet_addr("127.0.0.1"));
+    });
   }
 }

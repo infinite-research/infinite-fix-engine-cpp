@@ -272,9 +272,9 @@ bool governedRangeContains(
   if (profile.scheduleMode == 1) {
     return true;
   }
-  constexpr std::uint64_t SECONDS_PER_DAY = UINT64_C(86400);
-  constexpr std::uint64_t NANOSECONDS_PER_SECOND = UINT64_C(1000000000);
   const auto position = [](std::uint64_t day, std::uint64_t second) {
+    constexpr std::uint64_t SECONDS_PER_DAY = UINT64_C(86400);
+    constexpr std::uint64_t NANOSECONDS_PER_SECOND = UINT64_C(1000000000);
     return (day * SECONDS_PER_DAY + second) * NANOSECONDS_PER_SECOND;
   };
   const auto current = position(

@@ -59,7 +59,7 @@ class Application : public FIX::Application, public FIX::MessageCracker {
 
   // Order functionality
   void processOrder(const Order &);
-  void processCancel(const std::string &id, const std::string &symbol, Order::Side);
+  void processCancel(const std::string &id, const std::string &symbol, Order::Side, const std::string &owner);
 
   void updateOrder(const Order &, char status);
   void rejectOrder(const Order &order) { updateOrder(order, FIX::OrdStatus_REJECTED); }
@@ -76,6 +76,7 @@ class Application : public FIX::Application, public FIX::MessageCracker {
       const FIX::Symbol &symbol,
       const FIX::Side &side,
       const std::string &message);
+  void rejectCancel(const FIX::SessionID &, const FIX::ClOrdID &clOrdID, const FIX::OrigClOrdID &origClOrdID);
 
   // Type conversions
   Order::Side convert(const FIX::Side &);
@@ -88,6 +89,7 @@ class Application : public FIX::Application, public FIX::MessageCracker {
 
 public:
   const OrderMatcher &orderMatcher() { return m_orderMatcher; }
+  const OrderMatcher &orderMatcher() const { return m_orderMatcher; }
 };
 
 #endif

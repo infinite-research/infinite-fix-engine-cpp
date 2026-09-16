@@ -26,6 +26,7 @@
 #include "Settings.h"
 #include "ThreadedSocketAcceptor.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 ThreadedSocketAcceptor::ThreadedSocketAcceptor(
@@ -45,12 +46,28 @@ ThreadedSocketAcceptor::ThreadedSocketAcceptor(
   socket_init();
 }
 
-ThreadedSocketAcceptor::~ThreadedSocketAcceptor() { socket_term(); }
+ThreadedSocketAcceptor::~ThreadedSocketAcceptor() {
+  if (hasDeferredStopCleanup()) {
+    stop(true);
+  }
+  socket_term();
+}
 
 void ThreadedSocketAcceptor::onConfigure(const SessionSettings &sessionSettings) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   for (const SessionID &sessionID : sessionSettings.getSessions()) {
     const Dictionary &settings = sessionSettings.get(sessionID);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -63,12 +80,21 @@ void ThreadedSocketAcceptor::onConfigure(const SessionSettings &sessionSettings)
 void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings) EXCEPT(RuntimeError) {
   short port = 0;
   std::set<int> ports;
+  Sockets sockets;
+  PortToSessions portToSessions;
+  SocketToPort socketToPort;
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (const socket_handle socket : sockets) {
+      socket_close(socket);
+    }
+  });
 
   for (const SessionID &sessionID : sessionSettings.getSessions()) {
     const Dictionary &settings = sessionSettings.get(sessionID);
     port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
-    m_portToSessions[port].insert(sessionID);
+    portToSessions[port].insert(sessionID);
 
     if (ports.find(port) != ports.end()) {
       continue;
@@ -83,14 +109,14 @@ void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings
 
     const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-    socket_handle socket = socket_createAcceptor(port, reuseAddress);
+    socket_handle socket = socket_createAcceptor(address, port, reuseAddress);
     if (socket == INVALID_SOCKET_HANDLE) {
       SocketException e;
-      socket_close(socket);
       throw RuntimeError(
           "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
           + ")");
     }
+    auto socketCleanup = sg::make_scope_guard([&]() { socket_close(socket); });
     if (noDelay) {
       socket_setsockopt(socket, TCP_NODELAY);
     }
@@ -101,47 +127,87 @@ void ThreadedSocketAcceptor::onInitialize(const SessionSettings &sessionSettings
       socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
     }
 
-    m_socketToPort[socket] = port;
-    m_sockets.insert(socket);
+    socketToPort[socket] = port;
+    sockets.insert(socket);
+    socketCleanup.dismiss();
   }
+
+  m_portToSessions.swap(portToSessions);
+  m_socketToPort.swap(socketToPort);
+  m_sockets.swap(sockets);
+  cleanup.dismiss();
 }
 
 void ThreadedSocketAcceptor::onStart() {
+  Locker l(m_mutex);
+  if (isStopped()) {
+    return;
+  }
   for (const Sockets::value_type &socket : m_sockets) {
-    Locker l(m_mutex);
     int port = m_socketToPort[socket];
-    AcceptorThreadInfo *info = new AcceptorThreadInfo(this, socket, port);
-    thread_id thread;
-    thread_spawn(&socketAcceptorThread, info, thread);
-    addThread(socket, thread);
+    auto info = std::make_unique<AcceptorThreadInfo>(this, socket, port);
+    auto worker = m_threads.emplace(socket, thread_id{}).first;
+    auto cleanup = sg::make_scope_guard([&]() { m_threads.erase(worker); });
+    if (!thread_spawn(&socketAcceptorThread, info.get(), worker->second)) {
+      throw RuntimeError("Unable to spawn acceptor listener thread");
+    }
+    info.release();
+    cleanup.dismiss();
   }
 }
 
 bool ThreadedSocketAcceptor::onPoll() { return false; }
 
 void ThreadedSocketAcceptor::onStop() {
+  joinStartThread();
+  Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
+  bool calledFromWorker = false;
+
+  time_t start = 0;
+  time_t now = 0;
+
+  ::time(&start);
+  while (isLoggedOn()) {
+    if (::time(&now) - 5 >= start) {
+      break;
+    }
+  }
 
   {
     Locker l(m_mutex);
 
-    time_t start = 0;
-    time_t now = 0;
-
-    ::time(&start);
-    while (isLoggedOn()) {
-      if (::time(&now) - 5 >= start) {
+    for (const auto &socketWithThread : m_threads) {
+      if (thread_is_current(socketWithThread.second)) {
+        calledFromWorker = true;
         break;
       }
     }
-
-    threads = m_threads;
-    m_threads.clear();
+    if (calledFromWorker) {
+      if (!m_sockets.empty()) {
+        sockets.swap(m_sockets);
+        threads = m_threads;
+      }
+      deferStopCleanup();
+    } else {
+      sockets.swap(m_sockets);
+      threads.swap(m_threads);
+    }
   }
 
-  for (i = threads.begin(); i != threads.end(); ++i) {
-    socket_close(i->first);
+  for (const socket_handle socket : sockets) {
+    socket_close(socket);
+  }
+  if (!sockets.empty()) {
+    for (i = threads.begin(); i != threads.end(); ++i) {
+      if (sockets.find(i->first) == sockets.end()) {
+        socket_close(i->first);
+      }
+    }
+  }
+  if (calledFromWorker) {
+    return;
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);
@@ -170,6 +236,8 @@ THREAD_PROC ThreadedSocketAcceptor::socketAcceptorThread(void *p) {
   socket_handle s = info->m_socket;
   int port = info->m_port;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   int noDelay = 0;
   int sendBufSize = 0;
@@ -199,6 +267,13 @@ THREAD_PROC ThreadedSocketAcceptor::socketAcceptorThread(void *p) {
     {
       Locker l(pAcceptor->m_mutex);
 
+      if (pAcceptor->isStopped()) {
+        delete info;
+        delete pConnection;
+        socket_close(socket);
+        break;
+      }
+
       std::stringstream stream;
       stream << "Accepted connection from " << socket_peername(socket) << " on port " << port;
 
@@ -210,6 +285,7 @@ THREAD_PROC ThreadedSocketAcceptor::socketAcceptorThread(void *p) {
       if (!thread_spawn(&socketConnectionThread, info, thread)) {
         delete info;
         delete pConnection;
+        socket_close(socket);
       } else {
         pAcceptor->addThread(socket, thread);
       }
@@ -229,6 +305,8 @@ THREAD_PROC ThreadedSocketAcceptor::socketConnectionThread(void *p) {
   ThreadedSocketAcceptor *pAcceptor = info->m_pAcceptor;
   ThreadedSocketConnection *pConnection = info->m_pConnection;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   socket_handle socket = pConnection->getSocket();
 

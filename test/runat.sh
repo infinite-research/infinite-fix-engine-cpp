@@ -1,11 +1,34 @@
 #!/bin/sh
 
+set -u
+ulimit -c 0 || exit 1
+
+usage() {
+  echo "Usage: $0 nonthreaded|threaded PORT" >&2
+}
+
+if [ "$#" -ne 2 ]; then
+  usage
+  exit 2
+fi
+
+MODE=$1
+PORT=$2
+case "$MODE" in
+  nonthreaded) set -- ;;
+  threaded) set -- -t ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
 RUBY="ruby -I."
-SCRIPT=$(realpath "$0")
-DIR=$(dirname "$SCRIPT")
+DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P) || exit 1
 SOURCE_DIR=${QUICKFIX_TEST_SRCDIR:-$DIR}
 BUILD_DIR=${QUICKFIX_TEST_BUILDDIR:-$DIR}
-PORT=$1
+SOURCE_DIR=$(CDPATH= cd "$SOURCE_DIR" && pwd -P) || exit 1
+BUILD_DIR=$(CDPATH= cd "$BUILD_DIR" && pwd -P) || exit 1
 ACCEPTOR_PID=
 RUNNER_PIDS=
 QUICKFIX_RUN_DIR=
@@ -14,7 +37,7 @@ ACCEPTOR_LOG=
 port_is_free() {
   ruby -rsocket -e '
     begin
-      server = TCPServer.new("0.0.0.0", Integer(ARGV.fetch(0)))
+      server = TCPServer.new("127.0.0.1", Integer(ARGV.fetch(0)))
       server.close
     rescue ArgumentError, SystemCallError => error
       warn "Acceptance port #{ARGV[0]} is unavailable: #{error.message}"
@@ -86,7 +109,7 @@ port_is_free "$PORT" || exit 1
 QUICKFIX_RUN_DIR=$(mktemp -d "$BUILD_DIR/quickfix-run.XXXXXX") || exit 1
 ACCEPTOR_LOG="$QUICKFIX_RUN_DIR/acceptor.out"
 
-"$BUILD_DIR/at" -f "$BUILD_DIR/cfg/at.cfg" >"$ACCEPTOR_LOG" 2>&1 &
+"$BUILD_DIR/at" -f "$BUILD_DIR/cfg/at.cfg" "$@" >"$ACCEPTOR_LOG" 2>&1 &
 ACCEPTOR_PID=$!
 if ! wait_for_acceptor; then
   show_acceptor_failure

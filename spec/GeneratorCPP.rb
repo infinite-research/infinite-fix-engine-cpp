@@ -18,6 +18,7 @@ class GeneratorCPP
     @dir = basedir + "/" + @namespace.downcase
     @basefile = createVersionFile("Message.h")
     @f = @basefile
+    @fieldNames = []
   end
 
   def createBaseFile(name)
@@ -40,12 +41,16 @@ class GeneratorCPP
   end
 
   def field(name, number)
+    # XML components can repeat a field within one class; emit its methods once.
+    return if @fieldNames.last.key?(number)
+    @fieldNames.last[number] = true
     @f.indent
     @f.puts "FIELD_SET(*this, FIX::" + name + ");"
     @f.dedent
   end
 
   def headerStart
+    @fieldNames.push({})
     @f.indent
     @f.puts "class Header : public FIX::Header"
     @f.puts "{"
@@ -53,12 +58,14 @@ class GeneratorCPP
   end
 
   def headerEnd
+    @fieldNames.pop
     @f.puts "};"
     @f.puts
     @f.dedent
   end
 
   def trailerStart
+    @fieldNames.push({})
     @f.indent
     @f.puts "class Trailer : public FIX::Trailer"
     @f.puts "{"
@@ -66,6 +73,7 @@ class GeneratorCPP
   end
 
   def trailerEnd
+    @fieldNames.pop
     @f.puts "};"
     @f.puts
     @f.dedent
@@ -91,10 +99,6 @@ class GeneratorCPP
     @f.puts "Message(Message&& m) = default;"
     @f.puts "Message& operator=(Message&&) = default;"
     @f.puts "Message& operator=(const Message&) = default;"
-    @f.puts "Header& getHeader() { return (Header&)m_header; }"
-    @f.puts "const Header& getHeader() const { return (Header&)m_header; }"
-    @f.puts "Trailer& getTrailer() { return (Trailer&)m_trailer; }"
-    @f.puts "const Trailer& getTrailer() const { return (Trailer&)m_trailer; }"
     @f.dedent
     @f.puts "};"
     @f.puts
@@ -105,6 +109,7 @@ class GeneratorCPP
   end
 
   def groupStart(name, number, delim, order)
+    @fieldNames.push({})
     @f.indent
     @f.puts "class " + name + ": public FIX::Group"
     @f.puts "{"
@@ -115,11 +120,13 @@ class GeneratorCPP
   end
 
   def groupEnd
+    @fieldNames.pop
     @f.puts "};"
     @f.dedent
   end
 
   def messageStart(name, msgtype, required)
+    @fieldNames.push({})
     @f = createVersionFile(name + ".h")
     @f.puts "#ifndef " + @namespace + "_" + name.upcase + "_H"
     @f.puts "#define " + @namespace + "_" + name.upcase + "_H"
@@ -172,6 +179,7 @@ class GeneratorCPP
   end
 
   def messageEnd
+    @fieldNames.pop
     @f.puts "};"
     @f.puts
     @f.dedent

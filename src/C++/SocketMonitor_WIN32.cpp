@@ -48,9 +48,14 @@ SocketMonitor::SocketMonitor(int timeout)
 }
 
 SocketMonitor::~SocketMonitor() {
-  Sockets::iterator i;
-  for (i = m_readSockets.begin(); i != m_readSockets.end(); ++i) {
-    socket_close(*i);
+  while (!m_readSockets.empty()) {
+    drop(*m_readSockets.begin(), false);
+  }
+  while (!m_connectSockets.empty()) {
+    drop(*m_connectSockets.begin(), false);
+  }
+  while (!m_writeSockets.empty()) {
+    drop(*m_writeSockets.begin(), false);
   }
 
   socket_close(m_signal);
@@ -94,17 +99,18 @@ bool SocketMonitor::addWrite(socket_handle s) {
   return true;
 }
 
-bool SocketMonitor::drop(socket_handle s) {
-  Sockets::iterator i = m_readSockets.find(s);
-  Sockets::iterator j = m_writeSockets.find(s);
-  Sockets::iterator k = m_connectSockets.find(s);
+bool SocketMonitor::drop(socket_handle s) { return drop(s, true); }
 
-  if (i != m_readSockets.end() || j != m_writeSockets.end() || k != m_connectSockets.end()) {
+bool SocketMonitor::release(socket_handle s) {
+  return m_readSockets.erase(s) + m_writeSockets.erase(s) + m_connectSockets.erase(s) != 0;
+}
+
+bool SocketMonitor::drop(socket_handle s, bool notify) {
+  if (release(s)) {
     socket_close(s);
-    m_readSockets.erase(s);
-    m_writeSockets.erase(s);
-    m_connectSockets.erase(s);
-    m_dropped.push(s);
+    if (notify) {
+      m_dropped.push(s);
+    }
     return true;
   }
   return false;
@@ -211,7 +217,7 @@ void SocketMonitor::processReadSet(Strategy &strategy, fd_set &readSet) {
       socket_handle socket = 0;
       socket_recv(s, (char *)&socket, sizeof(socket));
       addWrite(socket);
-    } else {
+    } else if (m_readSockets.count(s)) {
       strategy.onEvent(*this, s);
     }
   }
@@ -224,7 +230,7 @@ void SocketMonitor::processWriteSet(Strategy &strategy, fd_set &writeSet) {
       m_connectSockets.erase(s);
       m_readSockets.insert(s);
       strategy.onConnect(*this, s);
-    } else {
+    } else if (m_writeSockets.count(s)) {
       strategy.onWrite(*this, s);
     }
   }
@@ -233,7 +239,9 @@ void SocketMonitor::processWriteSet(Strategy &strategy, fd_set &writeSet) {
 void SocketMonitor::processExceptSet(Strategy &strategy, fd_set &exceptSet) {
   for (unsigned i = 0; i < exceptSet.fd_count; ++i) {
     socket_handle s = exceptSet.fd_array[i];
-    strategy.onError(*this, s);
+    if (m_connectSockets.count(s)) {
+      strategy.onError(*this, s);
+    }
   }
 }
 

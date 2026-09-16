@@ -32,7 +32,7 @@
 #include "SocketServer.h"
 
 namespace FIX {
-/// Basic HTTP Server
+/// @deprecated Embedded HTTP administration is no longer supported.
 class HttpServer : public SocketServer::Strategy {
 public:
   HttpServer(const SessionSettings &) EXCEPT(ConfigError);

@@ -31,6 +31,8 @@
 #include "MessageStore.h"
 #include "Mutex.h"
 
+#include <atomic>
+
 namespace FIX {
 /// Maintains all of state for the Session class.
 class SessionState : public MessageStore, public Log {
@@ -220,28 +222,28 @@ public:
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onIncoming(string);
+    m_pLog->onIncoming(redactLogonCredentials(string));
   }
   void onOutgoing(const std::string &string) {
     if (!m_pLog) {
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onOutgoing(string);
+    m_pLog->onOutgoing(redactLogonCredentials(string));
   }
   void onEvent(const std::string &string) {
     if (!m_pLog) {
       return;
     }
     Locker l(m_mutex);
-    m_pLog->onEvent(string);
+    m_pLog->onEvent(redactLogonCredentials(string));
   }
 
 private:
   bool m_enabled;
-  bool m_receivedLogon;
+  std::atomic<bool> m_receivedLogon;
   bool m_sentLogout;
-  bool m_sentLogon;
+  std::atomic<bool> m_sentLogon;
   bool m_sentReset;
   bool m_receivedReset;
   bool m_initiate;

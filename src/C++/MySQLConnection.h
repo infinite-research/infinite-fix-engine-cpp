@@ -37,6 +37,7 @@
 #include "DatabaseConnectionPool.h"
 #include "Mutex.h"
 #include <errmsg.h>
+#include <memory>
 #include <mysql.h>
 
 #undef MYSQL_PORT
@@ -107,7 +108,8 @@ private:
 class MySQLConnection {
 public:
   MySQLConnection(const DatabaseConnectionID &id)
-      : m_connectionID(id) {
+      : m_pConnection(nullptr),
+        m_connectionID(id) {
     connect();
   }
 
@@ -117,7 +119,8 @@ public:
       const std::string &password,
       const std::string &host,
       short port)
-      : m_connectionID(database, user, password, host, port) {
+      : m_pConnection(nullptr),
+        m_connectionID(database, user, password, host, port) {
     connect();
   }
 
@@ -147,9 +150,12 @@ public:
 private:
   void connect() {
     short port = m_connectionID.getPort();
-    m_pConnection = mysql_init(NULL);
+    std::unique_ptr<MYSQL, decltype(&mysql_close)> connection(mysql_init(NULL), &mysql_close);
+    if (!connection) {
+      throw ConfigError("Unable to initialize mysql connection");
+    }
     if (!mysql_real_connect(
-            m_pConnection,
+            connection.get(),
             m_connectionID.getHost().c_str(),
             m_connectionID.getUser().c_str(),
             m_connectionID.getPassword().c_str(),
@@ -157,21 +163,22 @@ private:
             port,
             0,
             0)) {
-      if (!connected()) {
+      if (mysql_ping(connection.get()) != 0) {
         throw ConfigError(
             std::string("Unable to connect to mysql database: ") + "'" + m_connectionID.getDatabase()
             + "': " + m_connectionID.getUser() + '@' + m_connectionID.getHost() + ":" + std::to_string(port) + " ["
-            + mysql_error(m_pConnection) + "]");
+            + mysql_error(connection.get()) + "]");
       }
     }
 
 #if (MYSQL_VERSION_ID > 80000)
     bool reconnect = true;
-    mysql_options(m_pConnection, MYSQL_OPT_RECONNECT, &reconnect);
+    mysql_options(connection.get(), MYSQL_OPT_RECONNECT, &reconnect);
 #else
     my_bool reconnect = 1;
-    mysql_options(m_pConnection, MYSQL_OPT_RECONNECT, static_cast<char *>(&reconnect));
+    mysql_options(connection.get(), MYSQL_OPT_RECONNECT, static_cast<char *>(&reconnect));
 #endif
+    m_pConnection = connection.release();
   }
 
   MYSQL *m_pConnection;

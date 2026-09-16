@@ -23,10 +23,7 @@
 #include "config.h"
 #endif
 
-#include "HttpConnection.h"
 #include "HttpServer.h"
-#include "Settings.h"
-#include "Utility.h"
 
 namespace FIX {
 Mutex HttpServer::s_mutex;
@@ -34,29 +31,12 @@ int HttpServer::s_count = 0;
 HttpServer *HttpServer::s_pServer = 0;
 
 void HttpServer::startGlobal(const SessionSettings &s) EXCEPT(ConfigError, RuntimeError) {
-  Locker l(s_mutex);
-
-  if (!s.get().has(HTTP_ACCEPT_PORT)) {
-    return;
-  }
-
-  s_count += 1;
-  if (!s_pServer) {
-    s_pServer = new HttpServer(s);
-    s_pServer->start();
+  if (s.get().has(HTTP_ACCEPT_PORT)) {
+    throw ConfigError("HttpAcceptPort is no longer supported; use an authenticated external control plane");
   }
 }
 
-void HttpServer::stopGlobal() {
-  Locker l(s_mutex);
-
-  s_count -= 1;
-  if (!s_count && s_pServer) {
-    s_pServer->stop();
-    delete s_pServer;
-    s_pServer = 0;
-  }
-}
+void HttpServer::stopGlobal() {}
 
 HttpServer::HttpServer(const SessionSettings &settings) EXCEPT(ConfigError)
     : m_pServer(0),
@@ -65,88 +45,34 @@ HttpServer::HttpServer(const SessionSettings &settings) EXCEPT(ConfigError)
       m_port(0),
       m_stop(false) {}
 
-void HttpServer::onConfigure(const SessionSettings &s) EXCEPT(ConfigError) {
-  m_port = s.get().getInt(HTTP_ACCEPT_PORT);
-}
+void HttpServer::onConfigure(const SessionSettings &) EXCEPT(ConfigError) {}
 
-void HttpServer::onInitialize(const SessionSettings &s) EXCEPT(RuntimeError) {
-  try {
-    m_pServer = new SocketServer(1);
-    m_pServer->add(m_port, true, false, 0, 0);
-  } catch (std::exception &) {
-    throw RuntimeError("Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)m_port));
-  }
-}
+void HttpServer::onInitialize(const SessionSettings &) EXCEPT(RuntimeError) {}
 
 void HttpServer::start() EXCEPT(ConfigError, RuntimeError) {
-  m_stop = false;
-  onConfigure(m_settings);
-  onInitialize(m_settings);
-
-  if (!thread_spawn(&startThread, this, m_threadid)) {
-    throw RuntimeError("Unable to spawn thread");
-  }
+  throw ConfigError("HttpAcceptPort is no longer supported; use an authenticated external control plane");
 }
 
-void HttpServer::stop() {
-  if (m_stop) {
-    return;
-  }
-  m_stop = true;
-  onStop();
+void HttpServer::stop() {}
 
-  if (m_threadid) {
-    thread_join(m_threadid);
-  }
-  m_threadid = 0;
-}
+void HttpServer::onStart() {}
 
-void HttpServer::onStart() {
-  while (!m_stop && m_pServer && m_pServer->block(*this)) {}
-
-  if (!m_pServer) {
-    return;
-  }
-
-  m_pServer->close();
-  delete m_pServer;
-  m_pServer = 0;
-}
-
-bool HttpServer::onPoll() {
-  if (!m_pServer || m_stop) {
-    return false;
-  }
-
-  m_pServer->block(*this, true);
-  return true;
-}
+bool HttpServer::onPoll() { return false; }
 
 void HttpServer::onStop() {}
 
-void HttpServer::onConnect(SocketServer &server, socket_handle a, socket_handle s) {
-  if (!socket_isValid(s)) {
-    return;
-  }
-  HttpConnection connection(s);
-  while (connection.read()) {}
-  m_pServer->getMonitor().drop(s);
-}
+void HttpServer::onConnect(SocketServer &, socket_handle, socket_handle) {}
 
-void HttpServer::onWrite(SocketServer &server, socket_handle s) {}
+void HttpServer::onWrite(SocketServer &, socket_handle) {}
 
-bool HttpServer::onData(SocketServer &server, socket_handle s) { return true; }
+bool HttpServer::onData(SocketServer &, socket_handle) { return false; }
 
-void HttpServer::onDisconnect(SocketServer &, socket_handle s) {}
+void HttpServer::onDisconnect(SocketServer &, socket_handle) {}
 
 void HttpServer::onError(SocketServer &) {}
 
 void HttpServer::onTimeout(SocketServer &) {}
 
-THREAD_PROC HttpServer::startThread(void *p) {
-  HttpServer *pServer = static_cast<HttpServer *>(p);
-  pServer->onStart();
-  return 0;
-}
+THREAD_PROC HttpServer::startThread(void *) { return 0; }
 
 } // namespace FIX

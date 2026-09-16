@@ -123,6 +123,7 @@
 #include "Settings.h"
 #include "ThreadedSSLSocketAcceptor.h"
 #include "Utility.h"
+#include "scope_guard.hpp"
 
 namespace FIX {
 
@@ -156,6 +157,9 @@ ThreadedSSLSocketAcceptor::ThreadedSSLSocketAcceptor(
 }
 
 ThreadedSSLSocketAcceptor::~ThreadedSSLSocketAcceptor() {
+  if (hasDeferredStopCleanup()) {
+    stop(true);
+  }
   if (m_sslInit) {
     SSL_CTX_free(m_ctx);
     m_ctx = 0;
@@ -166,11 +170,22 @@ ThreadedSSLSocketAcceptor::~ThreadedSSLSocketAcceptor() {
 }
 
 void ThreadedSSLSocketAcceptor::onConfigure(const SessionSettings &s) EXCEPT(ConfigError) {
+  std::map<int, unsigned long> addresses;
   std::set<SessionID> sessions = s.getSessions();
   std::set<SessionID>::iterator i;
   for (i = sessions.begin(); i != sessions.end(); ++i) {
     const Dictionary &settings = s.get(*i);
-    settings.getInt(SOCKET_ACCEPT_PORT);
+    const int port = settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
+    const unsigned long host = address.empty() ? INADDR_ANY : inet_addr(address.c_str());
+    if (host == INADDR_NONE) {
+      throw ConfigError(std::string(SOCKET_ACCEPT_ADDRESS) + " must be empty or a numeric IPv4 address");
+    }
+    const auto result = addresses.emplace(port, host);
+    if (!result.second && result.first->second != host) {
+      throw ConfigError(
+          std::string("Sessions sharing ") + SOCKET_ACCEPT_PORT + " must use the same " + SOCKET_ACCEPT_ADDRESS);
+    }
     if (settings.has(SOCKET_REUSE_ADDRESS)) {
       settings.getBool(SOCKET_REUSE_ADDRESS);
     }
@@ -184,28 +199,31 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
   if (!m_sslInit) {
 
     ssl_init();
+    auto cleanup = sg::make_scope_guard([&]() {
+      if (!m_sslInit) {
+        SSL_CTX_free(m_ctx);
+        m_ctx = nullptr;
+        ssl_term();
+      }
+    });
 
     std::string errStr;
 
     /* set up the application context */
     if ((m_ctx = createSSLContext(true, m_settings, errStr)) == 0) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadSSLCert(m_ctx, true, m_settings, getLog(), ThreadedSSLSocketAcceptor::passPhraseHandleCB, this, errStr)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     if (!loadCAInfo(m_ctx, true, m_settings, getLog(), errStr, m_verify)) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
     m_revocationStore = loadCRLInfo(m_ctx, m_settings, getLog(), errStr);
     if (!m_revocationStore && !errStr.empty()) {
-      ssl_term();
       throw RuntimeError(errStr);
     }
 
@@ -214,14 +232,23 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
 
   short port = 0;
   std::set<int> ports;
+  Sockets sockets;
+  PortToSessions portToSessions;
+  SocketToPort socketToPort;
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (const socket_handle socket : sockets) {
+      socket_close(socket);
+    }
+  });
 
   std::set<SessionID> sessions = s.getSessions();
   std::set<SessionID>::iterator i = sessions.begin();
   for (; i != sessions.end(); ++i) {
     const Dictionary &settings = s.get(*i);
     port = (short)settings.getInt(SOCKET_ACCEPT_PORT);
+    const std::string address = settings.has(SOCKET_ACCEPT_ADDRESS) ? settings.getString(SOCKET_ACCEPT_ADDRESS) : "";
 
-    m_portToSessions[port].insert(*i);
+    portToSessions[port].insert(*i);
 
     if (ports.find(port) != ports.end()) {
       continue;
@@ -236,14 +263,14 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
 
     const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
 
-    socket_handle socket = socket_createAcceptor(port, reuseAddress);
+    socket_handle socket = socket_createAcceptor(address, port, reuseAddress);
     if (socket == INVALID_SOCKET_HANDLE) {
       SocketException e;
-      socket_close(socket);
       throw RuntimeError(
           "Unable to create, bind, or listen to port " + IntConvertor::convert((unsigned short)port) + " (" + e.what()
           + ")");
     }
+    auto socketCleanup = sg::make_scope_guard([&]() { socket_close(socket); });
     if (noDelay) {
       socket_setsockopt(socket, TCP_NODELAY);
     }
@@ -254,48 +281,87 @@ void ThreadedSSLSocketAcceptor::onInitialize(const SessionSettings &s) EXCEPT(Ru
       socket_setsockopt(socket, SO_RCVBUF, rcvBufSize);
     }
 
-    m_socketToPort[socket] = port;
-    m_sockets.insert(socket);
+    socketToPort[socket] = port;
+    sockets.insert(socket);
+    socketCleanup.dismiss();
   }
+
+  m_portToSessions.swap(portToSessions);
+  m_socketToPort.swap(socketToPort);
+  m_sockets.swap(sockets);
+  cleanup.dismiss();
 }
 
 void ThreadedSSLSocketAcceptor::onStart() {
-  Sockets::iterator i;
-  for (i = m_sockets.begin(); i != m_sockets.end(); ++i) {
-    Locker l(m_mutex);
-    int port = m_socketToPort[*i];
-    AcceptorThreadInfo *info = new AcceptorThreadInfo(this, *i, port);
-    thread_id thread;
-    thread_spawn(&socketAcceptorThread, info, thread);
-    addThread(SocketKey(*i, 0), thread);
+  Locker l(m_mutex);
+  if (isStopped()) {
+    return;
+  }
+  for (const socket_handle socket : m_sockets) {
+    int port = m_socketToPort[socket];
+    auto info = std::make_unique<AcceptorThreadInfo>(this, socket, port);
+    auto worker = m_threads.emplace(SocketKey(socket, nullptr), thread_id{}).first;
+    auto cleanup = sg::make_scope_guard([&]() { m_threads.erase(worker); });
+    if (!thread_spawn(&socketAcceptorThread, info.get(), worker->second)) {
+      throw RuntimeError("Unable to spawn acceptor listener thread");
+    }
+    info.release();
+    cleanup.dismiss();
   }
 }
 
 bool ThreadedSSLSocketAcceptor::onPoll() { return false; }
 
 void ThreadedSSLSocketAcceptor::onStop() {
+  joinStartThread();
+  Sockets sockets;
   SocketToThread threads;
   SocketToThread::iterator i;
+  bool calledFromWorker = false;
+
+  time_t start = 0;
+  time_t now = 0;
+
+  ::time(&start);
+  while (isLoggedOn()) {
+    if (::time(&now) - 5 >= start) {
+      break;
+    }
+  }
 
   {
     Locker l(m_mutex);
 
-    time_t start = 0;
-    time_t now = 0;
-
-    ::time(&start);
-    while (isLoggedOn()) {
-      if (::time(&now) - 5 >= start) {
+    for (const auto &socketWithThread : m_threads) {
+      if (thread_is_current(socketWithThread.second)) {
+        calledFromWorker = true;
         break;
       }
     }
-
-    threads = m_threads;
-    m_threads.clear();
+    if (calledFromWorker) {
+      if (!m_sockets.empty()) {
+        sockets.swap(m_sockets);
+        threads = m_threads;
+      }
+      deferStopCleanup();
+    } else {
+      sockets.swap(m_sockets);
+      threads.swap(m_threads);
+    }
   }
 
-  for (i = threads.begin(); i != threads.end(); ++i) {
-    ssl_socket_close(i->first.first, i->first.second);
+  for (const socket_handle socket : sockets) {
+    socket_close(socket);
+  }
+  if (!sockets.empty()) {
+    for (i = threads.begin(); i != threads.end(); ++i) {
+      if (sockets.find(i->first.first) == sockets.end()) {
+        ssl_socket_close(i->first.first, i->first.second);
+      }
+    }
+  }
+  if (calledFromWorker) {
+    return;
   }
   for (i = threads.begin(); i != threads.end(); ++i) {
     thread_join(i->second);
@@ -330,6 +396,8 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketAcceptorThread(void *p) {
   socket_handle s = info->m_socket;
   int port = info->m_port;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   int noDelay = 0;
   int sendBufSize = 0;
@@ -367,6 +435,13 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketAcceptorThread(void *p) {
     {
       Locker l(pAcceptor->m_mutex);
 
+      if (pAcceptor->isStopped()) {
+        delete info;
+        delete pConnection;
+        SSL_free(ssl);
+        break;
+      }
+
       std::stringstream stream;
       stream << "Accepted connection from " << socket_peername(socket) << " on port " << port;
 
@@ -398,6 +473,8 @@ THREAD_PROC ThreadedSSLSocketAcceptor::socketConnectionThread(void *p) {
   ThreadedSSLSocketAcceptor *pAcceptor = info->m_pAcceptor;
   ThreadedSSLSocketConnection *pConnection = info->m_pConnection;
   delete info;
+  Acceptor *previous = pAcceptor->activateCurrentThread();
+  auto activeGuard = sg::make_scope_guard([pAcceptor, previous]() { pAcceptor->restoreCurrentThread(previous); });
 
   socket_handle socket = pConnection->getSocket();
 

@@ -24,34 +24,43 @@
 #endif
 
 #include "Market.h"
+#include <algorithm>
 #include <iostream>
+#include <stdexcept>
 
 bool Market::insert(const Order &order) {
+  const auto duplicate = [&order](const auto &entry) {
+    return entry.second.getOwner() == order.getOwner() && entry.second.getClientID() == order.getClientID();
+  };
+
   if (order.getSide() == Order::buy) {
+    if (std::find_if(m_bidOrders.begin(), m_bidOrders.end(), duplicate) != m_bidOrders.end()) {
+      return false;
+    }
     m_bidOrders.insert(BidOrders::value_type(order.getPrice(), order));
   } else {
+    if (std::find_if(m_askOrders.begin(), m_askOrders.end(), duplicate) != m_askOrders.end()) {
+      return false;
+    }
     m_askOrders.insert(AskOrders::value_type(order.getPrice(), order));
   }
   return true;
 }
 
 void Market::erase(const Order &order) {
-  std::string id = order.getClientID();
+  const auto sameOrder = [&order](const auto &entry) {
+    return entry.second.getOwner() == order.getOwner() && entry.second.getClientID() == order.getClientID();
+  };
+
   if (order.getSide() == Order::buy) {
-    BidOrders::iterator i;
-    for (i = m_bidOrders.begin(); i != m_bidOrders.end(); ++i) {
-      if (i->second.getClientID() == id) {
-        m_bidOrders.erase(i);
-        return;
-      }
+    const BidOrders::iterator i = std::find_if(m_bidOrders.begin(), m_bidOrders.end(), sameOrder);
+    if (i != m_bidOrders.end()) {
+      m_bidOrders.erase(i);
     }
   } else if (order.getSide() == Order::sell) {
-    AskOrders::iterator i;
-    for (i = m_askOrders.begin(); i != m_askOrders.end(); ++i) {
-      if (i->second.getClientID() == id) {
-        m_askOrders.erase(i);
-        return;
-      }
+    const AskOrders::iterator i = std::find_if(m_askOrders.begin(), m_askOrders.end(), sameOrder);
+    if (i != m_askOrders.end()) {
+      m_askOrders.erase(i);
     }
   }
 }
@@ -85,23 +94,27 @@ bool Market::match(std::queue<Order> &orders) {
   }
 }
 
-Order &Market::find(Order::Side side, std::string id) {
+Order &Market::find(Order::Side side, const std::string &owner, const std::string &id) {
+  return const_cast<Order &>(static_cast<const Market &>(*this).find(side, owner, id));
+}
+
+const Order &Market::find(Order::Side side, const std::string &owner, const std::string &id) const {
+  const auto sameOrder = [&owner, &id](const auto &entry) {
+    return entry.second.getOwner() == owner && entry.second.getClientID() == id;
+  };
+
   if (side == Order::buy) {
-    BidOrders::iterator i;
-    for (i = m_bidOrders.begin(); i != m_bidOrders.end(); ++i) {
-      if (i->second.getClientID() == id) {
-        return i->second;
-      }
+    const BidOrders::const_iterator i = std::find_if(m_bidOrders.begin(), m_bidOrders.end(), sameOrder);
+    if (i != m_bidOrders.end()) {
+      return i->second;
     }
   } else if (side == Order::sell) {
-    AskOrders::iterator i;
-    for (i = m_askOrders.begin(); i != m_askOrders.end(); ++i) {
-      if (i->second.getClientID() == id) {
-        return i->second;
-      }
+    const AskOrders::const_iterator i = std::find_if(m_askOrders.begin(), m_askOrders.end(), sameOrder);
+    if (i != m_askOrders.end()) {
+      return i->second;
     }
   }
-  throw std::exception();
+  throw std::logic_error("Unknown order");
 }
 
 void Market::match(Order &bid, Order &ask) {

@@ -24,6 +24,10 @@
 
 #include "Utility.h"
 
+#ifndef _MSC_VER
+#include <system_error>
+#endif
+
 namespace FIX {
 /// Portable implementation of a mutex.
 class Mutex {
@@ -32,13 +36,19 @@ public:
 #ifdef _MSC_VER
     InitializeCriticalSection(&m_mutex);
 #else
-    m_count = 0;
-    m_threadID = 0;
-    // pthread_mutexattr_t attr;
-    // pthread_mutexattr_init(&attr);
-    // pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    // pthread_mutex_init(&m_mutex, &attr);
-    pthread_mutex_init(&m_mutex, 0);
+    pthread_mutexattr_t attributes;
+    int result = pthread_mutexattr_init(&attributes);
+    if (result != 0) {
+      throw std::system_error(result, std::generic_category(), "pthread_mutexattr_init");
+    }
+    result = pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    if (result == 0) {
+      result = pthread_mutex_init(&m_mutex, &attributes);
+    }
+    pthread_mutexattr_destroy(&attributes);
+    if (result != 0) {
+      throw std::system_error(result, std::generic_category(), "pthread recursive mutex initialization");
+    }
 #endif
   }
 
@@ -54,13 +64,7 @@ public:
 #ifdef _MSC_VER
     EnterCriticalSection(&m_mutex);
 #else
-    if (m_count && m_threadID == pthread_self()) {
-      ++m_count;
-      return;
-    }
     pthread_mutex_lock(&m_mutex);
-    ++m_count;
-    m_threadID = pthread_self();
 #endif
   }
 
@@ -68,12 +72,6 @@ public:
 #ifdef _MSC_VER
     LeaveCriticalSection(&m_mutex);
 #else
-    if (m_count > 1) {
-      m_count--;
-      return;
-    }
-    --m_count;
-    m_threadID = 0;
     pthread_mutex_unlock(&m_mutex);
 #endif
   }
@@ -83,8 +81,9 @@ private:
   CRITICAL_SECTION m_mutex;
 #else
   pthread_mutex_t m_mutex;
-  pthread_t m_threadID;
-  int m_count;
+  // Preserve the prior private storage so layouts of public containing classes remain stable.
+  pthread_t m_abiReservedThreadID{};
+  int m_abiReservedCount{};
 #endif
 };
 

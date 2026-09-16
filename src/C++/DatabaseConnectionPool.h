@@ -28,6 +28,7 @@
 
 #include "DatabaseConnectionID.h"
 #include <map>
+#include <memory>
 #include <string>
 
 namespace FIX {
@@ -41,11 +42,17 @@ public:
       return new T(id);
     }
 
-    if (m_connections.find(id) == m_connections.end()) {
-      m_connections[id] = Connection(new T(id), 0);
+    auto found = m_connections.find(id);
+    if (found == m_connections.end()) {
+      auto connection = std::make_unique<T>(id);
+      auto inserted = m_connections.emplace(id, Connection(connection.get(), 0));
+      found = inserted.first;
+      if (inserted.second) {
+        connection.release();
+      }
     }
-    m_connections[id].second++;
-    return m_connections[id].first;
+    found->second.second++;
+    return found->second.first;
   }
 
   bool destroy(T *pConnection) {

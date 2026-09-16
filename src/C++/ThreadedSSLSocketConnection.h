@@ -128,6 +128,7 @@
 #include "Responder.h"
 #include "SessionID.h"
 #include "UtilitySSL.h"
+#include <atomic>
 #include <map>
 #include <set>
 
@@ -161,6 +162,7 @@ public:
   SSL *sslObject() { return m_ssl; }
 
 private:
+  friend class ThreadedSSLSocketInitiator;
   typedef std::pair<socket_handle, SSL *> SocketKey;
 
   bool readMessage(std::string &msg) EXCEPT(SocketRecvFailed);
@@ -179,7 +181,7 @@ private:
   Parser m_parser;
   Sessions m_sessions;
   Session *m_pSession;
-  bool m_disconnect;
+  std::atomic<bool> m_disconnect;
   fd_set m_fds;
 
   Mutex m_mutex;

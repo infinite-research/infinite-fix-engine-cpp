@@ -41,6 +41,7 @@ public:
   virtual ~SocketInitiator();
 
 private:
+  friend class SessionTestAccess;
   typedef std::map<socket_handle, SocketConnection *> SocketConnections;
 
   void onConfigure(const SessionSettings &) EXCEPT(ConfigError);

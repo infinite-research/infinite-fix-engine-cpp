@@ -28,6 +28,8 @@
 #include <SocketConnector.h>
 #include <SocketServer.h>
 #include <Utility.h>
+#include <limits>
+#include <numeric>
 #include <sstream>
 #include <string>
 
@@ -126,5 +128,96 @@ TEST_CASE("ParserTests") {
     std::string readFixMsg;
     CHECK_THROWS_AS(object.readFixMessage(readFixMsg), MessageParseError);
     object.readFixMessage(readFixMsg);
+  }
+
+  SECTION("incomplete framing is rejected at the accumulator limit") {
+    const std::size_t limit = 16U * 1024U * 1024U;
+    for (const std::string prefix :
+         {"x",
+          "8=FIX.4.2\00135=A\001",
+          "8=FIX.4.2\0019=",
+          "8=FIX.4.2\0019=5\00135=A\001",
+          "8=FIX.4.2\0019=5\00135=A\00110=000"}) {
+      CAPTURE(prefix);
+      Parser parser;
+      std::string message;
+      parser.addToStream(prefix);
+      CHECK_FALSE(parser.readFixMessage(message));
+      parser.addToStream(std::string(limit - prefix.size() - 1, 'x'));
+      CHECK_FALSE(parser.readFixMessage(message));
+      parser.addToStream("x", 1);
+      CHECK_THROWS_AS(parser.readFixMessage(message), MessageParseError);
+      CHECK_FALSE(parser.readFixMessage(message));
+      const std::string valid = "8=FIX.4.2\0019=5\00135=A\00110=178\001";
+      parser.addToStream(valid);
+      CHECK(parser.readFixMessage(message));
+      CHECK((message == valid));
+    }
+  }
+
+  SECTION("BodyLength must leave room for the whole frame") {
+    for (const std::string length : {"2147483647", "16777217", "16777189", "-1", "bad"}) {
+      CAPTURE(length);
+      Parser parser;
+      std::string message;
+      parser.addToStream("8=FIX.4.2\0019=" + length);
+      CHECK_FALSE(parser.readFixMessage(message));
+      parser.addToStream("\001", 1);
+      CHECK_THROWS_AS(parser.readFixMessage(message), MessageParseError);
+      CHECK_FALSE(parser.readFixMessage(message));
+    }
+  }
+
+  SECTION("append rejects overflow before accessing input and clears the accumulator") {
+    const std::size_t limit = 16U * 1024U * 1024U;
+    std::string message;
+    object.addToStream(std::string(limit, 'x'));
+    CHECK_THROWS_AS(object.addToStream("x", 1), MessageParseError);
+    CHECK_FALSE(object.readFixMessage(message));
+    CHECK_THROWS_AS(object.addToStream(std::string(limit + 1, 'x')), MessageParseError);
+    CHECK_FALSE(object.readFixMessage(message));
+    CHECK_THROWS_AS(object.addToStream("x", std::numeric_limits<std::size_t>::max()), MessageParseError);
+    CHECK_FALSE(object.readFixMessage(message));
+  }
+
+  SECTION("a complete frame at exactly 16 MiB survives fragmentation") {
+    std::string frame = "8=FIX.4.2\0019=16777188\00135=X\00158=";
+    frame.append(16777179, 'x');
+    frame += '\001';
+    const unsigned checksum = std::accumulate(frame.begin(), frame.end(), 0U) % 256;
+    frame += "10=" + std::to_string(1000 + checksum).substr(1) + '\001';
+    REQUIRE(frame.size() == 16U * 1024U * 1024U);
+    std::string message;
+    object.addToStream(frame.data(), frame.size() - 1);
+    CHECK_FALSE(object.readFixMessage(message));
+    object.addToStream(frame.data() + frame.size() - 1, 1);
+    REQUIRE(object.readFixMessage(message));
+    CHECK((message == frame));
+    CHECK_FALSE(object.readFixMessage(message));
+    object.addToStream(frame);
+    REQUIRE(object.readFixMessage(message));
+    CHECK((message == frame));
+  }
+
+  SECTION("coalesced frames drain independently across fragment boundaries") {
+    const std::string first = "8=FIX.4.2\0019=5\00135=A\00110=178\001";
+    const std::string second = "8=FIX.4.2\0019=5\00135=0\00110=161\001";
+    std::string message;
+    object.addToStream(first + second.substr(0, 1));
+    REQUIRE(object.readFixMessage(message));
+    CHECK(message == first);
+    CHECK_FALSE(object.readFixMessage(message));
+    for (std::size_t i = 1; i < second.size(); ++i) {
+      object.addToStream(second.data() + i, 1);
+      CHECK(object.readFixMessage(message) == (i + 1 == second.size()));
+    }
+    CHECK(message == second);
+    CHECK_FALSE(object.readFixMessage(message));
+    object.addToStream(first + second);
+    REQUIRE(object.readFixMessage(message));
+    CHECK(message == first);
+    REQUIRE(object.readFixMessage(message));
+    CHECK(message == second);
+    CHECK_FALSE(object.readFixMessage(message));
   }
 }

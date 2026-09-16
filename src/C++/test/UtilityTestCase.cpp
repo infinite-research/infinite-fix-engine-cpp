@@ -193,10 +193,12 @@ TEST_CASE("UtilityTests") {
   }
 
   SECTION("threadJoinAndDetach_NoException") {
-    thread_id threadId;
-    CHECK_NOTHROW(thread_spawn(&startTestThread, NULL, threadId));
-    CHECK_NOTHROW(thread_join(threadId));
-    CHECK_NOTHROW(thread_detach(threadId));
+    thread_id joinThreadId = 0;
+    REQUIRE(thread_spawn(&startTestThread, NULL, joinThreadId));
+    CHECK_NOTHROW(thread_join(joinThreadId));
+    thread_id detachThreadId = 0;
+    REQUIRE(thread_spawn(&startTestThread, NULL, detachThreadId));
+    CHECK_NOTHROW(thread_detach(detachThreadId));
   }
 
   SECTION("fileExists_FileDoesNotExist") {

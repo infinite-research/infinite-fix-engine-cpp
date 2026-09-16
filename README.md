@@ -176,6 +176,8 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 ## Security
 
 For security-related issues, please see our [Security Policy](SECURITY.md).
+Trust boundaries, data flows, and deployment control ownership are recorded in
+[SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md).
 
 ## License
 
@@ -190,4 +192,3 @@ QuickFIX is licensed under the [QuickFIX Software License](LICENSE). See the LIC
 ## Acknowledgments
 
 QuickFIX is maintained by the open-source community. Special thanks to all [contributors](https://github.com/quickfix/quickfix/graphs/contributors) who have helped make this project possible.
-

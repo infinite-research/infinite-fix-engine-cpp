@@ -5,6 +5,7 @@ set -u
 SOURCE_ROOT=${1:?source root is required}
 SCRATCH_ROOT=${2:?scratch root is required}
 CASE_ROOT=$(mktemp -d "$SCRATCH_ROOT/acceptance-harness.XXXXXX") || exit 1
+CASE_ROOT=$(CDPATH= cd "$CASE_ROOT" && pwd -P) || exit 1
 PIDS=
 FAILURES=0
 
@@ -54,6 +55,13 @@ run_bounded() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+SETUP_CONFIG="$CASE_ROOT/setup/nested/at.cfg"
+"$SOURCE_ROOT/test/setup.sh" 54321 "$SETUP_CONFIG" "$SOURCE_ROOT/spec" || exit 1
+grep -qx 'SocketAcceptAddress=127.0.0.1' "$SETUP_CONFIG" ||
+  fail "setup did not bind acceptance sessions to loopback"
+grep -qx 'NonStopSession=Y' "$SETUP_CONFIG" ||
+  fail "setup did not make acceptance sessions nonstop explicitly"
 
 cat > "$CASE_ROOT/listener.rb" <<'RUBY'
 require "socket"
@@ -124,6 +132,8 @@ SH
 cat > "$FAKE_SOURCE/Runner.rb" <<'RUBY'
 require "socket"
 
+exit 90 unless Process.getrlimit(Process::RLIMIT_CORE).first == 0
+
 case ENV["FAKE_RUNNER_MODE"]
 when "success"
   exit 0
@@ -157,6 +167,9 @@ cat > "$FAKE_BUILD/at" <<'RUBY'
 #!/usr/bin/env ruby
 require "socket"
 
+exit 90 unless Process.getrlimit(Process::RLIMIT_CORE).first == 0
+File.write(ENV.fetch("FAKE_ACCEPTOR_ARGS_FILE"), ARGV.join("\n") + "\n") if ENV["FAKE_ACCEPTOR_ARGS_FILE"]
+
 if ENV["FAKE_ACCEPTOR_MODE"] == "die"
   warn "fake acceptor died before readiness"
   exit 23
@@ -181,11 +194,35 @@ end
 RUBY
 chmod +x "$FAKE_SOURCE/setup.sh" "$FAKE_BUILD/at"
 
+FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
+if QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+    run_bounded "$SOURCE_ROOT/test/runat.sh" invalid "$FREE_PORT" >"$CASE_ROOT/invalid-mode.out" 2>&1; then
+  fail "runat accepted an invalid mode"
+fi
+grep -q 'Usage:' "$CASE_ROOT/invalid-mode.out" || fail "runat did not explain its mode contract"
+
+for MODE in nonthreaded threaded; do
+  FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
+  if ! QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
+      FAKE_ACCEPTOR_MODE=live FAKE_RUNNER_MODE=success \
+      FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/$MODE-at.pid" FAKE_ACCEPTOR_ARGS_FILE="$CASE_ROOT/$MODE-at.args" \
+      run_bounded "$SOURCE_ROOT/test/runat.sh" "$MODE" "$FREE_PORT" >"$CASE_ROOT/$MODE.out" 2>&1; then
+    fail "runat rejected the $MODE mode"
+    continue
+  fi
+  printf '%s\n' -f "$FAKE_BUILD/cfg/at.cfg" >"$CASE_ROOT/$MODE-expected.args"
+  if [ "$MODE" = threaded ]; then
+    printf '%s\n' -t >>"$CASE_ROOT/$MODE-expected.args"
+  fi
+  cmp "$CASE_ROOT/$MODE-expected.args" "$CASE_ROOT/$MODE-at.args" ||
+    fail "runat forwarded the wrong arguments for $MODE mode"
+done
+
 start_listener "$CASE_ROOT/occupied.port" || exit 1
 OCCUPIED_PID=$LAST_PID
 QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=live FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/occupied-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$LAST_PORT" >"$CASE_ROOT/occupied.out" 2>&1
+    run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$LAST_PORT" >"$CASE_ROOT/occupied.out" 2>&1
 OCCUPIED_STATUS=$?
 if [ "$OCCUPIED_STATUS" -eq 0 ]; then
   fail "runat accepted an independently occupied port"
@@ -197,7 +234,7 @@ kill -0 "$OCCUPIED_PID" 2>/dev/null || fail "runat killed the unrelated port own
 FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
 QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=die FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/dying-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/dying.out" 2>&1
+    run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$FREE_PORT" >"$CASE_ROOT/dying.out" 2>&1
 DYING_STATUS=$?
 if [ "$DYING_STATUS" -eq 0 ]; then
   fail "runat accepted an acceptor that died before readiness"
@@ -211,7 +248,7 @@ FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1];
 QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=ready_then_die FAKE_RUNNER_MODE=success \
     FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/late-dying-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/late-dying.out" 2>&1
+    run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$FREE_PORT" >"$CASE_ROOT/late-dying.out" 2>&1
 LATE_DYING_STATUS=$?
 if [ "$LATE_DYING_STATUS" -eq 0 ]; then
   fail "runat accepted an acceptor that died after readiness"
@@ -226,7 +263,7 @@ QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
     FAKE_ACCEPTOR_MODE=live_with_sentinel FAKE_RUNNER_MODE=barrier \
     FAKE_RUNNER_BARRIER_FILE="$CASE_ROOT/runner-barrier" \
     FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/runner-failure-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/runner-failure.out" 2>&1
+    run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$FREE_PORT" >"$CASE_ROOT/runner-failure.out" 2>&1
 RUNNER_FAILURE_STATUS=$?
 if [ "$RUNNER_FAILURE_STATUS" -ne 31 ]; then
   fail "runat returned $RUNNER_FAILURE_STATUS instead of the first runner failure 31"
@@ -245,8 +282,8 @@ start_listener "$CASE_ROOT/sentinel.port" || exit 1
 SENTINEL_PID=$LAST_PID
 FREE_PORT=$(ruby -rsocket -e 's = TCPServer.new("127.0.0.1", 0); puts s.addr[1]; s.close')
 if ! QUICKFIX_TEST_SRCDIR="$FAKE_SOURCE" QUICKFIX_TEST_BUILDDIR="$FAKE_BUILD" \
-    FAKE_ACCEPTOR_MODE=live FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/live-at.pid" \
-    run_bounded "$SOURCE_ROOT/test/runat.sh" "$FREE_PORT" >"$CASE_ROOT/live.out" 2>&1; then
+    FAKE_ACCEPTOR_MODE=live FAKE_RUNNER_MODE=success FAKE_ACCEPTOR_PID_FILE="$CASE_ROOT/live-at.pid" \
+    run_bounded "$SOURCE_ROOT/test/runat.sh" nonthreaded "$FREE_PORT" >"$CASE_ROOT/live.out" 2>&1; then
   fail "runat rejected a live owned acceptor"
 fi
 kill -0 "$SENTINEL_PID" 2>/dev/null || fail "runat killed an unrelated process"

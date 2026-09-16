@@ -4,11 +4,14 @@ PORT=$1
 CONFIG_FILE=${2:-cfg/at.cfg}
 SPEC_DIR=${3:-../spec}
 
+mkdir -p "$(dirname "$CONFIG_FILE")" || exit 1
 cat > "$CONFIG_FILE" <<EOF
 [DEFAULT]
 ConnectionType=acceptor
 SocketAcceptPort=$PORT
+SocketAcceptAddress=127.0.0.1
 SocketReuseAddress=Y
+NonStopSession=Y
 StartTime=00:00:00
 EndTime=00:00:00
 SenderCompID=ISLD

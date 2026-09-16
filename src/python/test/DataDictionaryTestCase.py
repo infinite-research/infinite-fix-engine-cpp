@@ -1,5 +1,9 @@
 import quickfix as fix
 import quickfix40 as fix40
+import os
+import subprocess
+import sys
+import textwrap
 import unittest
 
 class TooHigh(fix.StringField):
@@ -13,6 +17,119 @@ class DataDictionaryTestCase(unittest.TestCase):
 
     def setUp(self):
         self.object = fix.DataDictionary()
+
+    def assertBindingSubprocess(self, source):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(
+            os.path.abspath(path or os.getcwd()) for path in sys.path
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(source)],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_getGroup_missing_message_is_safe(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            group = fix.DataDictionary()
+            group.addMsgType("group")
+            dictionary.addGroup("A", 100, 101, group)
+            output = fix.DataDictionary()
+            output.addMsgType("unchanged")
+            for _ in range(10000):
+                assert dictionary.getGroup("Z", 100, 7, output) is False
+                assert output.isMsgType("unchanged")
+        """)
+
+    def test_getGroup_missing_tag_is_safe(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            group = fix.DataDictionary()
+            group.addMsgType("group")
+            dictionary.addGroup("A", 100, 101, group)
+            output = fix.DataDictionary()
+            output.addMsgType("unchanged")
+            for _ in range(10000):
+                assert dictionary.getGroup("A", 999, 7, output) is False
+                assert output.isMsgType("unchanged")
+        """)
+
+    def test_getGroup_wrong_output_type_raises(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            group = fix.DataDictionary()
+            dictionary.addGroup("A", 100, 101, group)
+            try:
+                dictionary.getGroup("A", 100, 0, object())
+            except TypeError:
+                pass
+            else:
+                raise AssertionError("wrong output type was accepted")
+        """)
+
+    def test_string_reference_placeholder_rejects_wrong_type(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            dictionary.addFieldName(1, "Account")
+            try:
+                dictionary.getFieldName(1, object())
+            except TypeError:
+                pass
+            else:
+                raise AssertionError("wrong string reference placeholder was accepted")
+        """)
+
+    def test_int_reference_placeholder_rejects_wrong_type(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            dictionary.addFieldName(1, "Account")
+            try:
+                dictionary.getFieldTag("Account", object())
+            except TypeError:
+                pass
+            else:
+                raise AssertionError("wrong int reference placeholder was accepted")
+        """)
+
+    def test_getGroup_recovers_after_failures(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            dictionary = fix.DataDictionary()
+            group = fix.DataDictionary()
+            group.addMsgType("group")
+            dictionary.addGroup("A", 100, 101, group)
+            output = fix.DataDictionary()
+            assert dictionary.getGroup("Z", 100, 0, output) is False
+            assert dictionary.getGroup("A", 999, 0, output) is False
+            assert dictionary.getGroup("A", 100, 0, output) == {0: 101}
+            assert output.isMsgType("group")
+        """)
+
+    def test_hasValidStructure_keeps_false_output_tag(self):
+        self.assertBindingSubprocess("""
+            import quickfix as fix
+
+            message = fix.Message()
+            message.setString(
+                "8=FIX.4.2\\x019=0\\x0135=A\\x0110=000\\x01108=30\\x0110=000\\x01",
+                False,
+            )
+            assert message.hasValidStructure(0) == {0: 108}
+        """)
 
     def test_addMsgType(self):
         self.assertTrue( self.object.isMsgType("A") == 0 )
