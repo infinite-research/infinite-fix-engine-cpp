@@ -2150,16 +2150,9 @@ TEST_CASE(
                 reattach.request.event_identity_sha256));
         PlanBuffers pendingBuffers;
         auto pending = pendingBuffers.response();
-        const auto pendingStatus = irfq_infinite_prepare_v2(session, &reattach.request, &pending);
-        if (sender == lastLegal) {
-          CHECK(pendingStatus == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
-          CHECK(pending.prepare_id.low == 0);
-          CHECK(pending.native_state.length == 0);
-          CHECK(pending.output.length == 0);
-          CHECK(pending.action_count == 0);
-          break;
-        }
-        REQUIRE(pendingStatus == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+        // §5c admits the exhausted-sender predecessor form at an eligible VALUE target: C=FIX_SEQ_BOUND-1.
+        REQUIRE(
+            irfq_infinite_prepare_v2(session, &reattach.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
         CHECK(pending.store_range_begin == sender);
         CHECK(pending.store_range_end_exclusive == sender + 1);
         const auto row = retainedRow(
@@ -2216,7 +2209,8 @@ TEST_CASE(
     std::uint64_t peer;
   };
   const std::array directVariants{
-      DirectVariant{"equal-original-conflicting-peer", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 7, true, 6},
+      DirectVariant{"equal-original-peer-below-begin", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 7, true, 1},
+      DirectVariant{"equal-original-peer-above-sender", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 7, true, 8},
       DirectVariant{"predecessor-without-peer", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 6, false, 0},
       DirectVariant{"predecessor-conflicting-peer", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 6, true, 7},
       DirectVariant{"future-original", IRFQ_INFINITE_SEQUENCE_VALUE_V2, 8, false, 0},
@@ -2317,13 +2311,31 @@ TEST_CASE(
           exhaustedReattach.request.event_identity_sha256));
   PlanBuffers exhaustedBuffers;
   auto exhaustedResult = exhaustedBuffers.response();
-  CHECK(
+  // Sender and original both EXHAUSTED after confirmed handoff fail closed at an eligible VALUE target (§5c).
+  REQUIRE(
       irfq_infinite_prepare_v2(exhausted, &exhaustedReattach.request, &exhaustedResult)
-      == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
-  CHECK(exhaustedResult.prepare_id.low == 0);
-  CHECK(exhaustedResult.native_state.length == 0);
+      == IRFQ_INFINITE_STATUS_READY_V2);
   CHECK(exhaustedResult.output.length == 0);
-  CHECK(exhaustedResult.action_count == 0);
+  CHECK(exhaustedResult.output_frame_count == 0);
+  REQUIRE(exhaustedResult.action_count == 2);
+  CHECK(exhaustedResult.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+  CHECK(exhaustedResult.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+  CHECK(exhaustedResult.actions[0].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+  CHECK(exhaustedResult.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+  CHECK(exhaustedResult.actions[1].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+  CHECK(read32(exhaustedResult.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+  CHECK(read64(exhaustedResult.native_state.data + 132) == 0);
+  CHECK(read64(exhaustedResult.native_state.data + 180) == UINT64_C(1));
+  CHECK(read32(exhaustedResult.native_state.data + 168) == 0);
+  CHECK(read64(exhaustedResult.native_state.data + 172) == 0);
+  CHECK(
+      std::equal(
+          exhaustedRecovery.begin() + 220,
+          exhaustedRecovery.begin() + 284,
+          exhaustedResult.native_state.data + 220));
+  CHECK(read32(exhaustedResult.native_state.data + 292) == 0);
+  CHECK(read64(exhaustedResult.native_state.data + 300) == 0);
+  CHECK(read32(exhaustedResult.native_state.data + 308) == IRFQ_INFINITE_REASON_NONE_V2);
   CHECK(irfq_infinite_destroy_v2(exhausted) == IRFQ_INFINITE_STATUS_OK_V2);
 
   for (const bool nativeExhausted : {false, true}) {
@@ -2422,6 +2434,566 @@ TEST_CASE(
           0,
           0)
       == nullptr);
+}
+
+TEST_CASE(
+    "InfiniteFrameAdapterV2 reattaches detached direct recovery from an authenticated lower 789",
+    "[infinite][adapter][v2][task2d][resend][direct-response-barrier][lower-789]") {
+  // Chapter 19 lower-789 vectors: [B,E)=[10,20), saved cursor 15, sender/original 30, target VALUE,7.
+  constexpr auto lastLegal = static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1;
+  const auto config = otherwiseValidUnavailableProfile();
+  const auto directState = [&](std::uint64_t sender) {
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> state{};
+    auto *source = detachedResendRecoverySession(config, 10, 20, 10, sender, &state);
+    REQUIRE(source != nullptr);
+    REQUIRE(irfq_infinite_destroy_v2(source) == IRFQ_INFINITE_STATUS_OK_V2);
+    write64(state.data() + 144, 7);
+    write64(state.data() + 244, 15);
+    return state;
+  };
+  const auto detachedState = directState(30);
+  const auto restore = [&](const std::uint8_t *state, std::uint64_t revision) {
+    return FIX::createInfiniteFrameAdapterStockNonconformanceSmokeSession(
+        config.data(),
+        config.size(),
+        state,
+        IRFQ_INFINITE_NATIVE_STATE_BYTES_V2,
+        1,
+        revision,
+        0,
+        0);
+  };
+  const auto logonFrame = [](std::uint64_t target, bool peerPresent, std::uint64_t peer) {
+    auto fields = std::string("98=0\001108=30\001");
+    if (peerPresent) {
+      fields += "789=" + std::to_string(peer) + "\001";
+    }
+    return participantFrame('A', target, fields + "1137=10\0011407=299\0011408=INFINITE-RFQ-1.0.0\001");
+  };
+  const auto bind = [](irfq_infinite_session_v2 *session,
+                       InboundCall &call,
+                       std::uint64_t revision,
+                       std::uint64_t original,
+                       std::int64_t now) {
+    call.request.expected_revision = revision;
+    call.request.next_original_value = original;
+    call.request.now_tai_ns = now;
+    call.request.now_utc_ns = now;
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(
+            session,
+            call.request,
+            call.request.event_identity_sha256));
+  };
+  const auto commit = [](irfq_infinite_session_v2 *target, const irfq_infinite_prepare_response_v2 &result) {
+    irfq_infinite_apply_committed_request_v2 request{};
+    init(request);
+    request.prepare_id = result.prepare_id;
+    request.result_revision = result.result_revision;
+    std::copy_n(result.native_state_sha256, 32, request.native_state_sha256);
+    irfq_infinite_operation_response_v2 response{};
+    init(response);
+    return irfq_infinite_apply_committed_v2(target, &request, &response);
+  };
+  const auto transportClosed = [](irfq_infinite_session_v2 *session,
+                                  PlanBuffers &buffers,
+                                  std::uint64_t revision,
+                                  std::int64_t now) {
+    std::array<std::uint8_t, 32> payload{};
+    payload.fill(0x6d);
+    irfq_infinite_prepare_request_v2 close{};
+    init(close);
+    close.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+    close.stage = IRFQ_INFINITE_STAGE_EVENT_V2;
+    close.event = IRFQ_INFINITE_EVENT_TRANSPORT_CLOSED_V2;
+    close.expected_epoch = 1;
+    close.expected_revision = revision;
+    close.now_tai_ns = now;
+    close.now_utc_ns = now;
+    close.payload = {payload.data(), payload.size()};
+    REQUIRE(
+        FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(session, close, close.event_identity_sha256));
+    auto closed = buffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &close, &closed) == IRFQ_INFINITE_STATUS_READY_V2);
+    return closed;
+  };
+  const auto checkUnchangedRecovery = [&](const irfq_infinite_prepare_response_v2 &result, std::uint64_t cursor) {
+    CHECK(read32(result.native_state.data + 220) == 1);
+    CHECK(read32(result.native_state.data + 224) == 3);
+    CHECK(read64(result.native_state.data + 228) == 10);
+    CHECK(read64(result.native_state.data + 236) == 20);
+    CHECK(read64(result.native_state.data + 244) == cursor);
+    CHECK(std::equal(detachedState.begin() + 252, detachedState.begin() + 284, result.native_state.data + 252));
+    CHECK(read32(result.native_state.data + 168) == 0);
+    CHECK(read64(result.native_state.data + 172) == 0);
+  };
+  const auto checkFailClosed = [](const irfq_infinite_prepare_response_v2 &result, const std::uint8_t *input) {
+    CHECK(result.output.length == 0);
+    CHECK(result.output_frame_count == 0);
+    REQUIRE(result.action_count == 2);
+    CHECK(result.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+    CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_NO_CONSUME_V2);
+    CHECK(result.actions[0].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    CHECK(result.actions[1].kind == IRFQ_INFINITE_ACTION_DISCONNECT_V2);
+    CHECK(result.actions[1].reason_code == IRFQ_INFINITE_REASON_SEQUENCE_V2);
+    CHECK(std::equal(input + 128, input + 152, result.native_state.data + 128));
+    CHECK(std::equal(input + 220, input + 284, result.native_state.data + 220));
+    CHECK(read32(result.native_state.data + 168) == 0);
+    CHECK(read64(result.native_state.data + 172) == 0);
+  };
+
+  struct Accepted {
+    const char *name;
+    std::uint64_t peer;
+    std::uint64_t cursor;
+  };
+  const std::array accepted{
+      Accepted{"T1-peer-12", 12, 12},
+      Accepted{"T2-peer-17", 17, 15},
+      Accepted{"T3-peer-20", 20, 15},
+      Accepted{"T4-peer-25", 25, 15},
+      Accepted{"T11-peer-begin-10", 10, 10}};
+  for (const auto &row : accepted) {
+    DYNAMIC_SECTION(row.name) {
+      auto *session = restore(detachedState.data(), 4);
+      REQUIRE(session != nullptr);
+      InboundCall reattach(session, logonFrame(7, true, row.peer), 0x61);
+      bind(session, reattach, 4, 30, INT64_C(1700000000123456004));
+      PlanBuffers responseBuffers;
+      auto response = responseBuffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &reattach.request, &response) == IRFQ_INFINITE_STATUS_READY_V2);
+      REQUIRE(response.action_count == 2);
+      CHECK(response.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+      CHECK(response.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+      CHECK(response.actions[0].reason_code == IRFQ_INFINITE_REASON_NONE_V2);
+      CHECK(response.actions[1].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+      CHECK(response.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+      CHECK(response.actions[1].msg_type_length == 1);
+      CHECK(response.actions[1].msg_type[0] == 'A');
+      CHECK(response.actions[1].sequence_begin == 30);
+      CHECK(response.actions[1].sequence_end_exclusive == 31);
+      const std::string responseWire(reinterpret_cast<const char *>(response.output.data), response.output.length);
+      CHECK(responseWire.find("\00135=A\001") != std::string::npos);
+      CHECK(responseWire.find("\00134=30\001") != std::string::npos);
+      CHECK(responseWire.find("\001789=8\001") != std::string::npos);
+      CHECK(read32(response.native_state.data + 128) == IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+      CHECK(read64(response.native_state.data + 132) == 31);
+      CHECK(read64(response.native_state.data + 180) == UINT64_C(135));
+      CHECK(read32(response.native_state.data + 292) == 0);
+      CHECK(read32(response.native_state.data + 296) == 0);
+      CHECK(read64(response.native_state.data + 300) == 0);
+      checkUnchangedRecovery(response, row.cursor);
+      REQUIRE(commit(session, response) == IRFQ_INFINITE_STATUS_OK_V2);
+
+      ContinueResendCall handedOff(session, 10, 20, row.cursor, 5, 31);
+      PlanBuffers handoffBuffers;
+      auto handoff = handoffBuffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &handedOff.request, &handoff) == IRFQ_INFINITE_STATUS_READY_V2);
+      CHECK(handoff.output.length == 0);
+      CHECK(handoff.action_count == 0);
+      CHECK(read32(handoff.native_state.data + 292) == 1);
+      CHECK(read64(handoff.native_state.data + 300) == row.cursor);
+      checkUnchangedRecovery(handoff, row.cursor);
+      REQUIRE(commit(session, handoff) == IRFQ_INFINITE_STATUS_OK_V2);
+
+      ContinueResendCall page(session, 10, 20, row.cursor, 6, 31);
+      PlanBuffers pendingBuffers;
+      auto pending = pendingBuffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &page.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+      CHECK(pending.store_range_begin == row.cursor);
+      CHECK(pending.store_range_end_exclusive == 20);
+      std::vector<std::string> bodies;
+      std::vector<std::string> wires;
+      std::vector<irfq_infinite_store_row_v2> rows;
+      bodies.reserve(20);
+      wires.reserve(20);
+      rows.reserve(20);
+      for (auto sequence = row.cursor; sequence < 20; ++sequence) {
+        bodies.push_back(quoteResponseBody("LOWER-789-" + std::to_string(sequence)));
+        wires.push_back(finishFix(
+            "35=AJ\00134=" + std::to_string(sequence)
+            + "\00149=VENUE\00152=20260828-12:00:00.000000\00156=PARTICIPANT\001369=1\001" + bodies.back()));
+        rows.push_back(retainedRow(
+            sequence,
+            IRFQ_INFINITE_STORE_CLASS_MANDATORY_APPLICATION_V2,
+            "AJ",
+            bodies.back(),
+            wires.back()));
+      }
+      irfq_infinite_resume_request_v2 resume{};
+      init(resume);
+      resume.prepare_id = pending.prepare_id;
+      resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+      resume.store_range_begin = row.cursor;
+      resume.store_range_end_exclusive = 20;
+      resume.store_rows = rows.data();
+      resume.store_row_count = rows.size();
+      PlanBuffers resumedBuffers;
+      auto resumed = resumedBuffers.response();
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &resumed) == IRFQ_INFINITE_STATUS_READY_V2);
+      REQUIRE(resumed.action_count == 20 - row.cursor);
+      CHECK(resumed.output_frame_count == 20 - row.cursor);
+      for (std::uint32_t index = 0; index < resumed.action_count; ++index) {
+        CHECK(resumed.actions[index].output_class == IRFQ_INFINITE_OUTPUT_SESSION_RETRANSMIT_V2);
+        CHECK(resumed.actions[index].sequence_begin == row.cursor + index);
+        CHECK(resumed.actions[index].sequence_end_exclusive == row.cursor + index + 1);
+      }
+      const std::string retransmitted(reinterpret_cast<const char *>(resumed.output.data), resumed.output.length);
+      CHECK(retransmitted.find("\00134=" + std::to_string(row.cursor) + "\001") != std::string::npos);
+      CHECK(retransmitted.find("\00134=19\001") != std::string::npos);
+      CHECK(retransmitted.find("\00134=20\001") == std::string::npos);
+      CHECK(read64(resumed.native_state.data + 132) == 31);
+      CHECK(read32(resumed.native_state.data + 220) == 0);
+      CHECK(read32(resumed.native_state.data + 292) == 0);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+
+  DYNAMIC_SECTION("T6-abort-retry-and-transport-loss") {
+    auto *session = restore(detachedState.data(), 4);
+    REQUIRE(session != nullptr);
+    InboundCall reattach(session, logonFrame(7, true, 12), 0x62);
+    bind(session, reattach, 4, 30, INT64_C(1700000000123456004));
+    PlanBuffers firstBuffers;
+    auto first = firstBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &reattach.request, &first) == IRFQ_INFINITE_STATUS_READY_V2);
+    const std::string firstOutput(reinterpret_cast<const char *>(first.output.data), first.output.length);
+    std::array<std::uint8_t, 32> firstDigest{};
+    std::copy_n(first.native_state_sha256, firstDigest.size(), firstDigest.begin());
+    irfq_infinite_abort_request_v2 abort{};
+    init(abort);
+    abort.prepare_id = first.prepare_id;
+    irfq_infinite_operation_response_v2 aborted{};
+    init(aborted);
+    REQUIRE(irfq_infinite_abort_v2(session, &abort, &aborted) == IRFQ_INFINITE_STATUS_OK_V2);
+    PlanBuffers retryBuffers;
+    auto retry = retryBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &reattach.request, &retry) == IRFQ_INFINITE_STATUS_READY_V2);
+    CHECK(std::equal(firstDigest.begin(), firstDigest.end(), retry.native_state_sha256));
+    CHECK(std::string(reinterpret_cast<const char *>(retry.output.data), retry.output.length) == firstOutput);
+    checkUnchangedRecovery(retry, 12);
+    REQUIRE(commit(session, retry) == IRFQ_INFINITE_STATUS_OK_V2);
+
+    PlanBuffers closeBuffers;
+    const auto closed = transportClosed(session, closeBuffers, 5, INT64_C(1700000000123456005));
+    CHECK(read64(closed.native_state.data + 180) == UINT64_C(1));
+    CHECK(read32(closed.native_state.data + 292) == 0);
+    CHECK(read64(closed.native_state.data + 300) == 0);
+    checkUnchangedRecovery(closed, 12);
+    auto *restored = restore(closed.native_state.data, 6);
+    REQUIRE(restored != nullptr);
+    CHECK(irfq_infinite_destroy_v2(restored) == IRFQ_INFINITE_STATUS_OK_V2);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  struct Rejected {
+    const char *name;
+    std::uint64_t original;
+    std::uint64_t peer;
+  };
+  const std::array rejected{
+      Rejected{"T7-original-27-peer-12", 27, 12},
+      Rejected{"T8-original-27-peer-28", 27, 28},
+      Rejected{"T9-peer-below-begin-9", 30, 9},
+      Rejected{"T10-peer-above-sender-31", 30, 31}};
+  for (const auto &row : rejected) {
+    DYNAMIC_SECTION(row.name) {
+      auto *session = restore(detachedState.data(), 4);
+      REQUIRE(session != nullptr);
+      InboundCall reattach(session, logonFrame(7, true, row.peer), 0x63);
+      bind(session, reattach, 4, row.original, INT64_C(1700000000123456004));
+      PlanBuffers buffers;
+      auto result = buffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &reattach.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+      checkFailClosed(result, detachedState.data());
+      CHECK(read64(result.native_state.data + 244) == 15);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+
+  // Target EXHAUSTED fails before a plan (§5c), for either sender form; the scratch target is FIX_SEQ_BOUND-1.
+  for (const bool senderExhausted : {false, true}) {
+    DYNAMIC_SECTION("target-exhausted-before-plan-sender-exhausted=" << senderExhausted) {
+      auto state = directState(senderExhausted ? lastLegal : 30);
+      if (senderExhausted) {
+        write32(state.data() + 128, IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+        write64(state.data() + 132, 0);
+      }
+      write32(state.data() + 140, IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2);
+      write64(state.data() + 144, 0);
+      auto *session = restore(state.data(), 4);
+      REQUIRE(session != nullptr);
+      InboundCall reattach(session, logonFrame(lastLegal, true, 12), 0x69);
+      bind(session, reattach, 4, senderExhausted ? lastLegal : 30, INT64_C(1700000000123456004));
+      PlanBuffers buffers;
+      auto result = buffers.response();
+      CHECK(irfq_infinite_prepare_v2(session, &reattach.request, &result) == IRFQ_INFINITE_STATUS_INVALID_ARGUMENT_V2);
+      CHECK(result.prepare_id.low == 0);
+      CHECK(result.native_state.length == 0);
+      CHECK(result.output.length == 0);
+      CHECK(result.action_count == 0);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+
+  // After response loss the native sender is the successor of the retained response at `response`: VALUE,31 for
+  // the chapter-19 vectors, or EXHAUSTED,0 when the response used FIX_SEQ_BOUND-1 (§5c "or sender EXHAUSTED").
+  struct Predecessor {
+    const char *name;
+    std::uint64_t response;
+    std::uint32_t senderState;
+    std::uint64_t senderValue;
+    std::uint32_t originalState;
+    std::uint64_t original;
+    bool peerPresent;
+    std::uint64_t peer;
+    bool accepted;
+  };
+  constexpr auto value = IRFQ_INFINITE_SEQUENCE_VALUE_V2;
+  constexpr auto exhausted = IRFQ_INFINITE_SEQUENCE_EXHAUSTED_V2;
+  const std::array predecessors{
+      Predecessor{"T5-predecessor-peer-12", 30, value, 31, value, 30, true, 12, true},
+      Predecessor{"T12-predecessor-peer-below-begin-9", 30, value, 31, value, 30, true, 9, false},
+      Predecessor{"predecessor-peer-begin-10", 30, value, 31, value, 30, true, 10, true},
+      Predecessor{"exhausted-predecessor-peer-12", lastLegal, exhausted, 0, value, lastLegal, true, 12, true},
+      Predecessor{"exhausted-after-handoff-peer-12", lastLegal, exhausted, 0, exhausted, 0, true, 12, false},
+      Predecessor{
+          "exhausted-predecessor-peer-below-begin-9",
+          lastLegal,
+          exhausted,
+          0,
+          value,
+          lastLegal,
+          true,
+          9,
+          false},
+      Predecessor{"exhausted-predecessor-without-peer", lastLegal, exhausted, 0, value, lastLegal, false, 0, false},
+      Predecessor{
+          "exhausted-original-not-predecessor",
+          lastLegal,
+          exhausted,
+          0,
+          value,
+          lastLegal - 1,
+          true,
+          12,
+          false}};
+  for (const auto &row : predecessors) {
+    DYNAMIC_SECTION(row.name) {
+      const auto baseState = directState(row.response);
+      auto *session = restore(baseState.data(), 4);
+      REQUIRE(session != nullptr);
+      InboundCall initial(session, logonFrame(7, false, 0), 0x64);
+      bind(session, initial, 4, row.response, INT64_C(1700000000123456004));
+      PlanBuffers initialBuffers;
+      auto initialResult = initialBuffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &initial.request, &initialResult) == IRFQ_INFINITE_STATUS_READY_V2);
+      REQUIRE(initialResult.action_count == 2);
+      CHECK(initialResult.actions[1].sequence_begin == row.response);
+      checkUnchangedRecovery(initialResult, 15);
+      const std::string responseWire(
+          reinterpret_cast<const char *>(initialResult.output.data),
+          initialResult.output.length);
+      REQUIRE(commit(session, initialResult) == IRFQ_INFINITE_STATUS_OK_V2);
+
+      std::array<std::uint8_t, 56> casPayload{};
+      std::copy_n(initialResult.actions[0].binding_sha256, 32, casPayload.begin());
+      write32(casPayload.data() + 32, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+      write64(casPayload.data() + 36, 7);
+      write32(casPayload.data() + 44, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+      write64(casPayload.data() + 48, 8);
+      irfq_infinite_prepare_request_v2 cas{};
+      init(cas);
+      cas.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+      cas.stage = IRFQ_INFINITE_STAGE_TARGET_CAS_V2;
+      cas.event = IRFQ_INFINITE_EVENT_ADVANCE_TARGET_V2;
+      cas.expected_epoch = 1;
+      cas.expected_revision = 5;
+      cas.now_tai_ns = INT64_C(1700000000123456005);
+      cas.now_utc_ns = INT64_C(1700000000123456005);
+      cas.payload = {casPayload.data(), casPayload.size()};
+      REQUIRE(
+          FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(session, cas, cas.event_identity_sha256));
+      PlanBuffers casBuffers;
+      auto casResult = casBuffers.response();
+      REQUIRE(irfq_infinite_prepare_v2(session, &cas, &casResult) == IRFQ_INFINITE_STATUS_READY_V2);
+      REQUIRE(commit(session, casResult) == IRFQ_INFINITE_STATUS_OK_V2);
+
+      PlanBuffers closeBuffers;
+      const auto closed = transportClosed(session, closeBuffers, 6, INT64_C(1700000000123456006));
+      std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> lostState{};
+      std::copy_n(closed.native_state.data, closed.native_state.length, lostState.begin());
+      REQUIRE(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+      session = restore(lostState.data(), 7);
+      REQUIRE(session != nullptr);
+      CHECK(read32(lostState.data() + 128) == row.senderState);
+      CHECK(read64(lostState.data() + 132) == row.senderValue);
+      CHECK(read64(lostState.data() + 244) == 15);
+
+      InboundCall lost(session, logonFrame(8, row.peerPresent, row.peer), 0x65);
+      lost.request.next_original_state = row.originalState;
+      bind(session, lost, 7, row.original, INT64_C(1700000000123456007));
+      PlanBuffers pendingBuffers;
+      auto pending = pendingBuffers.response();
+      const auto status = irfq_infinite_prepare_v2(session, &lost.request, &pending);
+      if (!row.accepted) {
+        REQUIRE(status == IRFQ_INFINITE_STATUS_READY_V2);
+        checkFailClosed(pending, lostState.data());
+        CHECK(read64(pending.native_state.data + 244) == 15);
+        CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+        continue;
+      }
+      REQUIRE(status == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+      CHECK(pending.store_range_begin == row.response);
+      CHECK(pending.store_range_end_exclusive == row.response + 1);
+      const auto retained = retainedRow(
+          row.response,
+          IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2,
+          "A",
+          canonicalBody(responseWire),
+          responseWire);
+      irfq_infinite_resume_request_v2 resume{};
+      init(resume);
+      resume.prepare_id = pending.prepare_id;
+      resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+      resume.store_range_begin = row.response;
+      resume.store_range_end_exclusive = row.response + 1;
+      resume.store_rows = &retained;
+      resume.store_row_count = 1;
+      PlanBuffers retryBuffers;
+      auto retry = retryBuffers.response();
+      REQUIRE(irfq_infinite_resume_v2(session, &resume, &retry) == IRFQ_INFINITE_STATUS_READY_V2);
+      REQUIRE(retry.action_count == 2);
+      CHECK(retry.actions[0].kind == IRFQ_INFINITE_ACTION_INBOUND_PROTOCOL_DISPOSITION_V2);
+      CHECK(retry.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+      CHECK(retry.actions[1].kind == IRFQ_INFINITE_ACTION_OUTPUT_FRAME_V2);
+      CHECK(retry.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_RETRANSMIT_V2);
+      CHECK(retry.actions[1].msg_type[0] == 'A');
+      CHECK(retry.actions[1].sequence_begin == row.response);
+      CHECK(retry.output_frame_count == 1);
+      CHECK(read32(retry.native_state.data + 128) == row.senderState);
+      CHECK(read64(retry.native_state.data + 132) == row.senderValue);
+      CHECK(read64(retry.native_state.data + 180) == UINT64_C(135));
+      CHECK(read32(retry.native_state.data + 292) == 0);
+      CHECK(read64(retry.native_state.data + 300) == 0);
+      // Every accepted row has p<C and p<r=15, so the chosen cursor min(r,p) is the row's p (12 or 10).
+      checkUnchangedRecovery(retry, row.peer);
+      CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    }
+  }
+
+  // 05c:53: absent 789, p==N and p==C keep the saved cursor even when it lies above C (reachable because the
+  // direct range may end beyond the sender); only the additional branch with p<C rewinds to min(r,p).
+  DYNAMIC_SECTION("peer-equal-counter-and-predecessor-keep-cursor-above-C") {
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> wideState{};
+    auto *wideSource = detachedResendRecoverySession(config, 2, 11, 2, 6, &wideState);
+    REQUIRE(wideSource != nullptr);
+    REQUIRE(irfq_infinite_destroy_v2(wideSource) == IRFQ_INFINITE_STATUS_OK_V2);
+    write64(wideState.data() + 244, 7);
+    auto *session = restore(wideState.data(), 4);
+    REQUIRE(session != nullptr);
+    InboundCall equal(session, logonFrame(3, true, 6), 0x6a);
+    bind(session, equal, 4, 6, INT64_C(1700000000123456004));
+    PlanBuffers equalBuffers;
+    auto equalResult = equalBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &equal.request, &equalResult) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(equalResult.action_count == 2);
+    CHECK(equalResult.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+    CHECK(equalResult.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+    CHECK(equalResult.actions[1].sequence_begin == 6);
+    CHECK(read64(equalResult.native_state.data + 132) == 7);
+    CHECK(read64(equalResult.native_state.data + 228) == 2);
+    CHECK(read64(equalResult.native_state.data + 236) == 11);
+    CHECK(read64(equalResult.native_state.data + 244) == 7);
+    const std::string responseWire(reinterpret_cast<const char *>(equalResult.output.data), equalResult.output.length);
+    REQUIRE(commit(session, equalResult) == IRFQ_INFINITE_STATUS_OK_V2);
+
+    std::array<std::uint8_t, 56> casPayload{};
+    std::copy_n(equalResult.actions[0].binding_sha256, 32, casPayload.begin());
+    write32(casPayload.data() + 32, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+    write64(casPayload.data() + 36, 3);
+    write32(casPayload.data() + 44, IRFQ_INFINITE_SEQUENCE_VALUE_V2);
+    write64(casPayload.data() + 48, 4);
+    irfq_infinite_prepare_request_v2 cas{};
+    init(cas);
+    cas.kind = IRFQ_INFINITE_PREPARE_RUST_SESSION_CONTROL_V2;
+    cas.stage = IRFQ_INFINITE_STAGE_TARGET_CAS_V2;
+    cas.event = IRFQ_INFINITE_EVENT_ADVANCE_TARGET_V2;
+    cas.expected_epoch = 1;
+    cas.expected_revision = 5;
+    cas.now_tai_ns = INT64_C(1700000000123456005);
+    cas.now_utc_ns = INT64_C(1700000000123456005);
+    cas.payload = {casPayload.data(), casPayload.size()};
+    REQUIRE(FIX::computeInfiniteFrameAdapterStockNonconformanceSmokeIdentity(session, cas, cas.event_identity_sha256));
+    PlanBuffers casBuffers;
+    auto casResult = casBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &cas, &casResult) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(commit(session, casResult) == IRFQ_INFINITE_STATUS_OK_V2);
+
+    PlanBuffers closeBuffers;
+    const auto closed = transportClosed(session, closeBuffers, 6, INT64_C(1700000000123456006));
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> lostState{};
+    std::copy_n(closed.native_state.data, closed.native_state.length, lostState.begin());
+    REQUIRE(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+    session = restore(lostState.data(), 7);
+    REQUIRE(session != nullptr);
+    CHECK(read64(lostState.data() + 244) == 7);
+
+    InboundCall lost(session, logonFrame(4, true, 6), 0x6b);
+    bind(session, lost, 7, 6, INT64_C(1700000000123456007));
+    PlanBuffers pendingBuffers;
+    auto pending = pendingBuffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &lost.request, &pending) == IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2);
+    CHECK(pending.store_range_begin == 6);
+    CHECK(pending.store_range_end_exclusive == 7);
+    const auto retained
+        = retainedRow(6, IRFQ_INFINITE_STORE_CLASS_SESSION_ADMIN_V2, "A", canonicalBody(responseWire), responseWire);
+    irfq_infinite_resume_request_v2 resume{};
+    init(resume);
+    resume.prepare_id = pending.prepare_id;
+    resume.kind = IRFQ_INFINITE_RESUME_STORE_RANGE_V2;
+    resume.store_range_begin = 6;
+    resume.store_range_end_exclusive = 7;
+    resume.store_rows = &retained;
+    resume.store_row_count = 1;
+    PlanBuffers retryBuffers;
+    auto retry = retryBuffers.response();
+    REQUIRE(irfq_infinite_resume_v2(session, &resume, &retry) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(retry.action_count == 2);
+    CHECK(retry.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+    CHECK(retry.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_RETRANSMIT_V2);
+    CHECK(retry.actions[1].sequence_begin == 6);
+    CHECK(retry.output_frame_count == 1);
+    CHECK(read64(retry.native_state.data + 132) == 7);
+    CHECK(read64(retry.native_state.data + 228) == 2);
+    CHECK(read64(retry.native_state.data + 236) == 11);
+    CHECK(read64(retry.native_state.data + 244) == 7);
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
+
+  // The former fail-closed `equal-original-conflicting-peer` shape is the §5c equal-counter lower-789 form.
+  DYNAMIC_SECTION("equal-counter-peer-6-inside-window") {
+    std::array<std::uint8_t, IRFQ_INFINITE_NATIVE_STATE_BYTES_V2> windowState{};
+    auto *session = detachedResendRecoverySession(config, 2, 5, 2, 7, &windowState);
+    REQUIRE(session != nullptr);
+    InboundCall reattach(session, logonFrame(3, true, 6), 0x66);
+    bind(session, reattach, 4, 7, INT64_C(1700000000123456004));
+    PlanBuffers buffers;
+    auto result = buffers.response();
+    REQUIRE(irfq_infinite_prepare_v2(session, &reattach.request, &result) == IRFQ_INFINITE_STATUS_READY_V2);
+    REQUIRE(result.action_count == 2);
+    CHECK(result.actions[0].disposition == IRFQ_INFINITE_DISPOSITION_DURABLE_CONSUME_V2);
+    CHECK(result.actions[1].output_class == IRFQ_INFINITE_OUTPUT_SESSION_ADMIN_V2);
+    CHECK(result.actions[1].msg_type[0] == 'A');
+    CHECK(result.actions[1].sequence_begin == 7);
+    CHECK(read64(result.native_state.data + 132) == 8);
+    CHECK(read64(result.native_state.data + 180) == UINT64_C(135));
+    CHECK(read64(result.native_state.data + 228) == 2);
+    CHECK(read64(result.native_state.data + 236) == 5);
+    CHECK(read64(result.native_state.data + 244) == 2);
+    CHECK(std::equal(windowState.begin() + 252, windowState.begin() + 284, result.native_state.data + 252));
+    CHECK(irfq_infinite_destroy_v2(session) == IRFQ_INFINITE_STATUS_OK_V2);
+  }
 }
 
 TEST_CASE(
@@ -8537,6 +9109,7 @@ TEST_CASE(
   const std::array variants{
       Variant{"initial-peer-absent", false, false, 7, 0, false},
       Variant{"initial-peer-equal", false, true, 7, 7, false},
+      Variant{"initial-peer-lower", false, true, 7, 6, false},
       Variant{"lost-response", false, true, 6, 6, false},
       Variant{"exhausted-lost-response", true, true, lastLegal, lastLegal, false},
       Variant{"heartbeat-range-sender-value", false, false, 7, 0, true},
@@ -8650,7 +9223,8 @@ TEST_CASE(
   };
   const std::array variants{
       Variant{"wrong-original", 8, 0, false},
-      Variant{"wrong-789", 7, 6, false},
+      Variant{"wrong-789-below-begin", 7, 1, false},
+      Variant{"wrong-789-above-sender", 7, 8, false},
       Variant{"wrong-comp-id", 7, 0, true}};
   for (const auto &variant : variants) {
     DYNAMIC_SECTION(variant.name) {

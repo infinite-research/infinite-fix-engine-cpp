@@ -2299,21 +2299,34 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
                                && exactNativeOriginal
                                && (!inbound.nextExpectedPresent || inbound.nextExpectedSequence <= senderSequence);
   const auto nativeSender = read64(session.state.data() + 132);
-  const bool directInitialResponse = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2
-                                     && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
-                                     && request.next_original_value == nativeSender
-                                     && (!inbound.nextExpectedPresent || inbound.nextExpectedSequence == nativeSender);
+  const auto recoveryBegin = read64(session.state.data() + 228);
+  const auto recoveryCursor = read64(session.state.data() + 244);
+  // §5c lower-789 reattachment: B<=p<=C resumes the same direct plan at cursor min(r,p); the Rust-owned Logon
+  // disposition keeps p.
+  const bool directInitialResponse
+      = senderState == IRFQ_INFINITE_SEQUENCE_VALUE_V2 && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+        && request.next_original_value == nativeSender
+        && (!inbound.nextExpectedPresent
+            || (recoveryBegin <= inbound.nextExpectedSequence && inbound.nextExpectedSequence <= nativeSender));
   const auto directPredecessor = senderExhausted ? static_cast<std::uint64_t>(IRFQ_INFINITE_FIX_SEQUENCE_BOUND_V2) - 1
                                  : nativeSender > 1 ? nativeSender - 1
                                                     : 0;
-  const bool directLostResponse = directPredecessor != 0
-                                  && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
-                                  && request.next_original_value == directPredecessor && inbound.nextExpectedPresent
-                                  && inbound.nextExpectedSequence == directPredecessor;
+  const bool directLostResponse
+      = directPredecessor != 0 && request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
+        && request.next_original_value == directPredecessor && inbound.nextExpectedPresent
+        && recoveryBegin <= inbound.nextExpectedSequence && inbound.nextExpectedSequence <= directPredecessor;
+  // Only the additional lower-789 branch (p<C, C the supplied original) sets the cursor to min(r,p); absent 789,
+  // p==N and p==C keep the saved cursor (§5c).
+  const bool lowerReattachmentRewind = inbound.nextExpectedPresent
+                                       && inbound.nextExpectedSequence < request.next_original_value
+                                       && inbound.nextExpectedSequence < recoveryCursor;
   const bool finalTargetDirect = finalTarget && detached && recoveryKind == RECOVERY_RESEND_REQUEST
                                  && authenticatedOrdinaryLogon && (directInitialResponse || directLostResponse);
+  // §5c: an exhausted sender in detached direct recovery reaches the reattachment rules below; only the predecessor
+  // form with its retained response is accepted, every other shape fails closed there.
+  const bool exhaustedDirectLogon
+      = senderExhausted && detached && recoveryKind == RECOVERY_RESEND_REQUEST && authenticatedOrdinaryLogon;
   const auto recoveryPeer = read64(session.state.data() + 172);
-  const auto recoveryCursor = read64(session.state.data() + 244);
   const bool exactLogonOriginal
       = request.next_original_state == IRFQ_INFINITE_SEQUENCE_VALUE_V2
         && ((recoveryPhase == RECOVERY_PHASE_PEER_PREFIX && request.next_original_value == recoveryCursor)
@@ -2329,7 +2342,8 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
   const bool resetDecision
       = validResetLogon && detached && (recoveryKind == RECOVERY_NONE || recoveryKind == RECOVERY_RESEND_REQUEST);
   if ((detached && inbound.msgType != "A") || (validResetLogon && !resetDecision)
-      || (!resetDecision && (targetExhausted || (senderExhausted && !finalTargetNone && !finalTargetDirect)))
+      || (!resetDecision
+          && (targetExhausted || (senderExhausted && !finalTargetNone && !finalTargetDirect && !exhaustedDirectLogon)))
       || (!resetDecision && recoveryActive && !detached)
       || (finalTarget && inbound.msgType == "A" && !validResetLogon && !finalTargetNone && !finalTargetDirect
           && !finalTargetLogon789)) {
@@ -2575,6 +2589,9 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       write32(plan->state.data() + 292, CONTINUATION_NONE);
       write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
       write64(plan->state.data() + 300, 0);
+      if (lowerReattachmentRewind) {
+        write64(plan->state.data() + 244, inbound.nextExpectedSequence);
+      }
       plan->stateDigest = domainDigest(NATIVE_STATE_DOMAIN, plan->state.data(), plan->state.size());
       return plan;
     }
@@ -2587,6 +2604,9 @@ std::unique_ptr<PendingPlan> registeredInboundPlan(
       write32(plan->state.data() + 292, CONTINUATION_NONE);
       write32(plan->state.data() + 296, IRFQ_INFINITE_APPLICATION_BLOCK_NONE_V2);
       write64(plan->state.data() + 300, 0);
+      if (lowerReattachmentRewind) {
+        write64(plan->state.data() + 244, inbound.nextExpectedSequence);
+      }
       plan->pendingStatus = IRFQ_INFINITE_STATUS_NEED_STORE_RANGE_V2;
       plan->storeBegin = directPredecessor;
       plan->storeEnd = directPredecessor + 1;

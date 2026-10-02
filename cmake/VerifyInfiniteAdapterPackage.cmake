@@ -520,9 +520,9 @@ if(SELF_TEST)
   set(_irfq_self_fake_source_tree 2222222222222222222222222222222222222222)
   set(_irfq_self_fake_source_merge_base 3333333333333333333333333333333333333333)
   set(_irfq_self_fake_source_diff 4444444444444444444444444444444444444444444444444444444444444444)
-  set(_irfq_self_spec_commit b6a225c1777d2a06d9d806b8311f4a752e65910d)
-  set(_irfq_self_spec_tree f5dbe6508ee285718771ccb5bf5a527694a8551e)
-  set(_irfq_self_spec_bundle 1444e4f0653d96079b92318423ae2825334e0d641b8d669b66c70262b2f445e9)
+  set(_irfq_self_spec_commit 23ecd154784d473090566498e1717443075701fc)
+  set(_irfq_self_spec_tree 61e2f737da74d17b915c55b33da8ba1d4b464f10)
+  set(_irfq_self_spec_bundle 437cf978419177c719a604496315395f57f1bbbafc3a9fc6b2f148a7b54230da)
   set(_irfq_self_image irfq-task2e-cpp:2026-08-30)
   set(_irfq_self_image_hash c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c)
   set(_irfq_self_build_command
@@ -606,13 +606,13 @@ if(SELF_TEST)
   set(_irfq_obsolete_spec ${_irfq_self_common})
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=4c2fdbc3e3d0fa2cf142894bb7d5f36e1596a33b")
+       "-DIRFQ_PACKAGE_SPECIFICATION_COMMIT=b6a225c1777d2a06d9d806b8311f4a752e65910d")
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_TREE=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=69de448251d9d7030c2d0716d9216415964ce2cc")
+       "-DIRFQ_PACKAGE_SPECIFICATION_TREE=f5dbe6508ee285718771ccb5bf5a527694a8551e")
   list(TRANSFORM _irfq_obsolete_spec REPLACE
        "^-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=.*"
-       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=e65d541e280d8ba78cc2ce8d5015be406894b402fe75c9f414bed5fb21f3ab99")
+       "-DIRFQ_PACKAGE_SPECIFICATION_BUNDLE_SHA256=1444e4f0653d96079b92318423ae2825334e0d641b8d669b66c70262b2f445e9")
   execute_process(
     COMMAND "${CMAKE_COMMAND}" ${_irfq_obsolete_spec} -P "${_irfq_package_script}"
     RESULT_VARIABLE _irfq_obsolete_spec_result
@@ -1521,9 +1521,9 @@ _irfq_require_equal("${_irfq_value_source_commit}" "${IRFQ_VERIFIED_SOURCE_COMMI
 _irfq_require_equal("${_irfq_value_source_tree}" "${IRFQ_VERIFIED_SOURCE_TREE}" source_tree)
 _irfq_require_equal("${_irfq_value_source_merge_base}" "${IRFQ_VERIFIED_SOURCE_MERGE_BASE}" source_merge_base)
 _irfq_require_equal("${_irfq_value_source_diff_sha256}" "${IRFQ_VERIFIED_SOURCE_DIFF_SHA256}" source_diff_sha256)
-_irfq_require_equal("${_irfq_value_specification_commit}" "b6a225c1777d2a06d9d806b8311f4a752e65910d" specification_commit)
-_irfq_require_equal("${_irfq_value_specification_tree}" "f5dbe6508ee285718771ccb5bf5a527694a8551e" specification_tree)
-_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "1444e4f0653d96079b92318423ae2825334e0d641b8d669b66c70262b2f445e9" specification_bundle_sha256)
+_irfq_require_equal("${_irfq_value_specification_commit}" "23ecd154784d473090566498e1717443075701fc" specification_commit)
+_irfq_require_equal("${_irfq_value_specification_tree}" "61e2f737da74d17b915c55b33da8ba1d4b464f10" specification_tree)
+_irfq_require_equal("${_irfq_value_specification_bundle_sha256}" "437cf978419177c719a604496315395f57f1bbbafc3a9fc6b2f148a7b54230da" specification_bundle_sha256)
 _irfq_require_equal("${_irfq_value_target}" "x86_64-unknown-linux-gnu" target)
 _irfq_require_equal("${_irfq_value_build_image}" "irfq-task2e-cpp:2026-08-30" build_image)
 _irfq_require_equal("${_irfq_value_build_image_sha256}" "c333c04c1f5ca0496016b43996fbdeed30c3b1b91f5e1581a418bf68a518139c" build_image_sha256)
