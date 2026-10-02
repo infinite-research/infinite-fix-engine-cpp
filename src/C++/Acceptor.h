@@ -32,12 +32,17 @@
 #include "MessageStore.h"
 #include "Responder.h"
 #include "SessionSettings.h"
+#include <atomic>
 #include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 
 namespace FIX {
 class Client;
 class Session;
+class ThreadedSocketAcceptor;
+class ThreadedSSLSocketAcceptor;
 
 /**
  * Base for classes which act as an acceptor for incoming connections.
@@ -72,6 +77,11 @@ public:
   /// Check to see if any sessions are currently logged on
   bool isLoggedOn() const;
 
+  /**
+   * @deprecated Always returns null and never attaches the responder, because it bypassed connection admission.
+   * Custom transports look up the candidate with Session::lookupSession(msg, true), enforce listener membership and
+   * AllowedRemoteAddresses, then call Session::acceptLogon. Removal is deferred to the next ABI-major release.
+   */
   Session *getSession(const std::string &msg, Responder &);
 
   const std::set<SessionID> &getSessions() const { return m_sessionIDs; }
@@ -86,7 +96,15 @@ public:
   MessageStoreFactory &getMessageStoreFactory() const { return m_messageStoreFactory; }
 
 private:
+  friend class ThreadedSocketAcceptor;
+  friend class ThreadedSSLSocketAcceptor;
+
   void initialize() EXCEPT(ConfigError);
+  bool completeDeferredStop();
+  bool completeDeferredStopLocked();
+  bool lockStopCleanup(std::unique_lock<std::mutex> &);
+  Acceptor *activateCurrentThread();
+  void restoreCurrentThread(Acceptor *);
 
   /// Implemented to configure acceptor
   virtual void onConfigure(const SessionSettings &) EXCEPT(ConfigError) {};
@@ -111,6 +129,11 @@ private:
   MessageStoreFactory &m_messageStoreFactory;
 
 protected:
+  /// Wait for the start loop before releasing transport resources; safe from the start loop itself.
+  void joinStartThread();
+  void deferStopCleanup() { m_stopCleanupPending = true; }
+  bool hasDeferredStopCleanup() const { return m_stopCleanupPending.load(); }
+
   SessionSettings m_settings;
 
 private:
@@ -120,6 +143,10 @@ private:
   std::atomic<bool> m_processing;
   std::atomic<bool> m_firstPoll;
   std::atomic<bool> m_stop;
+  std::atomic<bool> m_stopCleanupPending;
+  std::mutex m_stopCleanupMutex;
+  /// Thread holding m_stopCleanupMutex, so callbacks it dispatches can re-enter stop() without self-deadlock.
+  std::atomic<std::thread::id> m_stopCleanupOwner;
 };
 /*! @} */
 } // namespace FIX

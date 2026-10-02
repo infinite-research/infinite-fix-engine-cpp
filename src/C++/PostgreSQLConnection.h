@@ -37,6 +37,7 @@
 #include "DatabaseConnectionPool.h"
 #include "Mutex.h"
 #include <libpq-fe.h>
+#include <memory>
 
 namespace FIX {
 class PostgreSQLQuery {
@@ -92,7 +93,8 @@ private:
 class PostgreSQLConnection {
 public:
   PostgreSQLConnection(const DatabaseConnectionID &id)
-      : m_connectionID(id) {
+      : m_pConnection(nullptr),
+        m_connectionID(id) {
     connect();
   }
 
@@ -102,7 +104,8 @@ public:
       const std::string &password,
       const std::string &host,
       short port)
-      : m_connectionID(database, user, password, host, port) {
+      : m_pConnection(nullptr),
+        m_connectionID(database, user, password, host, port) {
     connect();
   }
 
@@ -134,20 +137,23 @@ private:
   void connect() {
     short port = m_connectionID.getPort();
 
-    m_pConnection = PQsetdbLogin(
-        m_connectionID.getHost().c_str(),
-        port == 0 ? "" : IntConvertor::convert(port).c_str(),
-        "",
-        "",
-        m_connectionID.getDatabase().c_str(),
-        m_connectionID.getUser().c_str(),
-        m_connectionID.getPassword().c_str());
+    std::unique_ptr<PGconn, decltype(&PQfinish)> connection(
+        PQsetdbLogin(
+            m_connectionID.getHost().c_str(),
+            port == 0 ? "" : IntConvertor::convert(port).c_str(),
+            "",
+            "",
+            m_connectionID.getDatabase().c_str(),
+            m_connectionID.getUser().c_str(),
+            m_connectionID.getPassword().c_str()),
+        &PQfinish);
 
-    if (!connected()) {
+    if (!connection || PQstatus(connection.get()) != CONNECTION_OK) {
       throw ConfigError(
           "Unable to connect to postgres database '" + m_connectionID.getDatabase() + "': " + m_connectionID.getUser()
           + '@' + m_connectionID.getHost() + ":" + std::to_string(port));
     }
+    m_pConnection = connection.release();
   }
 
   PGconn *m_pConnection;

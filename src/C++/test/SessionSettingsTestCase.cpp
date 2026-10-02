@@ -32,6 +32,70 @@
 using namespace FIX;
 
 TEST_CASE("SessionSettingsTests") {
+  SECTION("longAllowedRemoteAddressesPreservesTrailingSession") {
+    const std::string newline = GENERATE(std::string("\n"), std::string("\r\n"));
+    const bool finalNewline = GENERATE(false, true);
+    std::string addresses = "127.0.0.1";
+    for (int i = 0; i < 512; ++i) {
+      addresses += ",192.0.2.1";
+    }
+    std::istringstream input(
+        "[DEFAULT]" + newline + "ConnectionType=acceptor" + newline + "BeginString=FIX.4.2" + newline
+        + "SenderCompID=LOCAL" + newline + "[SESSION]" + newline + "TargetCompID=FIRST" + newline
+        + "AllowedRemoteAddresses=" + addresses + newline + "[SESSION]" + newline + "TargetCompID=LAST"
+        + (finalNewline ? newline : ""));
+    SessionSettings object;
+    CHECK_NOTHROW(input >> object);
+    CHECK(object.size() == 2);
+    CHECK(object.has(SessionID("FIX.4.2", "LOCAL", "LAST")));
+    REQUIRE(object.has(SessionID("FIX.4.2", "LOCAL", "FIRST")));
+    const auto &first = object.get(SessionID("FIX.4.2", "LOCAL", "FIRST"));
+    CHECK(first.has(ALLOWED_REMOTE_ADDRESSES));
+    if (first.has(ALLOWED_REMOTE_ADDRESSES)) {
+      CHECK(first.getString(ALLOWED_REMOTE_ADDRESSES) == addresses);
+    }
+  }
+
+  SECTION("failedReadPreservesExistingSessionSettings") {
+    struct FailingBuffer : std::stringbuf {
+      FailingBuffer(const std::string &configuration)
+          : std::stringbuf(configuration) {
+        setg(eback(), eback(), eback() + configuration.find("unfinished") + 3);
+      }
+      int_type underflow() override { throw std::ios_base::failure("read failed"); }
+    } buffer(
+        "[DEFAULT]\nConnectionType=acceptor\nBeginString=FIX.4.2\nValue=new\n"
+        "[SESSION]\nSenderCompID=LOCAL\nTargetCompID=NEW\nValue=unfinished\n"
+        "[SESSION]\nSenderCompID=LOCAL\nTargetCompID=UNREAD\n");
+    std::istream input(&buffer);
+    std::istringstream initial(
+        "[DEFAULT]\nConnectionType=initiator\nBeginString=FIX.4.2\nValue=old\n"
+        "[SESSION]\nSenderCompID=LOCAL\nTargetCompID=OLD\n");
+    SessionSettings object(initial);
+    std::ostringstream before;
+    before << object;
+
+    CHECK_THROWS_AS(input >> object, ConfigError);
+    CHECK(input.bad());
+    std::ostringstream after;
+    after << object;
+    CHECK(after.str() == before.str());
+  }
+
+  SECTION("rejectFailedStreamState") {
+    const auto state = GENERATE(std::ios::failbit, std::ios::badbit | std::ios::eofbit);
+    std::istringstream input("[DEFAULT]\nValue=new\n");
+    input.setstate(state);
+    SessionSettings object;
+    Dictionary defaults;
+    defaults.setString("Value", "old");
+    object.set(defaults);
+
+    CHECK_THROWS_AS(input >> object, ConfigError);
+    CHECK(object.get().getString("Value") == "old");
+    CHECK(object.size() == 0);
+  }
+
   SECTION("readFromIstream") {
     SessionSettings object;
     std::string configuration = "[DEFAULT]\n"

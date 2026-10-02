@@ -149,7 +149,10 @@ void socket_init();
 void socket_term();
 std::string socket_error();
 int socket_bind(socket_handle socket, const char *hostname, int port);
+/// Windows listeners always use exclusive address ownership; reuse applies to POSIX listeners.
 socket_handle socket_createAcceptor(int port, bool reuse = false);
+/// Create a listener on a numeric local IPv4 address; an empty address binds all interfaces.
+socket_handle socket_createAcceptor(const std::string &address, int port, bool reuse = false);
 socket_handle socket_createConnector();
 int socket_connect(socket_handle s, const char *address, int port);
 socket_handle socket_accept(socket_handle s);
@@ -203,6 +206,7 @@ bool thread_spawn(THREAD_START_ROUTINE func, void *var);
 void thread_join(thread_id thread);
 void thread_detach(thread_id thread);
 thread_id thread_self();
+bool thread_is_current(thread_id thread);
 
 void process_sleep(double s);
 

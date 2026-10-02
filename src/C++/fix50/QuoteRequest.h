@@ -312,8 +312,6 @@ namespace FIX50
         FIELD_SET(*this, FIX::LegInterestAccrualDate);
         FIELD_SET(*this, FIX::LegOptionRatio);
         FIELD_SET(*this, FIX::LegPrice);
-        FIELD_SET(*this, FIX::LegOptionRatio);
-        FIELD_SET(*this, FIX::LegPrice);
         FIELD_SET(*this, FIX::LegQty);
         FIELD_SET(*this, FIX::LegOrderQty);
         FIELD_SET(*this, FIX::LegSwapType);

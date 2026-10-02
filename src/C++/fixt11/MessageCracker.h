@@ -29,14 +29,14 @@
 #include "../fixt11/Message.h"
 
 namespace FIXT11
-{  
-  class Heartbeat; 
-  class TestRequest; 
-  class ResendRequest; 
-  class Reject; 
-  class SequenceReset; 
-  class Logout; 
-  class Logon; 
+{
+  class Heartbeat;
+  class TestRequest;
+  class ResendRequest;
+  class Reject;
+  class SequenceReset;
+  class Logout;
+  class Logon;
   class XMLnonFIX;
 
   class MessageCracker
@@ -73,73 +73,23 @@ namespace FIXT11
  virtual void onMessage( XMLnonFIX&, const FIX::SessionID& ) {} 
 
 public:
-  void crack( const Message& message, 
-              const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return onMessage( (const Heartbeat&)message, sessionID );
-    
-    if( msgTypeValue == "1" )
-      return onMessage( (const TestRequest&)message, sessionID );
-    
-    if( msgTypeValue == "2" )
-      return onMessage( (const ResendRequest&)message, sessionID );
-    
-    if( msgTypeValue == "3" )
-      return onMessage( (const Reject&)message, sessionID );
-    
-    if( msgTypeValue == "4" )
-      return onMessage( (const SequenceReset&)message, sessionID );
-    
-    if( msgTypeValue == "5" )
-      return onMessage( (const Logout&)message, sessionID );
-    
-    if( msgTypeValue == "A" )
-      return onMessage( (const Logon&)message, sessionID );
-    
-    if( msgTypeValue == "n" )
-      return onMessage( (const XMLnonFIX&)message, sessionID );
-    
-    return onMessage( message, sessionID );
-  }
-  
-void crack( Message& message, 
-            const FIX::SessionID& sessionID )
-  {
-    const std::string & msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    
-    if( msgTypeValue == "0" )
-      return onMessage( (Heartbeat&)message, sessionID );
-    
-    if( msgTypeValue == "1" )
-      return onMessage( (TestRequest&)message, sessionID );
-    
-    if( msgTypeValue == "2" )
-      return onMessage( (ResendRequest&)message, sessionID );
-    
-    if( msgTypeValue == "3" )
-      return onMessage( (Reject&)message, sessionID );
-    
-    if( msgTypeValue == "4" )
-      return onMessage( (SequenceReset&)message, sessionID );
-    
-    if( msgTypeValue == "5" )
-      return onMessage( (Logout&)message, sessionID );
-    
-    if( msgTypeValue == "A" )
-      return onMessage( (Logon&)message, sessionID );
-    
-    if( msgTypeValue == "n" )
-      return onMessage( (XMLnonFIX&)message, sessionID );
-    
-    return onMessage( message, sessionID );
-  }
+  // Defined in the generated MessageCracker.cpp so this header needs only forward declarations.
+
+  /// Preserve the version-message entry point while dispatching genuine typed values.
+  void crack( const Message& message,
+              const FIX::SessionID& sessionID );
+
+  /// Dispatch a generic message without assuming a derived object lifetime.
+  void crack( const FIX::Message& message,
+              const FIX::SessionID& sessionID );
+
+  /// Preserve the version-message entry point and mutable callback behavior.
+  void crack( Message& message,
+              const FIX::SessionID& sessionID );
+
+  /// Transfer callback changes back on both normal return and exception propagation.
+  void crack( FIX::Message& message,
+              const FIX::SessionID& sessionID );
 
   };
 }

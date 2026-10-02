@@ -52,21 +52,20 @@ runat_threaded release [port]
 
     <p>From the <b>test</b> directory:</p>
     <pre class='fragment'>
-./runut.sh [port]
+./runut.sh [Catch2 options]
 </pre>
 
-    <p>The port is used to test socket functionality. If you built
-    QuickFIX with one of its supporting databases, you will need to
-    update <i>cfg/ut.cfg</i> to reflect your database settings.</p>
+    <p>The script disables core dumps, supplies the unit configuration and
+    specification paths, and forwards any Catch2 options. If you built QuickFIX
+    with one of its supporting databases, update <i>cfg/ut.cfg</i> to reflect
+    your database settings.</p>
 
     <h2>Acceptance Tests</h2>
 
     <p>From the <b>test</b> directory:</p>
     <pre class='fragment'>
-./runat.sh [port]
-</pre>
-    <pre class='fragment'>
-./runat_threaded.sh [port]
+./runat.sh nonthreaded PORT
+./runat.sh threaded PORT
 </pre>
 
     <p>The port is used to listen for connections on a socket

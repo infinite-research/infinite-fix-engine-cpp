@@ -70,7 +70,8 @@ private:
  * File based implementation of Log
  *
  * Two files are created by this implementation.  One for messages,
- * and one for events.
+ * and one for events. Backslashes and physical CR/LF bytes in values are
+ * escaped; SOH and NUL bytes are preserved.
  *
  */
 class FileLog : public Log {
@@ -81,23 +82,19 @@ public:
   FileLog(const std::string &path, const std::string &backupPath, const SessionID &sessionID);
   virtual ~FileLog();
 
-  void clear();
-  void backup();
+  void clear() override;
+  void backup() override;
 
-  void onIncoming(const std::string &value) {
-    m_messages << UtcTimeStampConvertor::convert(UtcTimeStamp::now(), 9) << " : " << value << std::endl;
-  }
-  void onOutgoing(const std::string &value) {
-    m_messages << UtcTimeStampConvertor::convert(UtcTimeStamp::now(), 9) << " : " << value << std::endl;
-  }
-  void onEvent(const std::string &value) {
-    m_event << UtcTimeStampConvertor::convert(UtcTimeStamp::now(), 9) << " : " << value << std::endl;
-  }
+  void onIncoming(const std::string &value) override;
+  void onOutgoing(const std::string &value) override;
+  void onEvent(const std::string &value) override;
 
 private:
   std::string generatePrefix(const SessionID &sessionID);
   void init(std::string path, std::string backupPath, const std::string &prefix);
+  void write(std::ofstream &stream, const std::string &value);
 
+  Mutex m_mutex;
   std::ofstream m_messages;
   std::ofstream m_event;
   std::string m_messagesFileName;

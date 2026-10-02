@@ -60,7 +60,7 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
 namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xsl:value-of select="//fix/@minor"/>SP<xsl:value-of select="//fix/@servicepack"/>
 </xsl:otherwise>
 </xsl:choose>
-{ <xsl:call-template name="forward-declarations"/>
+{<xsl:call-template name="forward-declarations"/>
 
   class MessageCracker
   {
@@ -72,14 +72,14 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
     { throw FIX::UnsupportedMessageType(); }
 <xsl:call-template name="virtual-const-functions"/>
 <xsl:call-template name="virtual-functions"/>
-<xsl:call-template name="switch-statement"/>
+<xsl:call-template name="crack-declarations"/>
   };
 }
 
 #endif
 </xsl:template>
 
-<xsl:template name="forward-declarations"><xsl:for-each select="//fix/messages/message"> 
+<xsl:template name="forward-declarations"><xsl:for-each select="//fix/messages/message">
   class <xsl:value-of select="@name"/>;</xsl:for-each>
 </xsl:template>
 
@@ -99,33 +99,25 @@ namespace <xsl:value-of select="$type"/><xsl:value-of select="//fix/@major"/><xs
 </xsl:for-each>
 </xsl:template>
 
-<xsl:template name="switch-statement">
+<xsl:template name="crack-declarations">
 public:
-  void crack( const Message&amp; message, 
-              const FIX::SessionID&amp; sessionID )
-  {
-    const std::string &amp; msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    <xsl:for-each select="//fix/messages/message">
-    if( msgTypeValue == "<xsl:value-of select="@msgtype"/>" )
-      return onMessage( (const <xsl:value-of select="@name"/>&amp;)message, sessionID );
-    </xsl:for-each>
-    return onMessage( message, sessionID );
-  }
-  
-void crack( Message&amp; message, 
-            const FIX::SessionID&amp; sessionID )
-  {
-    const std::string &amp; msgTypeValue 
-      = message.getHeader().getField( FIX::FIELD::MsgType );
-    
-    <xsl:for-each select="//fix/messages/message">
-    if( msgTypeValue == "<xsl:value-of select="@msgtype"/>" )
-      return onMessage( (<xsl:value-of select="@name"/>&amp;)message, sessionID );
-    </xsl:for-each>
-    return onMessage( message, sessionID );
-  }
+  // Defined in the generated MessageCracker.cpp so this header needs only forward declarations.
+
+  /// Preserve the version-message entry point while dispatching genuine typed values.
+  void crack( const Message&amp; message,
+              const FIX::SessionID&amp; sessionID );
+
+  /// Dispatch a generic message without assuming a derived object lifetime.
+  void crack( const FIX::Message&amp; message,
+              const FIX::SessionID&amp; sessionID );
+
+  /// Preserve the version-message entry point and mutable callback behavior.
+  void crack( Message&amp; message,
+              const FIX::SessionID&amp; sessionID );
+
+  /// Transfer callback changes back on both normal return and exception propagation.
+  void crack( FIX::Message&amp; message,
+              const FIX::SessionID&amp; sessionID );
 </xsl:template>
 
 </xsl:stylesheet>

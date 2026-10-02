@@ -3,15 +3,19 @@ on:
   push:
     branches: [master]
   pull_request:
+permissions:
+  contents: read
 jobs:
   formatting-check:
     name: Formatting Check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
     - name: Run clang-format style check for C/C++/Protobuf programs.
-      uses: jidicula/clang-format-action@v4.14.0
+      uses: jidicula/clang-format-action@654a770daa28443dd111d133e4083e21c1075674 # v4.18.0
       with:
         clang-format-version: '22'
-        check-path: 'src'
-        exclude-regex: '(catch_amalgamated|pugixml|scope_guard|UtilitySSL.h)' 
+        check-path: '.'
+        exclude-regex: '(catch_amalgamated|pugixml|scope_guard|double-conversion|QuickfixPython|QuickfixRuby|src/C[+][+]/(fix40|fix41|fix42|fix43|fix44|fix50|fix50sp1|fix50sp2|fixt11)/)'

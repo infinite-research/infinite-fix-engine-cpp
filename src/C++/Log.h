@@ -38,6 +38,9 @@
 namespace FIX {
 class Log;
 
+/// Return a log-safe copy with FIX Username (553) and Password (554) values redacted.
+std::string redactLogonCredentials(const std::string &value);
+
 /**
  * This interface must be implemented to create a Log.
  */

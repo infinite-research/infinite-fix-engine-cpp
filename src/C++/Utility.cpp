@@ -24,6 +24,7 @@
 #endif
 
 #include "Utility.h"
+#include "scope_guard.hpp"
 
 #ifdef USING_STREAMS
 #include <stropts.h>
@@ -199,32 +200,70 @@ int socket_bind(socket_handle socket, const char *hostname, int port) {
   return bind(socket, reinterpret_cast<sockaddr *>(&address), socklen);
 }
 
-socket_handle socket_createAcceptor(int port, bool reuse) {
+socket_handle socket_createAcceptor(int port, bool reuse) { return socket_createAcceptor("", port, reuse); }
+
+socket_handle socket_createAcceptor(const std::string &value, int port, bool reuse) {
+  const unsigned long host = value.empty() ? INADDR_ANY : inet_addr(value.c_str());
+  if (host == INADDR_NONE) {
+#ifdef _MSC_VER
+    WSASetLastError(WSAEINVAL);
+#else
+    errno = EINVAL;
+#endif
+    return INVALID_SOCKET_HANDLE;
+  }
+
   socket_handle socket = ::socket(PF_INET, SOCK_STREAM, 0);
   if (socket == INVALID_SOCKET_HANDLE) {
     return INVALID_SOCKET_HANDLE;
   }
 
-  sockaddr_in address;
-  socklen_t socklen;
+  int socketError = 0;
+  auto cleanup = sg::make_scope_guard([&]() {
+    socket_close(socket);
+    if (socketError) {
+#ifdef _MSC_VER
+      WSASetLastError(socketError);
+#else
+      errno = socketError;
+#endif
+    }
+  });
 
+  sockaddr_in address{};
   address.sin_family = PF_INET;
   address.sin_port = htons(port);
-  address.sin_addr.s_addr = INADDR_ANY;
-  socklen = sizeof(address);
+  address.sin_addr.s_addr = host;
+#ifdef _MSC_VER
+  (void)reuse;
+  if (socket_setsockopt(socket, SO_EXCLUSIVEADDRUSE) == SET_SOCK_OPT_ERROR) {
+    socketError = WSAGetLastError();
+    return INVALID_SOCKET_HANDLE;
+  }
+#else
   if (reuse) {
     socket_setsockopt(socket, SO_REUSEADDR);
   }
+#endif
 
-  int result = bind(socket, reinterpret_cast<sockaddr *>(&address), socklen);
-
-  if (result == BIND_SOCKET_ERROR) {
+  if (bind(socket, reinterpret_cast<sockaddr *>(&address), static_cast<socklen_t>(sizeof(address)))
+      == BIND_SOCKET_ERROR) {
+#ifdef _MSC_VER
+    socketError = WSAGetLastError();
+#else
+    socketError = errno;
+#endif
     return INVALID_SOCKET_HANDLE;
   }
-  result = listen(socket, SOMAXCONN);
-  if (result == LISTEN_SOCKET_ERROR) {
+  if (listen(socket, SOMAXCONN) == LISTEN_SOCKET_ERROR) {
+#ifdef _MSC_VER
+    socketError = WSAGetLastError();
+#else
+    socketError = errno;
+#endif
     return INVALID_SOCKET_HANDLE;
   }
+  cleanup.dismiss();
   return socket;
 }
 
@@ -522,7 +561,11 @@ bool thread_spawn(THREAD_START_ROUTINE func, void *var, thread_id &thread) {
 
 bool thread_spawn(THREAD_START_ROUTINE func, void *var) {
   thread_id thread = 0;
-  return thread_spawn(func, var, thread);
+  if (!thread_spawn(func, var, thread)) {
+    return false;
+  }
+  thread_detach(thread);
+  return true;
 }
 
 void thread_join(thread_id thread) {
@@ -548,6 +591,14 @@ thread_id thread_self() {
   return GetCurrentThread();
 #else
   return pthread_self();
+#endif
+}
+
+bool thread_is_current(thread_id thread) {
+#ifdef _MSC_VER
+  return GetThreadId(thread) == GetCurrentThreadId();
+#else
+  return pthread_equal(thread, pthread_self()) != 0;
 #endif
 }
 

@@ -32,7 +32,7 @@
 namespace FIX {
 class HttpMessage;
 
-/// Encapsulates a HTTP socket file descriptor
+/// @deprecated Embedded HTTP administration is no longer supported.
 class HttpConnection {
 public:
   HttpConnection(socket_handle s);
@@ -41,26 +41,6 @@ public:
   bool read();
 
 private:
-  bool readMessage(std::string &msg) EXCEPT(SocketRecvFailed);
-  void processStream();
-  void processRequest(const HttpMessage &);
-  void processRoot(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processResetSessions(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processRefreshSessions(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processEnableSessions(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processDisableSessions(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processSession(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processResetSession(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-  void processRefreshSession(const HttpMessage &, std::stringstream &h, std::stringstream &b);
-
-  void showToggle(std::stringstream &s, const std::string &name, bool value, const std::string &url);
-  void showRow(std::stringstream &s, const std::string &name, bool value, const std::string &url = "");
-  void showRow(std::stringstream &s, const std::string &name, const std::string &value, const std::string &url = "");
-  void showRow(std::stringstream &s, const std::string &name, int value, const std::string &url = "");
-
-  bool send(const std::string &);
-  void disconnect(int error = 0);
-
   socket_handle m_socket;
   char m_buffer[BUFSIZ];
 

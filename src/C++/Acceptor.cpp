@@ -32,8 +32,12 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 
 namespace FIX {
+namespace {
+thread_local Acceptor *activeAcceptor = nullptr;
+}
 Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFactory, const SessionSettings &settings)
     EXCEPT(ConfigError)
     : m_threadid(0),
@@ -44,7 +48,9 @@ Acceptor::Acceptor(Application &application, MessageStoreFactory &messageStoreFa
       m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
-      m_stop(true) {
+      m_stop(true),
+      m_stopCleanupPending(false),
+      m_stopCleanupOwner(std::thread::id()) {
   initialize();
 }
 
@@ -58,14 +64,26 @@ Acceptor::Acceptor(
       m_messageStoreFactory(messageStoreFactory),
       m_settings(settings),
       m_pLogFactory(&logFactory),
-      m_pLog(logFactory.create()),
+      m_pLog(0),
       m_processing(false),
       m_firstPoll(true),
-      m_stop(true) {
+      m_stop(true),
+      m_stopCleanupPending(false),
+      m_stopCleanupOwner(std::thread::id()) {
+  m_pLog = logFactory.create();
+  auto logGuard = sg::make_scope_guard([&]() { m_pLogFactory->destroy(m_pLog); });
   initialize();
+  logGuard.dismiss();
 }
 
 void Acceptor::initialize() EXCEPT(ConfigError) {
+  auto cleanup = sg::make_scope_guard([&]() {
+    for (auto &session : m_sessions) {
+      delete session.second;
+    }
+    m_sessions.clear();
+    m_sessionIDs.clear();
+  });
   std::set<SessionID> sessions = m_settings.getSessions();
   std::set<SessionID>::iterator i;
 
@@ -77,14 +95,19 @@ void Acceptor::initialize() EXCEPT(ConfigError) {
 
   for (i = sessions.begin(); i != sessions.end(); ++i) {
     if (m_settings.get(*i).getString(CONNECTION_TYPE) == "acceptor") {
+      auto session = std::unique_ptr<Session>(factory.create(*i, m_settings.get(*i)));
+      auto inserted = m_sessions.emplace(*i, session.get());
+      if (inserted.second) {
+        session.release();
+      }
       m_sessionIDs.insert(*i);
-      m_sessions[*i] = factory.create(*i, m_settings.get(*i));
     }
   }
 
   if (!m_sessions.size()) {
     throw ConfigError("No sessions defined for acceptor");
   }
+  cleanup.dismiss();
 }
 
 Acceptor::~Acceptor() {
@@ -98,31 +121,9 @@ Acceptor::~Acceptor() {
   }
 }
 
-Session *Acceptor::getSession(const std::string &msg, Responder &responder) {
-  Message message;
-  if (!message.setStringHeader(msg)) {
-    return 0;
-  }
-
-  try {
-    auto const &beginString = message.getHeader().getField<BeginString>();
-    auto const &clSenderCompID = message.getHeader().getField<SenderCompID>();
-    auto const &clTargetCompID = message.getHeader().getField<TargetCompID>();
-    auto const &msgType = message.getHeader().getField<MsgType>();
-    if (msgType != MsgType_Logon) {
-      return 0;
-    }
-
-    SenderCompID senderCompID(clTargetCompID);
-    TargetCompID targetCompID(clSenderCompID);
-    SessionID sessionID(beginString, senderCompID, targetCompID);
-
-    Sessions::iterator i = m_sessions.find(sessionID);
-    if (i != m_sessions.end()) {
-      i->second->setResponder(&responder);
-      return i->second;
-    }
-  } catch (FieldNotFound &) {}
+Session *Acceptor::getSession(const std::string &, Responder &) {
+  // Attaching a responder here skipped listener membership, AllowedRemoteAddresses, TLS peer-name binding, and
+  // Logon authentication. The symbol stays for ABI compatibility but never admits a peer.
   return 0;
 }
 
@@ -148,22 +149,37 @@ void Acceptor::start() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::start called when already processing messages");
   }
 
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot start while stop cleanup remains on its worker thread");
+  }
+  joinStartThread();
   m_processing = true;
   m_stop = false;
 
+  bool initialized = false;
   try {
     onConfigure(m_settings);
     onInitialize(m_settings);
+    initialized = true;
 
     HttpServer::startGlobal(m_settings);
-  } catch (...) {
-    m_processing = false;
-    throw;
-  }
 
-  if (!thread_spawn(&startThread, this, m_threadid)) {
-    m_processing = false;
-    throw RuntimeError("Unable to spawn thread");
+    if (!thread_spawn(&startThread, this, m_threadid)) {
+      throw RuntimeError("Unable to spawn thread");
+    }
+  } catch (...) {
+    m_stop = true;
+    Acceptor *previous = activeAcceptor;
+    activeAcceptor = this;
+    auto guard = sg::make_scope_guard([this, previous]() {
+      m_processing = false;
+      activeAcceptor = previous;
+    });
+    if (initialized) {
+      onStop();
+    }
+    HttpServer::stopGlobal();
+    throw;
   }
 }
 
@@ -172,12 +188,32 @@ void Acceptor::block() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::block called when already processing messages");
   }
 
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot block while stop cleanup remains on its worker thread");
+  }
+  joinStartThread();
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  auto guard = sg::make_scope_guard([this, previous]() {
+    m_processing = false;
+    activeAcceptor = previous;
+  });
   m_processing = true;
   m_stop = false;
-  onConfigure(m_settings);
-  onInitialize(m_settings);
-
-  startThread(this);
+  bool initialized = false;
+  try {
+    onConfigure(m_settings);
+    onInitialize(m_settings);
+    initialized = true;
+    onStart();
+  } catch (...) {
+    m_stop = true;
+    if (initialized) {
+      onStop();
+    }
+    HttpServer::stopGlobal();
+    throw;
+  }
 }
 
 bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
@@ -185,23 +221,48 @@ bool Acceptor::poll() EXCEPT(ConfigError, RuntimeError) {
     throw RuntimeError("Acceptor::poll called when already processing messages");
   }
 
-  {
-    auto guard = sg::make_scope_guard([this]() { m_processing = false; });
-
-    m_processing = true;
+  if (!completeDeferredStop()) {
+    throw RuntimeError("Acceptor cannot poll while stop cleanup remains on its worker thread");
+  }
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  auto guard = sg::make_scope_guard([this, previous]() {
+    m_processing = false;
+    activeAcceptor = previous;
+  });
+  m_processing = true;
+  bool initialized = !m_firstPoll;
+  try {
     if (m_firstPoll) {
       m_stop = false;
       onConfigure(m_settings);
       onInitialize(m_settings);
       m_firstPoll = false;
+      initialized = true;
     }
+    return onPoll();
+  } catch (...) {
+    if (!initialized) {
+      m_stop = true;
+    } else if (isStopped()) {
+      // Finish a stop requested during the failed dispatch. Otherwise, like Initiator::poll, an application
+      // exception propagates and leaves the acceptor running; the host decides whether to keep polling.
+      onStop();
+    }
+    throw;
   }
-
-  return onPoll();
 }
 
 void Acceptor::stop(bool force) {
+  std::unique_lock<std::mutex> cleanupLock(m_stopCleanupMutex, std::defer_lock);
+  if (!lockStopCleanup(cleanupLock)) {
+    return;
+  }
+  auto owner = sg::make_scope_guard([this]() { m_stopCleanupOwner = std::thread::id(); });
+
   if (isStopped()) {
+    completeDeferredStopLocked();
+    joinStartThread();
     return;
   }
 
@@ -226,17 +287,59 @@ void Acceptor::stop(bool force) {
     }
   }
 
+  m_stopCleanupPending = true;
   m_stop = true;
-  onStop();
-  if (m_threadid) {
-    thread_join(m_threadid);
-  }
-  m_threadid = 0;
+  completeDeferredStopLocked();
+  joinStartThread();
 
   for (Session *session : enabledSessions) {
     session->logon();
   }
 }
+
+bool Acceptor::completeDeferredStop() {
+  std::unique_lock<std::mutex> cleanupLock(m_stopCleanupMutex, std::defer_lock);
+  if (!lockStopCleanup(cleanupLock)) {
+    return false;
+  }
+  auto owner = sg::make_scope_guard([this]() { m_stopCleanupOwner = std::thread::id(); });
+  return completeDeferredStopLocked();
+}
+
+bool Acceptor::completeDeferredStopLocked() {
+  if (!m_stopCleanupPending.exchange(false)) {
+    return true;
+  }
+  auto retry = sg::make_scope_guard([&]() { m_stopCleanupPending = true; });
+  onStop();
+  retry.dismiss();
+  return !m_stopCleanupPending.load();
+}
+
+bool Acceptor::lockStopCleanup(std::unique_lock<std::mutex> &lock) {
+  if (m_stopCleanupOwner.load() == std::this_thread::get_id()) {
+    // A callback dispatched by this thread's own stop cleanup (such as onLogout) re-entered; the outer call finishes.
+    return false;
+  }
+  if (activeAcceptor == this) {
+    if (!lock.try_lock()) {
+      return false;
+    }
+  } else {
+    lock.lock();
+  }
+  // Callers clear the owner through a scope guard declared after their lock, so it is released before the mutex.
+  m_stopCleanupOwner = std::this_thread::get_id();
+  return true;
+}
+
+Acceptor *Acceptor::activateCurrentThread() {
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = this;
+  return previous;
+}
+
+void Acceptor::restoreCurrentThread(Acceptor *previous) { activeAcceptor = previous; }
 
 bool Acceptor::isLoggedOn() const {
   Sessions sessions = m_sessions;
@@ -248,10 +351,58 @@ bool Acceptor::isLoggedOn() const {
   return false;
 }
 
+void Acceptor::joinStartThread() {
+  if (activeAcceptor == this) {
+    return;
+  }
+  if (m_threadid) {
+    thread_join(m_threadid);
+    m_threadid = 0;
+  } else {
+    while (m_processing) {
+      process_sleep(0.001);
+    }
+  }
+}
+
 THREAD_PROC Acceptor::startThread(void *p) {
   Acceptor *pAcceptor = static_cast<Acceptor *>(p);
-  auto guard = sg::make_scope_guard([pAcceptor]() { pAcceptor->m_processing = false; });
-  pAcceptor->onStart();
+  Acceptor *previous = activeAcceptor;
+  activeAcceptor = pAcceptor;
+  auto guard = sg::make_scope_guard([pAcceptor, previous]() {
+    pAcceptor->m_processing = false;
+    activeAcceptor = previous;
+  });
+  auto log = [pAcceptor](const char *message) noexcept {
+    try {
+      pAcceptor->getLog()->onEvent(message);
+    } catch (...) {}
+  };
+  auto stop = [pAcceptor, &log](const char *message) noexcept {
+    pAcceptor->m_stop = true;
+    try {
+      pAcceptor->onStop();
+    } catch (const std::exception &e) {
+      log(e.what());
+    } catch (...) {
+      log("Unknown exception stopping acceptor start thread");
+    }
+    try {
+      HttpServer::stopGlobal();
+    } catch (const std::exception &e) {
+      log(e.what());
+    } catch (...) {
+      log("Unknown exception stopping global HTTP server");
+    }
+    log(message);
+  };
+  try {
+    pAcceptor->onStart();
+  } catch (const std::exception &e) {
+    stop(e.what());
+  } catch (...) {
+    stop("Unknown exception in acceptor start thread");
+  }
   return 0;
 }
 } // namespace FIX

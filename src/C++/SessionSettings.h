@@ -61,6 +61,8 @@ const char CHECK_LATENCY[] = "CheckLatency";
 const char MAX_LATENCY[] = "MaxLatency";
 const char HEARTBTINT[] = "HeartBtInt";
 const char SOCKET_ACCEPT_PORT[] = "SocketAcceptPort";
+/// Optional numeric IPv4 address used by acceptors; empty or 0.0.0.0 binds all interfaces.
+const char SOCKET_ACCEPT_ADDRESS[] = "SocketAcceptAddress";
 const char SOCKET_REUSE_ADDRESS[] = "SocketReuseAddress";
 const char SOCKET_CONNECT_HOST[] = "SocketConnectHost";
 const char SOCKET_CONNECT_PORT[] = "SocketConnectPort";
@@ -139,6 +141,8 @@ const char CLIENT_CERTIFICATE_FILE[] = "ClientCertificateFile";
 const char CLIENT_CERTIFICATE_KEY_FILE[] = "ClientCertificateKeyFile";
 const char CERTIFICATE_AUTHORITIES_FILE[] = "CertificationAuthoritiesFile";
 const char CERTIFICATE_AUTHORITIES_DIRECTORY[] = "CertificationAuthoritiesDirectory";
+/// Optional exact DNS/IP subject alternative name required for an accepted TLS session.
+const char CERTIFICATE_ACCEPTED_PEER_NAME[] = "CertificateAcceptedPeerName";
 const char CERTIFICATE_REVOCATION_LIST_FILE[] = "CertificateRevocationListFile";
 const char CERTIFICATE_REVOCATION_LIST_DIRECTORY[] = "CertificateRevocationListDirectory";
 const char CERTIFICATE_VERIFY_LEVEL[] = "CertificateVerifyLevel";

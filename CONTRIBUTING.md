@@ -177,8 +177,14 @@ cmake --build . --target test
 make check
 
 # Run specific tests
-./test/ut --quickfix-config-file cfg/ut.cfg
+(ulimit -c 0; build/lib/ut --quickfix-config-file "$PWD/test/cfg/ut.cfg" \
+  --quickfix-spec-path "$PWD/spec" "[filter]")
 ```
+
+Before proposing a change that touches transports, parsing, stores, logs, or
+credentials, read [SECURITY_ARCHITECTURE.md](SECURITY_ARCHITECTURE.md) and
+confirm the change preserves the documented trust boundaries, admission
+ordering, and deployment control ownership.
 
 ### Writing Tests
 

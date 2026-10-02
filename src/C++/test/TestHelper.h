@@ -25,6 +25,28 @@ public:
   void onRun() {}
 };
 
+class FileStoreTestAccess {
+public:
+  static void setCachedSequenceNumbers(FileStore &store, SEQNUM sender, SEQNUM target) {
+    store.m_cache.setNextSenderMsgSeqNum(sender);
+    store.m_cache.setNextTargetMsgSeqNum(target);
+  }
+};
+
+class TestFileStoreFactory : public FileStoreFactory {
+public:
+  using FileStoreFactory::FileStoreFactory;
+
+  MessageStore *create(const UtcTimeStamp &now, const SessionID &id) override {
+    return m_store = static_cast<FileStore *>(FileStoreFactory::create(now, id));
+  }
+
+  FileStore &store() const { return *m_store; }
+
+private:
+  FileStore *m_store = nullptr;
+};
+
 inline void deleteSession(std::string sender, std::string target) {
   file_unlink(("store/FIX.4.2-" + sender + "-" + target + ".messages").c_str());
   file_unlink(("store/FIX.4.2-" + sender + "-" + target + ".header").c_str());

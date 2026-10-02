@@ -183,7 +183,7 @@ extern "C" {
 typedef int (*passPhraseHandleCallbackType)(char *, int, int, void *);
 
 int caListX509NameCmp(const X509_NAME *const *a, const X509_NAME *const *b);
-STACK_OF(X509_NAME) * findCAList(const char *cpCAfile, const char *cpCApath);
+struct stack_st_X509_NAME *findCAList(const char *cpCAfile, const char *cpCApath);
 int lookupX509Store(X509_STORE *pStore, int nType, X509_NAME *pName, X509_OBJECT *pObj);
 int callbackVerify(int ok, X509_STORE_CTX *ctx);
 int callbackVerifyCRL(int ok, X509_STORE_CTX *ctx, X509_STORE *revStore);
@@ -264,9 +264,12 @@ bool loadCAInfo(
     std::string &errStr,
     int &verifyLevel);
 
+/// Load CRLs into the context-owned store. Returns null and sets errStr on failure.
 X509_STORE *loadCRLInfo(SSL_CTX *ctx, const SessionSettings &settings, Log *log, std::string &errStr);
 
 int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify);
+/// Accept TLS without closing on failure when the caller (for example a monitor) owns the socket.
+int acceptSSLConnection(socket_handle socket, SSL *ssl, Log *log, int verify, bool closeOnFailure);
 
 /**
  * Check if a string is an IP address (IPv4 or IPv6).
@@ -287,6 +290,10 @@ bool is_ip_address(const std::string &address);
  * @return true if SNI was set or appropriately skipped, false on error
  */
 bool ssl_set_sni_hostname(SSL *ssl, const std::string &hostname, Log *log = nullptr);
+/// Configure mandatory DNS/IP SAN verification before connecting; send SNI only for DNS.
+bool ssl_set_peer_name(SSL *ssl, const std::string &name, Log *log = nullptr);
+/// Check an optional exact peer SAN against a verified certificate; never match CN or wildcards.
+bool ssl_peer_matches(SSL *ssl, const std::string &name);
 
 } // namespace FIX
 

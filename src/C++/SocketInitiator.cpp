@@ -212,7 +212,7 @@ void SocketInitiator::onDisconnect(SocketConnector &, socket_handle s) {
 
   Session *pSession = pSocketConnection->getSession();
   if (pSession) {
-    pSession->disconnect();
+    pSession->disconnectIfConnected();
     setDisconnected(pSession->getSessionID());
   }
 

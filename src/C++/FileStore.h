@@ -33,6 +33,7 @@
 #include <string>
 
 namespace FIX {
+class FileStoreTestAccess;
 class Session;
 
 /// Creates a file based implementation of MessageStore.
@@ -99,6 +100,8 @@ public:
   void refresh() EXCEPT(IOException);
 
 private:
+  friend class FileStoreTestAccess;
+
   typedef std::pair<int64_t, std::size_t> OffsetSize;
   typedef std::map<SEQNUM, OffsetSize> NumToOffset;
 

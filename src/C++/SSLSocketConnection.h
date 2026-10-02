@@ -188,9 +188,10 @@ public:
   void disconnect();
 
 private:
+  friend class SessionTestAccess;
+  friend class SSLSocketInitiator;
   typedef std::deque<std::string, ALLOCATOR<std::string>> Queue;
 
-  bool isValidSession();
   void readFromSocket() EXCEPT(SocketRecvFailed);
   bool readMessage(std::string &msg);
   void readMessages(SocketMonitor &s);

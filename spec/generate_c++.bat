@@ -9,3 +9,12 @@ xsltproc -o ..\src\C++\fix50\MessageCracker.h MessageCracker.xsl FIX50.xml
 xsltproc -o ..\src\C++\fix50sp1\MessageCracker.h MessageCracker.xsl FIX50SP1.xml
 xsltproc -o ..\src\C++\fix50sp2\MessageCracker.h MessageCracker.xsl FIX50SP2.xml
 xsltproc -o ..\src\C++\fixt11\MessageCracker.h MessageCracker.xsl FIXT11.xml
+xsltproc -o ..\src\C++\fix40\MessageCracker.cpp MessageCrackerSource.xsl FIX40.xml
+xsltproc -o ..\src\C++\fix41\MessageCracker.cpp MessageCrackerSource.xsl FIX41.xml
+xsltproc -o ..\src\C++\fix42\MessageCracker.cpp MessageCrackerSource.xsl FIX42.xml
+xsltproc -o ..\src\C++\fix43\MessageCracker.cpp MessageCrackerSource.xsl FIX43.xml
+xsltproc -o ..\src\C++\fix44\MessageCracker.cpp MessageCrackerSource.xsl FIX44.xml
+xsltproc -o ..\src\C++\fix50\MessageCracker.cpp MessageCrackerSource.xsl FIX50.xml
+xsltproc -o ..\src\C++\fix50sp1\MessageCracker.cpp MessageCrackerSource.xsl FIX50SP1.xml
+xsltproc -o ..\src\C++\fix50sp2\MessageCracker.cpp MessageCrackerSource.xsl FIX50SP2.xml
+xsltproc -o ..\src\C++\fixt11\MessageCracker.cpp MessageCrackerSource.xsl FIXT11.xml

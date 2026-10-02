@@ -158,6 +158,7 @@ public:
   static int passwordHandleCB(char *buf, int bufsize, int verify, void *instance);
 
 private:
+  friend class SessionTestAccess;
   typedef std::map<socket_handle, SSLSocketConnection *> SocketConnections;
 
   void onConfigure(const SessionSettings &) EXCEPT(ConfigError);

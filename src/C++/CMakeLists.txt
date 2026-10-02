@@ -15,6 +15,15 @@ set(quickfix_SOURCES
   FieldTypes.cpp
   FileLog.cpp
   FileStore.cpp
+  fix40/MessageCracker.cpp
+  fix41/MessageCracker.cpp
+  fix42/MessageCracker.cpp
+  fix43/MessageCracker.cpp
+  fix44/MessageCracker.cpp
+  fix50/MessageCracker.cpp
+  fix50sp1/MessageCracker.cpp
+  fix50sp2/MessageCracker.cpp
+  fixt11/MessageCracker.cpp
   Group.cpp
   HostDetailsProvider.cpp
   HttpConnection.cpp

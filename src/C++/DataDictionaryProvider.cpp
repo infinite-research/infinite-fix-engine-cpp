@@ -48,6 +48,9 @@ const DataDictionary &DataDictionaryProvider::getApplicationDataDictionary(const
   if (find != m_applicationDictionaries.end()) {
     return *find->second;
   }
+  if (!m_applicationDictionaries.empty()) {
+    throw DataDictionaryNotFound(applVerID.getValue());
+  }
 
   return emptyDataDictionary;
 }

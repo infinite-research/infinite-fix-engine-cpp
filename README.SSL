@@ -1,252 +1,131 @@
-------------
-INTRODUCTION
-------------
+TLS support
+===========
 
-This document describes the rudimentary SSL functionality available in QuickFIX. OpenSSL (https://www.openssl.org/) has been used to provide the SSL functionality. The QuickFIX library can be built with OpenSSL or it can be built without OpenSSL support and the classes (files) related to the SSL functionality used directly in the user project.
+Build with a supported OpenSSL release:
 
---------------------------------------
-BUILDING QUICKFIX WITH OPENSSL SUPPORT
---------------------------------------
+  cmake -S . -B build-security -DCMAKE_BUILD_TYPE=Release -DHAVE_SSL=ON
+  cmake --build build-security --parallel 2
+  ctest --test-dir build-security --output-on-failure
 
-1. Unix
+Use SSLSocketInitiator/SSLSocketAcceptor or
+ThreadedSSLSocketInitiator/ThreadedSSLSocketAcceptor with the existing
+Application, MessageStoreFactory and optional LogFactory interfaces.
+Call start() and stop() as for the plaintext transports. setPassword()
+provides the password for an encrypted certificate key.
 
-$ ./configure --with-openssl="path to openssl install"
+Trust and identity
+==================
 
-"path to openssl install" dir should have include/openssl and lib directories with appropriate files. If no path is specified, then the default openssl installation is used.
+TLS settings belong in [DEFAULT], except CertificateAcceptedPeerName,
+which may also be specified separately in each [SESSION].
 
-$ make
+Acceptors may set SocketAcceptAddress to an empty value, 0.0.0.0, or a
+numeric IPv4 address. Empty and 0.0.0.0 preserve the legacy all-interface
+bind; sessions sharing a SocketAcceptPort must use the same effective
+address. Hostnames and IPv6 listener addresses are not supported. The shipped
+examples bind acceptors to 127.0.0.1 for local demonstration. Exposing a FIX
+listener beyond a trusted host requires TLS here or trusted host-side TLS
+termination; network binding is not an authentication control.
 
-2. Windows
+Initiators always verify the server certificate chain and the selected
+SocketConnectHost, including a host selected during failover. DNS hosts
+match certificate subject alternative names (SANs); numeric IPv4/IPv6
+hosts must match an IP SAN. SNI is sent only for DNS names. A failed
+handshake or verification prevents FIX traffic and responder attachment.
+There is no CertificateVerifyLevel setting that disables server verification.
 
-The Visual Studio project will have to be configured to find the OpenSSL headers and libs.
+CertificationAuthoritiesFile is a PEM CA bundle.
+CertificationAuthoritiesDirectory is an OpenSSL hashed CA directory.
+When either is configured, only those roots are trusted; system roots are
+not added. With neither configured, initiators use OpenSSL's default trust
+paths, including its SSL_CERT_FILE/SSL_CERT_DIR environment overrides.
+An explicitly empty or unreadable trust configuration fails startup.
 
-#define HAVE_SSL 1
+Acceptors require ServerCertificateFile and, if the private key is separate,
+ServerCertificateKeyFile. Initiators may optionally supply
+ClientCertificateFile and ClientCertificateKeyFile. Certificates need the
+appropriate TLS server/client extended key usage.
 
-will be required in src/config_windows.h
+CertificateVerifyLevel controls client authentication on acceptors:
 
---------------------------------------------------------------
-USING SSL FILES WITHOUT BUILDING QUICKFIX WITH OPENSSL SUPPORT
---------------------------------------------------------------
+  0 (default): server authentication only; no client certificate requested.
+  1: a valid client certificate is required.
+  2: a client certificate is optional, but must verify if supplied.
 
-The SSL functionality is contained in the files
+Other values fail startup on all TLS transports. The setting's name is
+CertificateVerifyLevel, not VerifyLevel. Levels 1 and 2 require explicitly
+configured usable certification authorities on acceptors. Their trust is
+isolated from system roots. Server-authentication-only TLS remains supported.
 
-SSLSocketAcceptor.h
-SSLSocketAcceptor.cpp
-SSLSocketInitiator.h
-SSLSocketInitiator.cpp
-SSLSocketConnection.h
-SSLSocketConnection.cpp
-ThreadedSSLSocketAcceptor.h
-ThreadedSSLSocketAcceptor.cpp
-ThreadedSSLSocketInitiator.h
-ThreadedSSLSocketInitiator.cpp
-ThreadedSSLSocketConnection.h
-ThreadedSSLSocketConnection.cpp
-UtilitySSL.h
-UtilitySSL.cpp
+CertificateAcceptedPeerName optionally binds a FIX session to one exact DNS
+or IP SAN in a verified client certificate. Wildcards and CommonName fallback
+are not accepted. A missing certificate or mismatch rejects the initial
+Logon before registration, responder attachment, sequence resets, refresh,
+or Application::fromAdmin. Use this with client verification level 1 or 2.
+An empty value disables this extra binding. It applies to TLS acceptors;
+it does not authenticate peers on plaintext listeners.
 
-These files can be directly incorporated in the a project. HAVE_SSL will have to be defined in addition to other OpenSSL related configuration.
+TLS authenticates transport identities. The embedding Application must
+still validate Logon credentials and authorize the requested account in
+fromAdmin(), throwing RejectLogon on failure. Do not assume a shared CA
+alone binds a certificate to a particular FIX SenderCompID.
 
---------------
-SSL PARAMETERS
---------------
+Protocols and revocation
+========================
 
-Parameters have to be defined in the DEFAULT section of the ini file.
+SSLProtocol uses case-insensitive, whitespace-separated protocol names,
+optionally prefixed by + or -. TLSv1_2 and TLSv1_3 are the usable versions
+(TLSv1_3 requires OpenSSL 1.1.1+). The default and "all" obey a TLS 1.2
+minimum. Invalid tokens and configurations allowing no TLS 1.2+ version
+fail startup. Legacy SSL/TLS names cannot lower the minimum.
 
-SSL config for acceptor:
+SSLCipherSuite controls OpenSSL's pre-TLS-1.3 cipher list; TLSCipherSuites
+controls the TLS 1.3 list. If omitted, OpenSSL's cipher/security policy is
+retained. QuickFIX adds no custom cipher policy.
 
-[DEFAULT]
+CertificateRevocationListFile and CertificateRevocationListDirectory apply
+to both initiators and acceptors. Files contain PEM CRLs; directories use
+OpenSSL's hashed layout (`<hash>.r<number>`). Only CRLs are loaded from
+revocation directories; certificates there never become trust anchors.
+Empty CRL directories and configured load/flag failures abort startup.
+CRL checks cover the entire verified chain; absent, expired or invalid
+required CRLs fail the handshake. QuickFIX does not download CRLs.
 
-#This directive points to the PEM-encoded Certificate file and
-#optionally also to the corresponding RSA or DSA Private Key file for it
-#(contained in the same file).
+Contexts own the trust/revocation store, including on legacy OpenSSL.
+Name verification requires OpenSSL 1.0.2 or newer. Exact SAN-only session
+binding requires native NEVER_CHECK_SUBJECT support (OpenSSL 1.1.0+)
+and fails closed when unavailable. Legacy 1.0.2 DNS verification retains
+OpenSSL's CommonName fallback when no DNS SAN is present. Deployments
+should use a maintained OpenSSL release. Pre-1.1.0 protocol floors use
+OpenSSL's protocol-disable options because its minimum-version API is absent.
 
-ServerCertificateFile=
+Migration and disposable examples
+=================================
 
-#This directive points to the PEM-encoded Private Key file. If
-#the Private Key is not combined with the Certificate in the
-#server certificate file, use this additional directive to point to the file with
-#the stand-alone Private Key.
+Existing private-CA deployments must configure their CA explicitly and
+issue certificates matching SocketConnectHost. Peers restricted to TLS
+1.0/1.1 must upgrade. Adding the optional name string extends Session's
+class size; rebuild consumers against the matching library and headers.
+Existing public method signatures remain available.
 
-ServerCertificateKeyFile=
+Existing acceptors that omit SocketAcceptAddress continue to bind all local
+interfaces. Set an explicit numeric IPv4 address when narrowing a deployment.
 
-#This directive sets the Certificate verification level. It applies to the authentication process used in the
-#standard SSL handshake when a connection is established. 0 implies do not verify. 1 implies verify.
+The SSL unit build generates short-lived, test-only PKI in its ignored
+test-runtime/certs directory using test/generate-test-pki.sh. To generate
+the example files explicitly from the repository root:
 
-VerifyLevel=
+  sh test/generate-test-pki.sh build-security/test-runtime/certs
 
-#This directive sets the all-in-one file where you can assemble the
-#Certificate Revocation Lists (CRL) of Certification Authorities (CA) whose
-#clients you deal with.
+The script refuses to overwrite existing keys. To renew expired fixtures,
+remove only that generated certs directory and rebuild. Sample paths in
+bin/cfg/executor.cfg and tradeclient.cfg assume execution from bin/.
+These credentials are local test fixtures, never production identities.
 
-CertificateRevocationListFile=
+Production certificate issuance, secure key storage, renewal, expiry
+monitoring and timely CRL updates belong to the deployment. Contexts load
+files at initialization; restart/recreate the transport to apply renewed
+certificates, trust or CRLs, preserving FIX sequence/store files.
 
-#This directive sets the directory where you keep the Certificate Revocation
-#Lists (CRL) of Certification Authorities (CAs) whose clients you deal with.
-
-CertificateRevocationListDirectory=
-
-SSL config for initiator:
-
-[DEFAULT]
-
-#This directive points to the PEM-encoded Certificate file and
-#optionally also to the corresponding RSA or DSA Private Key file for it
-#(contained in the same file).
-
-ClientCertificateFile=
-
-#This directive points to the PEM-encoded Private Key file. If
-#the Private Key is not combined with the Certificate in the
-#server certificate file, use this additional directive to point to the file with
-#the stand-alone Private Key.
-
-ClientCertificateKeyFile=
-
-Common options:
-
-# This directive can be used to control the SSL protocol flavors the application
-# should use when establishing its environment.
-#
-# The available (case-insensitive) protocols are:
-#
-# SSLv2
-#
-#  This is the Secure Sockets Layer (SSL) protocol, version 2.0. It is the
-#  original SSL protocol as designed by Netscape Corporation.
-#
-# SSLv3
-#
-#  This is the Secure Sockets Layer (SSL) protocol, version 3.0. It is the
-#  successor to SSLv2 and the currently (as of February 1999) de-facto
-#  standardized SSL protocol from Netscape Corporation. It's supported by
-#  almost all popular browsers.
-#
-# TLSv1
-#
-#  This is the Transport Layer Security (TLS) protocol, version 1.0.
-#
-# TLSv1_1
-#
-#  This is the Transport Layer Security (TLS) protocol, version 1.1.
-#
-# TLSv1_2
-#
-#  This is the Transport Layer Security (TLS) protocol, version 1.2.
-#
-# all
-#
-#  This is a shortcut for `+SSLv2 +SSLv3 +TLSv1 +TLSv1_1 +TLSv1_2' and a convenient way for
-#  enabling all protocols except one when used in combination with the minus
-#  sign on a protocol as the example above shows.
-#
-# Example:
-#
-#  enable all but not SSLv2
-#  SSLProtocol = all -SSLv2
-#
-# `all -SSLv2` is the default value when the parameter is not specified.
-
-SSLProtocol=
-
-# This complex directive uses a colon-separated cipher-spec string consisting
-# of OpenSSL cipher specifications to configure the Cipher Suite the client is
-# permitted to negotiate in the SSL handshake phase. Notice that this directive
-# can be used both in per-server and per-directory context. In per-server
-# context it applies to the standard SSL handshake when a connection is
-# established. In per-directory context it forces a SSL renegotation with the
-# reconfigured Cipher Suite after the HTTP request was read but before the HTTP
-# response is sent.
-#
-# An SSL cipher specification in cipher-spec is composed of 4 major attributes
-# plus a few extra minor ones:
-#
-# Key Exchange Algorithm:
-#  RSA or Diffie-Hellman variants.
-#
-# Authentication Algorithm:
-#  RSA, Diffie-Hellman, DSS or none.
-#
-# Cipher/Encryption Algorithm:
-#  DES, Triple-DES, RC4, RC2, IDEA or none.
-#
-# MAC Digest Algorithm:
-#  MD5, SHA or SHA1.
-#
-# For more details refer to mod_ssl documentation.
-#
-# Example: RC4+RSA:+HIGH:
-
-SSLCipherSuite=
-
-#This directive sets the all-in-one file where you can assemble the
-#Certificates of Certification Authorities (CA) whose clients you deal with.
-
-CertificationAuthoritiesFile=
-
-#This directive sets the directory where you keep the Certificates of
-#Certification Authorities (CAs) whose clients you deal with.
-
-CertificationAuthoritiesDirectory=
-
--------------
-EXAMPLE USAGE
--------------
-
-Acceptor:
-
-  try
-  {
-    FIX::SessionSettings settings( file );
-
-    Application application;
-    FIX::FileStoreFactory storeFactory( settings );
-    FIX::ScreenLogFactory logFactory( settings );
-    FIX::ThreadedSSLSocketAcceptor acceptor( application, storeFactory, settings, logFactory );
-
-    acceptor.start();
-    wait();
-    acceptor.stop();
-    return 0;
-  }
-  catch (const std::exception & e )
-  {
-    std::cout << e.what() << std::endl;
-    return 1;
-  }
-  
-Initiator:
-
-  try
-  {
-    FIX::SessionSettings settings( file );
-
-    Application application;
-    FIX::FileStoreFactory storeFactory( settings );
-    FIX::ScreenLogFactory logFactory( settings );
-    FIX::ThreadedSSLSocketInitiator initiator( application, storeFactory, settings, logFactory );
-
-    initiator.start();
-    application.run();
-    initiator.stop();
-    
-    return 0;
-  }
-  catch ( std::exception & e )
-  {
-    std::cout << e.what();
-    return 1;
-  }
-  
-
-If the server or client certficate key is password protected, than the password can be set by the method
-
-  void setPassword(const std::string & pwd);
-  
-There are sample SSL certificates in the sub-directory bin/cfg/certs/.
-  
-----------
-CONCLUSION
-----------
-
-Since this is the first implementation of OpenSSL support the users are requested to let the developer know about bugs/problems and missing implementation.
+The complete trust model, per-finding control matrix, and deployment control
+ownership are recorded in SECURITY_ARCHITECTURE.md.

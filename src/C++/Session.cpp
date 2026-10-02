@@ -25,6 +25,7 @@
 
 #include "Session.h"
 #include "Values.h"
+#include "scope_guard.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -183,9 +184,19 @@ Session::Session(
       m_detached(detached) {
   m_state.heartBtInt(heartBtInt);
   m_state.initiate(heartBtInt != 0);
-  m_state.store(m_messageStoreFactory.create(m_timestamper(), m_sessionID));
+  MessageStore *store = m_messageStoreFactory.create(m_timestamper(), m_sessionID);
+  auto storeGuard = sg::make_scope_guard([&]() { m_messageStoreFactory.destroy(store); });
+  m_state.store(store);
+
+  Log *log = nullptr;
+  auto logGuard = sg::make_scope_guard([&]() {
+    if (log) {
+      m_pLogFactory->destroy(log);
+    }
+  });
   if (m_pLogFactory) {
-    m_state.log(m_pLogFactory->create(m_sessionID));
+    log = m_pLogFactory->create(m_sessionID);
+    m_state.log(log);
   }
 
   if (!m_detached && !checkSessionTime(m_timestamper())) {
@@ -193,10 +204,19 @@ Session::Session(
   }
 
   if (!m_detached) {
-    addSession(*this);
+    const bool registered = addSession(*this);
+    auto registrationGuard = sg::make_scope_guard([&]() {
+      if (registered) {
+        removeSession(*this);
+      }
+    });
     m_application.onCreate(m_sessionID);
     m_state.onEvent("Created session");
+    registrationGuard.dismiss();
   }
+
+  logGuard.dismiss();
+  storeGuard.dismiss();
 }
 
 Session::~Session() {
@@ -292,6 +312,117 @@ void Session::next(const UtcTimeStamp &now, const UtcTimeStamp &scheduleNow) {
   }
 }
 
+bool Session::authenticateLogon(const Message &logon, const UtcTimeStamp &now) {
+  try {
+    const Header &header = logon.getHeader();
+    ResetSeqNumFlag reset(false);
+    logon.getFieldIfSet(reset);
+    if (header.getField<MsgType>() != MsgType_Logon || header.getField<BeginString>() != m_sessionID.getBeginString()
+        || !isEnabled() || !isLogonTime(now) || (!reset && !validLogonState(MsgType(MsgType_Logon)))) {
+      return false;
+    }
+    if (!isGoodTime(header.getField<SendingTime>())) {
+      if (receivedLogon()) {
+        doBadTime(logon);
+      }
+      return false;
+    }
+    if (!isCorrectCompID(header.getField<SenderCompID>(), header.getField<TargetCompID>())) {
+      if (receivedLogon()) {
+        doBadCompID(logon);
+      }
+      return false;
+    }
+    fromCallback(MsgType(MsgType_Logon), logon, m_sessionID);
+    return true;
+  } catch (RejectLogon &) {
+    // The application refused the Logon; callers answer with a Logout carrying the reason.
+    throw;
+  } catch (std::exception &e) {
+    m_state.onEvent(e.what());
+    return false;
+  }
+}
+
+void Session::refuseLogon(const std::string &wire, Responder &responder, const std::string &reason) {
+  // Answer through the candidate transport without registering, refreshing, or preparing a new session period.
+  Responder *previousResponder = m_pResponder;
+  auto restore = sg::make_scope_guard([&]() { m_pResponder = previousResponder; });
+  m_pResponder = &responder;
+  m_state.onIncoming(wire);
+  m_state.onEvent(reason);
+  generateLogout(reason);
+  disconnect(false);
+}
+
+bool Session::acceptLogon(const std::string &wire, Responder &responder) {
+  Locker locker(m_mutex);
+  if (isSessionRegistered(m_sessionID)) {
+    return false;
+  }
+  const auto now = UtcTimeStamp::now();
+  Message logon;
+  bool rejected = false;
+  std::string rejection;
+  try {
+    const DataDictionary &dictionary = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
+    logon = Message(wire, dictionary, m_validateLengthAndChecksum);
+    dictionary.validate(logon);
+    if (!authenticateLogon(logon, now)) {
+      return false;
+    }
+  } catch (RejectLogon &e) {
+    rejected = true;
+    rejection = e.what();
+  } catch (std::exception &e) {
+    m_state.onEvent(e.what());
+    return false;
+  }
+  Responder *previousResponder = m_pResponder;
+  bool registered = false;
+  try {
+    if (rejected) {
+      refuseLogon(wire, responder, rejection);
+      return false;
+    }
+    if (m_sessionID.isFIXT() && logon.isSetField(FIELD::DefaultApplVerID)) {
+      try {
+        m_dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(logon.getField<DefaultApplVerID>()));
+      } catch (DataDictionaryNotFound &e) {
+        refuseLogon(wire, responder, e.what());
+        return false;
+      }
+    }
+    if (!registerSession(m_sessionID)) {
+      return false;
+    }
+    registered = true;
+    setResponder(&responder);
+    m_state.onIncoming(wire);
+    next(logon, now, false, true);
+    if (!receivedLogon()) {
+      m_pResponder = previousResponder;
+      unregisterSession(m_sessionID);
+      return false;
+    }
+  } catch (...) {
+    // A log or application hook may have thrown; release ownership without invoking it again.
+    m_pResponder = previousResponder;
+    m_state.receivedLogon(false);
+    m_state.sentLogon(false);
+    m_state.sentLogout(false);
+    m_state.receivedReset(false);
+    m_state.sentReset(false);
+    m_state.clearQueue();
+    m_state.resendRange(0, 0);
+    if (registered) {
+      unregisterSession(m_sessionID);
+    }
+    throw;
+  }
+  return true;
+}
+
 void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
   SenderCompID senderCompId;
   TargetCompID targetCompId;
@@ -335,7 +466,7 @@ void Session::nextLogon(const Message &logon, const UtcTimeStamp &now) {
     m_state.reset(m_timestamper());
   }
 
-  if (!verify(logon, false, true)) {
+  if (!verify(logon, false, true, false)) {
     return;
   }
   m_state.receivedLogon(true);
@@ -538,6 +669,7 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
 
   for (i = messages.begin(); i != messages.end(); ++i) {
     appMessageJustSent = false;
+    bool resendable = true;
     std::unique_ptr<FIX::Message> pMsg;
     std::string strMsgType;
     const DataDictionary &sessionDD = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
@@ -556,20 +688,31 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
         applVerID = m_senderDefaultApplVerID;
       }
 
-      const DataDictionary &applicationDD = m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
-      if (strMsgType.empty()) {
-        pMsg.reset(new Message(*i, sessionDD, applicationDD, m_validateLengthAndChecksum));
-      } else {
+      const DataDictionary *applicationDD = nullptr;
+      try {
+        applicationDD = &m_dataDictionaryProvider.getApplicationDataDictionary(applVerID);
+      } catch (DataDictionaryNotFound &e) {
+        // The stored message's version is no longer configured. Gap-fill it: a Logout here would repeat on every
+        // reconnect because the counterparty must re-request the same range.
+        m_state.onEvent(
+            "Gap filling stored message " + msg.getHeader().getField(FIELD::MsgSeqNum) + ": " + e.what()
+            + " for ApplVerID " + e.version);
+        resendable = false;
+        pMsg.reset(new Message(msg));
+      }
+      if (applicationDD && strMsgType.empty()) {
+        pMsg.reset(new Message(*i, sessionDD, *applicationDD, m_validateLengthAndChecksum));
+      } else if (applicationDD) {
         const message_order &headerOrder = sessionDD.getHeaderOrderedFields();
         const message_order &trailerOrder = sessionDD.getTrailerOrderedFields();
-        const message_order &messageOrder = applicationDD.getMessageOrderedFields(strMsgType);
+        const message_order &messageOrder = applicationDD->getMessageOrderedFields(strMsgType);
         pMsg.reset(new Message(
             headerOrder,
             trailerOrder,
             messageOrder,
             *i,
             sessionDD,
-            applicationDD,
+            *applicationDD,
             m_validateLengthAndChecksum));
       }
     } else {
@@ -592,7 +735,7 @@ void Session::generateRetransmits(SEQNUM beginSeqNo, SEQNUM endSeqNo) {
       begin = current;
     }
 
-    if (Message::isAdminMsgType(msgType)) {
+    if (!resendable || Message::isAdminMsgType(msgType)) {
       if (!begin) {
         begin = msgSeqNum;
       }
@@ -739,7 +882,16 @@ bool Session::send(const std::string &string) {
   return m_pResponder->send(string);
 }
 
-void Session::disconnect() {
+void Session::disconnect() { disconnect(m_resetOnDisconnect); }
+
+void Session::disconnectIfConnected() {
+  Locker l(m_mutex);
+  if (m_pResponder) {
+    disconnect();
+  }
+}
+
+void Session::disconnect(bool resetStore) {
   Locker l(m_mutex);
 
   if (m_pResponder) {
@@ -760,7 +912,7 @@ void Session::disconnect() {
   m_state.sentReset(false);
   m_state.clearQueue();
   m_state.logoutReason();
-  if (!m_detached && m_resetOnDisconnect) {
+  if (!m_detached && resetStore) {
     m_state.reset(m_timestamper());
   }
 
@@ -983,9 +1135,7 @@ void Session::generateReject(const Message &message, int err, int field) {
     reason = SessionRejectReason_INCORRECT_NUMINGROUP_COUNT_FOR_REPEATING_GROUP_TEXT;
     break;
   case SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION:
-    if (m_detached) {
-      reason = "Invalid or unsupported application version";
-    }
+    reason = "Invalid or unsupported application version";
     break;
   };
 
@@ -1119,7 +1269,7 @@ void Session::populateRejectReason(Message &reject, int field, const std::string
 
 void Session::populateRejectReason(Message &reject, const std::string &text) { reject.setField(Text(text)); }
 
-bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
+bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow, bool invokeCallback) {
   MsgType msgType;
   MsgSeqNum msgSeqNum;
 
@@ -1178,7 +1328,9 @@ bool Session::verify(const Message &msg, bool checkTooHigh, bool checkTooLow) {
   m_state.lastReceivedTime(m_timestamper());
   m_state.testRequest(0);
 
-  fromCallback(msgType, msg, m_sessionID);
+  if (invokeCallback) {
+    fromCallback(msgType, msg, m_sessionID);
+  }
   return true;
 }
 
@@ -1188,7 +1340,15 @@ bool Session::shouldSendReset() {
          && (getExpectedSenderNum() == 1) && (getExpectedTargetNum() == 1);
 }
 
+bool Session::answersPendingLogon(const MsgType &msgType) {
+  // An initiator's Logon may be refused by the counterparty's Logout or Reject before any Logon arrives.
+  return m_state.sentLogon() && (msgType == MsgType_Logout || msgType == MsgType_Reject);
+}
+
 bool Session::validLogonState(const MsgType &msgType) {
+  if (msgType != MsgType_Logon && !m_state.receivedLogon()) {
+    return answersPendingLogon(msgType);
+  }
   if ((msgType == MsgType_Logon && m_state.sentReset()) || (m_state.receivedReset())) {
     return true;
   }
@@ -1329,6 +1489,9 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
     } else {
       next(Message(msg, sessionDD, m_validateLengthAndChecksum), now, queued);
     }
+  } catch (DataDictionaryNotFound &e) {
+    m_state.onEvent(e.what());
+    disconnect();
   } catch (InvalidMessage &e) {
     m_state.onEvent(e.what());
 
@@ -1342,20 +1505,23 @@ void Session::next(const std::string &msg, const UtcTimeStamp &now, bool queued)
   }
 }
 
-void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) {
+void Session::next(const Message &message, const UtcTimeStamp &now, bool queued) { next(message, now, queued, false); }
+
+void Session::next(const Message &message, const UtcTimeStamp &now, bool queued, bool authenticated) {
   const Header &header = message.getHeader();
 
   try {
-    if (!checkSessionTime(now)) {
-      if (!m_detached) {
-        reset();
-      }
-      return;
-    }
-
     MsgType msgType;
     BeginString beginString;
     header.getField(msgType);
+    if (msgType != MsgType_Logon && !receivedLogon() && !answersPendingLogon(msgType)) {
+      if (sentLogon()) {
+        disconnect();
+      } else if (m_pResponder) {
+        m_pResponder->disconnect();
+      }
+      return;
+    }
     header.getField(beginString);
     // make sure these fields are present
     FIELD_THROW_IF_NOT_FOUND(header, SenderCompID);
@@ -1363,6 +1529,35 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
 
     if (beginString != m_sessionID.getBeginString()) {
       throw UnsupportedVersion();
+    }
+
+    if (msgType == MsgType_Logon && !authenticated) {
+      const DataDictionary &dictionary
+          = m_dataDictionaryProvider.getSessionDataDictionary(m_sessionID.getBeginString());
+      dictionary.validate(message);
+      if (!authenticateLogon(message, now)) {
+        if (receivedLogon() || sentLogon()) {
+          disconnect();
+        } else if (m_pResponder) {
+          m_pResponder->disconnect();
+          if (!isLogonTime(now)) {
+            m_pResponder = nullptr;
+          }
+        }
+        return;
+      }
+      authenticated = true;
+    }
+
+    if (msgType == MsgType_Logon && m_sessionID.isFIXT()) {
+      m_dataDictionaryProvider.getApplicationDataDictionary(ApplVerID(message.getField<DefaultApplVerID>()));
+    }
+
+    if (!checkSessionTime(now)) {
+      if (!m_detached) {
+        reset();
+      }
+      return;
     }
 
     if (msgType == MsgType_Logon) {
@@ -1410,6 +1605,14 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
     }
   } catch (MessageParseError &e) {
     m_state.onEvent(e.what());
+  } catch (DataDictionaryNotFound &e) {
+    m_state.onEvent(e.what());
+    if (message.isApp()) {
+      LOGEX(generateReject(message, SessionRejectReason_INVALID_UNSUPPORTED_APPLICATION_VERSION, FIELD::ApplVerID));
+    } else {
+      generateLogout(e.what());
+      disconnect(header.getField<MsgType>() != MsgType_Logon && m_resetOnDisconnect);
+    }
   } catch (RequiredTagMissing &e) {
     LOGEX(generateReject(message, SessionRejectReason_REQUIRED_TAG_MISSING, e.field));
   } catch (FieldNotFound &e) {
@@ -1451,7 +1654,8 @@ void Session::next(const Message &message, const UtcTimeStamp &now, bool queued)
   } catch (RejectLogon &e) {
     m_state.onEvent(e.what());
     generateLogout(e.what());
-    disconnect();
+    // An unauthenticated acceptor candidate must not trigger ResetOnDisconnect.
+    disconnect((receivedLogon() || sentLogon()) && m_resetOnDisconnect);
   } catch (UnsupportedVersion &) {
     if (header.getField(FIELD::MsgType) == MsgType_Logout) {
       nextLogout(message, now);
@@ -1581,14 +1785,14 @@ size_t Session::numSessions() {
 
 bool Session::addSession(Session &s) {
   Locker locker(s_mutex);
-  Sessions::iterator it = s_sessions.find(s.m_sessionID);
-  if (it == s_sessions.end()) {
-    s_sessions[s.m_sessionID] = &s;
-    s_sessionIDs.insert(s.m_sessionID);
-    return true;
-  } else {
+  auto inserted = s_sessions.emplace(s.m_sessionID, &s);
+  if (!inserted.second) {
     return false;
   }
+  auto rollback = sg::make_scope_guard([&]() { s_sessions.erase(inserted.first); });
+  s_sessionIDs.insert(s.m_sessionID);
+  rollback.dismiss();
+  return true;
 }
 
 void Session::removeSession(Session &s) {
