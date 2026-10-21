@@ -15,11 +15,11 @@ jobs:
       strategy:
           fail-fast: false
           matrix:
-              runner: [ubuntu-latest]
+              runner: [blacksmith-4vcpu-ubuntu-2404]
               configuration: [Release]
               compiler-settings: ['']
               include:
-                - runner: ubuntu-latest
+                - runner: blacksmith-4vcpu-ubuntu-2404
                   compiler-settings: CXX=clang++ CC=clang
       steps:
       - name: Install dependencies

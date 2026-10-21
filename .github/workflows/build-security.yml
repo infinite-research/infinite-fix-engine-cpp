@@ -25,7 +25,7 @@ jobs:
   unit-default:
     if: inputs.scope == 'full'
     name: unit-default
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -45,7 +45,7 @@ jobs:
   unit-tls:
     if: inputs.scope == 'full'
     name: unit-tls
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -69,7 +69,7 @@ jobs:
   sanitizers:
     if: inputs.scope == 'full'
     name: sanitizers
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -123,7 +123,7 @@ jobs:
   codeql-and-sbom:
     if: inputs.scope != 'windows-tls'
     name: ${{ inputs.scope == 'platform-gaps' && 'Linux inventory and performance (no CodeQL)' || 'codeql-and-sbom' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: ${{ inputs.scope == 'platform-gaps' && 60 || 360 }}
     steps:
       - name: Checkout candidate snapshot
@@ -310,7 +310,7 @@ jobs:
   windows-tls-transport:
     name: Windows MSVC TLS transport
     if: inputs.scope == 'platform-gaps' || inputs.scope == 'windows-tls'
-    runs-on: windows-2022
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 45
     env:
       OPENSSL_ROOT_DIR: C:/Program Files/OpenSSL
